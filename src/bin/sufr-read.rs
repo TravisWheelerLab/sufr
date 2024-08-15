@@ -6,19 +6,32 @@ use std::{
     io::Read,
     mem,
     path::PathBuf,
+    time::Instant,
 };
+use substring::Substring;
 
 /// Read suffix array
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub struct Args {
     /// Suffix array filea
-    #[arg(value_name = "SA")]
+    #[arg(short('a'), long, value_name = "SA")]
     pub sa: PathBuf,
 
     /// Sequence file
-    #[arg(value_name = "SEQ")]
+    #[arg(short, long, value_name = "SEQ")]
     pub sequence: PathBuf,
+
+    /// Extract positions
+    #[arg(
+        short, 
+        long, 
+        value_name = "EXTRACT", 
+        value_parser = clap::value_parser!(u64).range(0..),
+        default_value = "0",
+        num_args(0..)
+    )]
+    pub extract: Vec<u64>,
 }
 
 // --------------------------------------------------
@@ -42,6 +55,7 @@ pub fn run(args: Args) -> Result<()> {
     let sa_len = usize::from_ne_bytes(buffer);
     println!("Length of SA: {sa_len}");
 
+    let start = Instant::now();
     // Allocate a buffer to hold the data
     //let mut buffer2 = vec![0u8; num * mem::size_of::<u32>()];
     let mut buffer2 = vec![0u8; sa_len * mem::size_of::<usize>()];
@@ -58,23 +72,33 @@ pub fn run(args: Args) -> Result<()> {
         std::slice::from_raw_parts(buffer2.as_ptr() as *const usize, sa_len)
     };
 
+    println!("SA construction finished in {:?}", start.elapsed());
+
     // Print the integers
     //for &integer in integers {
     //    println!("{}", integer);
     //}
 
-    let seq: Vec<u8> = fs::read_to_string(args.sequence)?.bytes().collect();
-    for start in [1, 100_000, 2_000_000, 3_000_000] {
+    //let seq: Vec<u8> = fs::read_to_string(args.sequence)?.bytes().collect();
+    let start = Instant::now();
+    let seq = fs::read_to_string(args.sequence)?.to_uppercase();
+    let seq = seq.trim();
+    println!("Read sequence finished in {:?}", start.elapsed());
+
+    //for start in [0, 100_000, 2_000_000, 3_000_000] {
+    for &start in &args.extract {
+        let start = start as usize;
         if let Some(&pos) = integers.get(start) {
             //let stop = pos + (sa_len - pos);
             let len = min(sa_len - 1 - start, 8);
             //println!("start = {pos}, len = {len}");
-            let stop = pos + len;
+            //let stop = pos + len;
             //println!("start = {pos}, stop = {stop}");
-            println!(
-                "({start}) {pos} = {}",
-                String::from_utf8_lossy(&seq[pos..stop])
-            );
+            //println!(
+            //    "({start}) {pos} = {}",
+            //    String::from_utf8_lossy(&seq[pos..stop])
+            //);
+            println!("({start}) {pos} = {}", seq.substring(pos, pos + 8));
         }
     }
 
