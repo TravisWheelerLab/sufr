@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::{
-    cmp::min,
+    //cmp::min,
     fs::{self, File},
     io::Read,
     mem,
@@ -14,7 +14,7 @@ use substring::Substring;
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub struct Args {
-    /// Suffix array filea
+    /// Suffix array file
     #[arg(short('a'), long, value_name = "SA")]
     pub sa: PathBuf,
 
