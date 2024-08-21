@@ -28,7 +28,7 @@ pub struct Args {
         long, 
         value_name = "EXTRACT", 
         value_parser = clap::value_parser!(u64).range(0..),
-        default_value = "0",
+        default_value = "2",
         num_args(0..)
     )]
     pub extract: Vec<u64>,
@@ -57,22 +57,23 @@ pub fn run(args: Args) -> Result<()> {
 
     let start = Instant::now();
     // Allocate a buffer to hold the data
-    //let mut buffer2 = vec![0u8; num * mem::size_of::<u32>()];
-    let mut buffer2 = vec![0u8; sa_len * mem::size_of::<usize>()];
+    let mut buffer2 = vec![0u8; sa_len * mem::size_of::<u32>()];
+    //let mut buffer2 = vec![0u8; sa_len * mem::size_of::<usize>()];
 
     // Read the bytes into the buffer
     sa_file.read_exact(&mut buffer2)?;
 
     // Convert the buffer into a slice of i32 integers
-    //let integers: &[u32] = unsafe {
-    //    std::slice::from_raw_parts(buffer2.as_ptr() as *const u32, sa_len)
-    //};
-
-    let integers: &[usize] = unsafe {
-        std::slice::from_raw_parts(buffer2.as_ptr() as *const usize, sa_len)
+    let integers: &[u32] = unsafe {
+        std::slice::from_raw_parts(buffer2.as_ptr() as *const u32, sa_len)
     };
 
+    //let integers: &[usize] = unsafe {
+    //    std::slice::from_raw_parts(buffer2.as_ptr() as *const usize, sa_len)
+    //};
+
     println!("SA construction finished in {:?}", start.elapsed());
+    println!("{integers:?}");
 
     // Print the integers
     //for &integer in integers {
@@ -82,15 +83,16 @@ pub fn run(args: Args) -> Result<()> {
     //let seq: Vec<u8> = fs::read_to_string(args.sequence)?.bytes().collect();
     let start = Instant::now();
     let seq = fs::read_to_string(args.sequence)?.to_uppercase();
-    let seq = seq.trim();
+    let seq = format!("{}$", seq.trim());
     println!("Read sequence finished in {:?}", start.elapsed());
 
     //for start in [0, 100_000, 2_000_000, 3_000_000] {
     for &start in &args.extract {
         let start = start as usize;
         if let Some(&pos) = integers.get(start) {
+            let pos = pos as usize;
             //let stop = pos + (sa_len - pos);
-            let len = min(sa_len - 1 - start, 8);
+            //let len = min(sa_len - 1 - start, 8);
             //println!("start = {pos}, len = {len}");
             //let stop = pos + len;
             //println!("start = {pos}, stop = {stop}");
