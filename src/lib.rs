@@ -102,7 +102,7 @@ impl SuffixArray {
         lcp: &mut [usize],
         lcp_w: &mut [usize],
     ) {
-        println!("x {x:?} y {y:?} n {n} lcp {lcp:?} lcp_w {lcp_w:?}");
+        debug!("x {x:?} y {y:?} n {n} lcp {lcp:?} lcp_w {lcp_w:?}");
         if n == 1 {
             lcp[0] = 0;
         } else {
@@ -123,19 +123,11 @@ impl SuffixArray {
                 &mut lcp[mid..],
             );
 
-            //self.merge_sort(y, x, mid, lcp_w, lcp);
-            //self.merge_sort(y, x, n - mid, lcp_w, lcp);
-
             self.merge(x, mid, lcp_w, y, lcp);
-
-            //let (x1, y1, lcp1, lcp_w1) = self.merge(x, mid, lcp_w, y, lcp);
-            //x = mem::take(x1);
-            //y = y1;
-            //lcp = lcp1;
-            //lcp_w = lcp_w1;
         }
         dbg!(x);
         dbg!(y);
+        dbg!(lcp_w);
     }
 
     //) -> (Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>) {
@@ -147,11 +139,13 @@ impl SuffixArray {
         z: &mut [usize],
         lcp_z: &mut [usize],
     ) {
-        println!(">>> MERGE {suffix_array:?} mid {mid} <<<");
+        debug!("\n>>> MERGE {suffix_array:?} mid {mid} <<<");
         let mut x = suffix_array[..mid].to_vec();
         let mut y = suffix_array[mid..].to_vec();
         let mut lcp_x = lcp_w[..mid].to_vec();
         let mut lcp_y = lcp_w[mid..].to_vec();
+        debug!("LCP_x {lcp_x:?}");
+        debug!("LCP_y {lcp_y:?}");
         let mut len_x = x.len();
         let mut len_y = y.len();
 
@@ -166,29 +160,31 @@ impl SuffixArray {
         //#[allow(unused_assignments)]
         //let mut l_x = 0; // LCP(X_i, X_{i-1})
 
-        //println!("MERGE x {x:?} y {y:?} z {z:?} len_x {len_x} len_y {len_y}");
-        //println!("MERGE lcp_x {lcp_x:?} lcp_y {lcp_y:?} lcp_z {lcp_z:?}");
+        //debug!("MERGE x {x:?} y {y:?} z {z:?} len_x {len_x} len_y {len_y}");
+        //debug!("MERGE lcp_x {lcp_x:?} lcp_y {lcp_y:?} lcp_z {lcp_z:?}");
 
         //let mut num_swaps = 0;
         while i < len_x && j < len_y {
-            println!("\n>>> x {} y {} <<<", x[i], y[j]);
+            debug!("\n>>> x {} y {} <<<", x[i], y[j]);
             let l_x = lcp_x[i];
 
             if l_x > m {
-                println!("BRANCH 1 i '{i}' l_x '{l_x}' > m '{m}'");
-                println!("sa    {suffix_array:?}");
-                println!("lcp_w {lcp_w:?}");
-                println!("lcp_x {lcp_x:?}");
-                println!("lcp_y {lcp_y:?}");
+                debug!("BRANCH 1 i '{i}' l_x '{l_x}' > m '{m}'");
+                debug!("sa    {suffix_array:?}");
+                debug!("lcp_w {lcp_w:?}");
+                debug!("lcp_x {lcp_x:?}");
+                debug!("lcp_y {lcp_y:?}");
                 z[k] = x[i];
+                debug!(">> k1 = '{k}' TW <<");
                 lcp_z[k] = l_x;
             } else if l_x < m {
-                println!("BRANCH 2 l_x '{l_x}' < m '{m}'");
+                debug!("BRANCH 2 l_x '{l_x}' < m '{m}'");
                 z[k] = y[j];
+                debug!(">> k2 = '{k}' TW <<");
                 lcp_z[k] = m;
                 m = l_x;
             } else {
-                println!("BRANCH 3");
+                debug!("BRANCH 3");
                 // Length of shorter suffix
                 let max_n = self.len - max(x[i], y[j]);
 
@@ -198,52 +194,74 @@ impl SuffixArray {
                 // LCP(X_i, Y_j)
                 let this_lcp =
                     lcp(&self.text[x[i]..], &self.text[y[j]..], context - m);
-                //println!("CALLING LCP x[i] = {} y[j] = {}", x[i], y[j]);
+                //debug!("CALLING LCP x[i] = {} y[j] = {}", x[i], y[j]);
                 let n = m + lcp(
-                    &self.text[x[i]..],
-                    &self.text[y[j]..],
+                    &self.text[(x[i] + m)..],
+                    &self.text[(y[j] + m)..],
                     context - m,
                 );
-                println!("m '{n}'");
-                println!("n '{n}'");
-                println!("max_n '{max_n}'");
-                println!("context '{context}'");
-                println!("lcp '{this_lcp}'");
-                println!(
+                debug!("m       '{m}'");
+                debug!("lcp     '{this_lcp}'");
+                debug!("n       '{n}'");
+                debug!("max_n   '{max_n}'");
+                debug!("context '{context}'");
+                debug!(
                     "left  {} {:?}",
                     x[i],
                     String::from_utf8(self.text[x[i]..].to_vec())
                 );
-                println!(
+                debug!(
                     "right {} {:?}",
                     y[j],
                     String::from_utf8(self.text[y[j]..].to_vec())
                 );
-                //println!("LCP = {n}, max_n = {max_n}, k = {k}, n = {n}");
+                //debug!("LCP = {n}, max_n = {max_n}, k = {k}, n = {n}");
 
                 // If the len of the LCP is the entire shorter
                 // sequence, take that.
                 // Else, look at the next char after the LCP
                 // to determine order.
-                z[k] = if n == max_n {
-                    max(x[i], y[j])
-                } else if self.text[x[i] + n] < self.text[y[j] + n] {
-                    x[i]
-                } else {
-                    y[j]
-                };
+                //z[k] = if n == max_n {
+                //    max(x[i], y[j])
+                //} else if self.text[x[i] + n] < self.text[y[j] + n] {
+                //    x[i]
+                //} else {
+                //    y[j]
+                //};
 
-                lcp_z[k] = if z[k] == x[i] { l_x } else { m };
+                if n == max_n {
+                    z[k] = max(x[i], y[j])
+                } else if self.text[x[i] + n] < self.text[y[j] + n] {
+                    debug!(
+                        "Checking next chars '{}' and '{}'",
+                        self.text[x[i] + n] as char,
+                        self.text[y[j] + n] as char
+                    );
+                    z[k] = x[i]
+                } else {
+                    z[k] = y[j]
+                }
+
+                //lcp_z[k] = if z[k] == x[i] { l_x } else { m };
+                if z[k] == x[i] {
+                    lcp_z[k] = l_x;
+                    debug!(">> k3 = '{k}' TW <<");
+                } else {
+                    debug!(">> m = '{m}' TW <<");
+                    debug!(">> n = '{n}' TW <<");
+                    debug!(">> k3 = '{k}' TW <<");
+                    lcp_z[k] = m
+                }
                 m = n;
             }
-            println!("x {} y {} => z {}", x[i], y[j], z[k]);
+            debug!("x {} y {} => z {}", x[i], y[j], z[k]);
 
             if z[k] == x[i] {
                 i += 1;
             } else {
                 j += 1;
                 //num_swaps += 1;
-                println!("SWAP!");
+                debug!("SWAP!");
                 mem::swap(&mut x, &mut y);
                 mem::swap(&mut len_x, &mut len_y);
                 mem::swap(&mut lcp_x, &mut lcp_y);
@@ -265,14 +283,18 @@ impl SuffixArray {
         //dbg!(&len_y);
         //dbg!(&j);
         if j < len_y {
+            debug!("FINISHING Y");
+            debug!("m '{m}'");
+            debug!("k '{k}'");
             z[k] = y[j];
             lcp_z[k] = m;
-            //j += 1;
-            //k += 1;
+            j += 1;
+            k += 1;
             while j < len_y {
                 //dbg!(&k);
                 //dbg!(&z);
                 //dbg!(&y);
+                debug!("..k '{k}' j '{j}' y '{}'", y[j]);
                 z[k] = y[j];
                 lcp_z[k] = lcp_y[j];
                 j += 1;
@@ -280,27 +302,8 @@ impl SuffixArray {
             }
         }
 
-        // This doesn't seem to do anything
-        //if num_swaps % 2 != 0 {
-        //    println!("SWAP BACK");
-        //    mem::swap(&mut x, &mut y);
-        //    mem::swap(&mut lcp_x, &mut lcp_y);
-        //}
-
-        //// Copy back to the original values?
-        //x.append(&mut y);
-        //for i in 0..x.len() {
-        //    x_prime[i] = x[i];
-        //}
-
-        //lcp_x.append(&mut lcp_y);
-        //for i in 0..lcp_x.len() {
-        //    lcp_w[i] = lcp_x[i];
-        //}
-
-        //dbg!(&x_prime);
-
-        //(x.to_vec(), z.to_vec(), lcp_w.to_vec(), lcp_z.to_vec())
+        debug!("z     {z:?}");
+        debug!("LCP_z {lcp_z:?}");
     }
 }
 
@@ -348,9 +351,9 @@ pub fn run(args: Args) -> Result<()> {
     info!("merge_sort finished in {:?}", start.elapsed());
     //info!("Sorted SA = {:?}", sa);
 
-    println!("Suffixes of '{text}'");
+    debug!("Suffixes of '{text}'");
     for &pos in &sa {
-        println!("pos {pos:4} suffix {}", text.substring(pos, suf_arr.len));
+        debug!("pos {pos:4} suffix {}", text.substring(pos, suf_arr.len));
     }
 
     //debug!("SA = {:?}", sa);
