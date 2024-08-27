@@ -11,7 +11,7 @@ use std::{
     num::NonZeroUsize,
     ops::Range,
     path::PathBuf,
-    slice,
+    //slice,
     time::Instant,
 };
 use substring::Substring;
@@ -54,6 +54,10 @@ pub struct CreateArgs {
     /// Max context
     #[arg(short, long, value_name = "CONTEXT")]
     pub max_context: Option<usize>,
+
+    /// Number of threads
+    #[arg(short, long, value_name = "THREADS")]
+    pub threads: Option<usize>,
 
     /// Output file
     #[arg(short, long, value_name = "OUTPUT", default_value = "sufr.sa")]
@@ -112,6 +116,13 @@ type PositionList = Vec<Range<usize>>;
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
+    if let Some(num) = args.threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num)
+            .build_global()
+            .unwrap();
+    }
+
     env_logger::Builder::new()
         .filter_level(match args.log {
             Some(LogLevel::Debug) => log::LevelFilter::Debug,
@@ -127,18 +138,34 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         })
         .init();
 
-    info!("Reading input {}", &args.input);
-
     let start = Instant::now();
-    let input = open(&args.input)?;
-    let suf_arr = SuffixArray::new(input, args.max_context)?;
-    info!("Finished reading input in {:?}", start.elapsed());
-    info!("Input length '{}'", suf_arr.len);
+    let suf_arr = SuffixArray::new(open(&args.input)?, args.max_context);
+    info!(
+        "Finished reading input of len {} in {:?}",
+        suf_arr.len,
+        start.elapsed()
+    );
     //debug!("Raw input '{:?}'", suf_arr.text);
 
     let start = Instant::now();
-    let sa = suf_arr.generate();
+    //let sa = suf_arr.generate();
+    let sufs = suf_arr.sort_subarrays(args.subproblem_count);
+    dbg!(&sufs);
+    let suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
+    let pivots = suf_arr.select_pivots(&suffixes);
+    dbg!(&pivots);
+
+    let pivot_locs = suf_arr.locate_pivots(&suffixes, &pivots);
+    dbg!(&pivot_locs);
+
+    let part_subs = suf_arr.partition_subarrays(&suffixes, &pivot_locs);
+    dbg!(&part_subs);
+
+    let merged = suf_arr.merge_part_subs(&part_subs);
+    dbg!(merged);
+
     info!("Generated suffix array in {:?}", start.elapsed());
+    //dbg!(&sa);
 
     let mut out = File::create(&args.output)?;
 
@@ -156,13 +183,13 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     out.write(&usize_to_bytes(suf_arr.len))?;
 
     // Write out suffix array as raw bytes
-    let slice_u8: &[u8] = unsafe {
-        slice::from_raw_parts(
-            sa.as_ptr() as *const _,
-            suf_arr.len * mem::size_of::<usize>(),
-        )
-    };
-    out.write_all(slice_u8)?;
+    //let slice_u8: &[u8] = unsafe {
+    //    slice::from_raw_parts(
+    //        sa.as_ptr() as *const _,
+    //        suf_arr.len * mem::size_of::<usize>(),
+    //    )
+    //};
+    //out.write_all(slice_u8)?;
 
     println!("See output file '{}'", args.output);
 
@@ -245,12 +272,12 @@ pub fn read(args: &ReadArgs) -> Result<()> {
     let mut sa_file = File::open(&args.array)?;
 
     // The first 64-bits of the file contain the size of the SA
-    let mut buffer1 = [0; 8];
-    sa_file.read_exact(&mut buffer1)?;
+    let mut buffer = [0; 8];
+    sa_file.read_exact(&mut buffer)?;
 
     // Convert the Vec<u8> to a usize
-    let sa_len = usize::from_ne_bytes(buffer1);
-    println!("Length of SA: {sa_len}");
+    let sa_len = usize::from_ne_bytes(buffer);
+    println!("Length of suffix array: {sa_len}");
 
     let start = Instant::now();
 
@@ -262,29 +289,25 @@ pub fn read(args: &ReadArgs) -> Result<()> {
     //};
     //let mut buffer = vec![0u8; sa_len * size];
 
+    // Read the bytes into the buffer
     let mut buffer = vec![0u8; sa_len * mem::size_of::<usize>()];
 
-    // Read the bytes into the buffer
     sa_file.read_exact(&mut buffer)?;
 
     // How can I have either 32 or 64 vectors?
     // Convert the buffer into a slice of i32 integers
-    //let integers: &[u32] = unsafe {
+    //let suffix_array: &[u32] = unsafe {
     //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
     //};
 
-    let integers: &[usize] = unsafe {
+    let suffix_array: &[usize] = unsafe {
         std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
     };
 
-    println!("SA reconstitution finished in {:?}", start.elapsed());
-    //println!("{integers:?}");
+    println!("Read SA in {:?}", start.elapsed());
 
-    let start = Instant::now();
     let seq = fs::read_to_string(&args.sequence)?.to_uppercase();
     let seq = format!("{}$", seq.trim());
-    println!("{seq}");
-    println!("Read sequence finished in {:?}", start.elapsed());
 
     let positions: Vec<_> = parse_pos(&args.extract)?
         .into_iter()
@@ -292,7 +315,8 @@ pub fn read(args: &ReadArgs) -> Result<()> {
         .collect();
 
     for start in positions {
-        if let Some(&pos) = integers.get(start) {
+        if let Some(&pos) = suffix_array.get(start) {
+            //let pos = pos as usize;
             let end = if args.max_len > 0 {
                 pos + args.max_len
             } else {
