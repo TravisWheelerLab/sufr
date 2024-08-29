@@ -2,7 +2,7 @@ mod suffix_array;
 
 use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
-use log::info;
+use log::{debug, info};
 use regex::Regex;
 use std::{
     fs::{self, File},
@@ -11,7 +11,7 @@ use std::{
     num::NonZeroUsize,
     ops::Range,
     path::PathBuf,
-    //slice,
+    slice,
     time::Instant,
 };
 use substring::Substring;
@@ -28,12 +28,24 @@ pub struct Cli {
 #[derive(Parser, Debug)]
 pub enum Command {
     /// Create suffix array
+    #[clap(alias = "ch")]
+    Check(CheckArgs),
+
+    /// Create suffix array
     #[clap(alias = "cr")]
     Create(CreateArgs),
 
     /// Read suffix array and extract sequences
     #[clap(alias = "re")]
     Read(ReadArgs),
+}
+
+#[derive(Debug, Parser)]
+#[command(author, version, about)]
+pub struct CheckArgs {
+    /// Input
+    #[arg(value_name = "INPUT", default_value = "-")]
+    pub input: String,
 }
 
 #[derive(Debug, Parser)]
@@ -48,7 +60,7 @@ pub struct CreateArgs {
     pub pattern: Option<String>,
 
     /// Subproblem count
-    #[arg(short, long, value_name = "SUBPROBLEMS", default_value = "8192")]
+    #[arg(short, long, value_name = "SUBPROBLEMS", default_value = "16")]
     pub subproblem_count: usize,
 
     /// Max context
@@ -91,6 +103,10 @@ pub struct ReadArgs {
     /// Extract positions
     #[arg(short, long, value_name = "EXTRACT", default_value = "1")]
     pub extract: String,
+
+    /// Number output
+    #[arg(short, long)]
+    pub number: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +129,34 @@ impl ValueEnum for LogLevel {
 }
 
 type PositionList = Vec<Range<usize>>;
+
+// --------------------------------------------------
+pub fn check(args: &CheckArgs) -> Result<()> {
+    let file = open(&args.input)?;
+    let mut previous_line: Option<String> = None;
+    let mut num_errors = 0;
+
+    for (line_num, line) in file.lines().enumerate() {
+        let current = line?;
+        if let Some(ref previous) = previous_line {
+            if previous > &current {
+                num_errors += 1;
+                println!("LINE {line_num}");
+                //println!("PREV {previous}");
+                //println!("CUR  {current}");
+                //println!();
+            }
+        }
+        previous_line = Some(current);
+    }
+
+    println!(
+        "Found {num_errors} error{}.",
+        if num_errors == 1 { "" } else { "s" }
+    );
+
+    Ok(())
+}
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
@@ -138,6 +182,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         })
         .init();
 
+    let total_start = Instant::now();
     let start = Instant::now();
     let suf_arr = SuffixArray::new(open(&args.input)?, args.max_context);
     info!(
@@ -150,22 +195,60 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let start = Instant::now();
     //let sa = suf_arr.generate();
     let sufs = suf_arr.sort_subarrays(args.subproblem_count);
-    dbg!(&sufs);
-    let suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
-    let pivots = suf_arr.select_pivots(&suffixes);
-    dbg!(&pivots);
+    info!("Sorted subarrays in {:?}", start.elapsed());
+    //dbg!(&sufs);
+    //debug!("sorted subarrays = {sufs:#?}");
 
-    let pivot_locs = suf_arr.locate_pivots(&suffixes, &pivots);
-    dbg!(&pivot_locs);
+    // Collect all the subarray SA/LCP structures
+    let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
+    //let vals: Vec<_> = sub_suffixes
+    //    .iter()
+    //    .map(|v| v.iter().map(|&p| suf_arr.string_at(p)).collect::<Vec<_>>())
+    //    .collect();
+    //dbg!(&vals);
+    //for sub in vals {
+    //    if let Err(e) = SuffixArray::check(&sub) {
+    //        bail!(e);
+    //    }
+    //}
+    let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
 
-    let part_subs = suf_arr.partition_subarrays(&suffixes, &pivot_locs);
-    dbg!(&part_subs);
+    // Determine the pivot suffixes
+    let start = Instant::now();
+    let pivot_suffixes = suf_arr.select_pivots(&sub_suffixes);
+    info!("Selected pivot suffixes in {:?}", start.elapsed());
+    //dbg!(&pivot_suffixes);
 
-    let merged = suf_arr.merge_part_subs(&part_subs);
-    dbg!(merged);
+    // Find the pivots suffixes in each of the sub_suffixes
+    let start = Instant::now();
+    let pivot_locs = suf_arr.locate_pivots(&sub_suffixes, pivot_suffixes);
+    info!("Located pivot suffixes in {:?}", start.elapsed());
+    //dbg!(&pivot_locs);
 
-    info!("Generated suffix array in {:?}", start.elapsed());
-    //dbg!(&sa);
+    // Use the pivot locations to partition the SA/LCP subs
+    let start = Instant::now();
+    let (part_sas, part_lcps) =
+        suf_arr.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
+    info!("Partitioned subarrays in {:?}", start.elapsed());
+    //dbg!(&part_sas);
+
+    // Merge the partitioned sub
+    let start = Instant::now();
+    let merged_sa = suf_arr.merge_part_subs(part_sas, part_lcps);
+    info!("Merged subarrays in {:?}", start.elapsed());
+    //dbg!(&merged_sa);
+
+    //let vals: Vec<_> =
+    //    merged_sa.iter().map(|&p| suf_arr.string_at(p)).collect();
+    //if let Err(e) = SuffixArray::check(&vals) {
+    //    bail!(e);
+    //}
+
+    //for (i, v) in vals.iter().enumerate() {
+    //    println!("{i:3}: {v}");
+    //}
+
+    info!("Generated suffix array in {:?}", total_start.elapsed());
 
     let mut out = File::create(&args.output)?;
 
@@ -180,16 +263,16 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     //};
 
     // Write out suffix array length
-    out.write(&usize_to_bytes(suf_arr.len))?;
+    out.write(&usize_to_bytes(merged_sa.len()))?;
 
     // Write out suffix array as raw bytes
-    //let slice_u8: &[u8] = unsafe {
-    //    slice::from_raw_parts(
-    //        sa.as_ptr() as *const _,
-    //        suf_arr.len * mem::size_of::<usize>(),
-    //    )
-    //};
-    //out.write_all(slice_u8)?;
+    let slice_u8: &[u8] = unsafe {
+        slice::from_raw_parts(
+            merged_sa.as_ptr() as *const _,
+            merged_sa.len() * mem::size_of::<usize>(),
+        )
+    };
+    out.write_all(slice_u8)?;
 
     println!("See output file '{}'", args.output);
 
@@ -277,7 +360,7 @@ pub fn read(args: &ReadArgs) -> Result<()> {
 
     // Convert the Vec<u8> to a usize
     let sa_len = usize::from_ne_bytes(buffer);
-    println!("Length of suffix array: {sa_len}");
+    info!("Length of suffix array: {sa_len}");
 
     let start = Instant::now();
 
@@ -291,7 +374,6 @@ pub fn read(args: &ReadArgs) -> Result<()> {
 
     // Read the bytes into the buffer
     let mut buffer = vec![0u8; sa_len * mem::size_of::<usize>()];
-
     sa_file.read_exact(&mut buffer)?;
 
     // How can I have either 32 or 64 vectors?
@@ -304,10 +386,14 @@ pub fn read(args: &ReadArgs) -> Result<()> {
         std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
     };
 
-    println!("Read SA in {:?}", start.elapsed());
+    info!("Read SA in {:?}", start.elapsed());
 
     let seq = fs::read_to_string(&args.sequence)?.to_uppercase();
     let seq = format!("{}$", seq.trim());
+
+    if seq.len() != sa_len {
+        bail!("SA len {sa_len} does not match sequence len {}", seq.len());
+    }
 
     let positions: Vec<_> = parse_pos(&args.extract)?
         .into_iter()
@@ -323,11 +409,11 @@ pub fn read(args: &ReadArgs) -> Result<()> {
                 sa_len
             };
 
-            println!(
-                "{:3}: {pos:3} = {}",
-                start + 1,
-                seq.substring(pos, end)
-            );
+            if args.number {
+                println!("{:3}: {}", start + 1, seq.substring(pos, end));
+            } else {
+                println!("{}", seq.substring(pos, end));
+            }
         }
     }
 

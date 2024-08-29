@@ -13,6 +13,10 @@ fn main() {
 // --------------------------------------------------
 fn run(args: Cli) -> Result<()> {
     match &args.command {
+        Some(Command::Check(args)) => {
+            sufr::check(args)?;
+            Ok(())
+        }
         Some(Command::Create(args)) => {
             sufr::create(args)?;
             Ok(())
