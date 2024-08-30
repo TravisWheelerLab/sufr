@@ -2,7 +2,7 @@ mod suffix_array;
 
 use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
-use log::info;
+use log::{debug, info};
 use regex::Regex;
 use std::{
     fs::File,
@@ -73,6 +73,10 @@ pub struct CreateArgs {
     /// Output file
     #[arg(short, long, value_name = "OUTPUT", default_value = "sufr.sa")]
     pub output: String,
+
+    /// Verify order
+    #[arg(short, long)]
+    pub check: bool,
 
     /// Log level
     #[arg(short, long)]
@@ -210,19 +214,19 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     let total_start = Instant::now();
     let start = Instant::now();
-    let suf_arr = SuffixArray::new(open(&args.input)?, args.max_context);
+    let sa = SuffixArray::new(open(&args.input)?, args.max_context);
     info!(
         "Finished reading input of len {} in {:?}",
-        suf_arr.len,
+        sa.len,
         start.elapsed()
     );
-    //debug!("Raw input '{:?}'", suf_arr.text);
+    debug!("Raw input '{:?}'", sa.text);
 
     let start = Instant::now();
-    let sufs = suf_arr.sort_subarrays(args.subproblem_count);
+    let sufs = sa.sort_subarrays(args.subproblem_count);
     info!("Sorted subarrays in {:?}", start.elapsed());
     //dbg!(&sufs);
-    //debug!("sorted subarrays = {sufs:#?}");
+    debug!("sorted subarrays = {sufs:#?}");
 
     // Collect all the subarray SA/LCP structures
     let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
@@ -230,41 +234,58 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Determine the pivot suffixes
     let start = Instant::now();
-    let pivot_suffixes = suf_arr.select_pivots(&sub_suffixes);
+    let pivot_suffixes = sa.select_pivots(&sub_suffixes);
     info!("Selected pivot suffixes in {:?}", start.elapsed());
-    //dbg!(&pivot_suffixes);
+    debug!("{pivot_suffixes:#?}");
 
     // Find the pivots suffixes in each of the sub_suffixes
     let start = Instant::now();
-    let pivot_locs = suf_arr.locate_pivots(&sub_suffixes, pivot_suffixes);
+    let pivot_locs = sa.locate_pivots(&sub_suffixes, pivot_suffixes);
     info!("Located pivot suffixes in {:?}", start.elapsed());
-    //dbg!(&pivot_locs);
+    debug!("{pivot_locs:#?}");
 
     // Use the pivot locations to partition the SA/LCP subs
     let start = Instant::now();
     let (part_sas, part_lcps) =
-        suf_arr.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
+        sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
     info!("Partitioned subarrays in {:?}", start.elapsed());
-    //dbg!(&part_sas);
+    debug!("{part_sas:#?}");
 
     // Merge the partitioned subs
     let start = Instant::now();
-    let merged_sa = suf_arr.merge_part_subs(part_sas, part_lcps);
+    let merged_sa = sa.merge_part_subs(part_sas, part_lcps);
     info!("Merged subarrays in {:?}", start.elapsed());
-    //dbg!(&merged_sa);
+    debug!("{merged_sa:#?}");
 
-    info!("Generated suffix array in {:?}", total_start.elapsed());
+    // Check
+    if args.check {
+        let mut previous: Option<usize> = None;
+        let mut num_errors = 0;
+        for &cur in &merged_sa {
+            if let Some(p) = previous {
+                if !is_less(&sa.text[p..sa.len], &sa.text[cur..sa.len]) {
+                    num_errors += 1;
+                }
+            }
+            previous = Some(cur);
+        }
+        info!(
+            "Verified order, found {num_errors} error{}",
+            if num_errors == 1 { "" } else { "s" },
+        );
+    }
 
+    let start = Instant::now();
     let mut out = File::create(&args.output)?;
 
     // Dynamically choose 32/64
-    //let size = if suf_arr.len < u32::MAX as usize {
+    //let size = if sa.len < u32::MAX as usize {
     //    mem::size_of::<u32>()
     //} else {
     //    mem::size_of::<u64>()
     //};
     //let slice_u8: &[u8] = unsafe {
-    //    slice::from_raw_parts(sa.as_ptr() as *const _, suf_arr.len * size)
+    //    slice::from_raw_parts(sa.as_ptr() as *const _, sa.len * size)
     //};
 
     // Write out suffix array length
@@ -278,7 +299,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         )
     };
     out.write_all(slice_u8)?;
+    info!("Wrote output file in {:?}", start.elapsed());
 
+    info!("Total runtime {:?}", total_start.elapsed());
     println!("See output file '{}'", args.output);
 
     Ok(())

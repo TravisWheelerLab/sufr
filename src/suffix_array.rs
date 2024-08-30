@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use log::{debug, info};
 use rayon::prelude::*;
 use std::{
@@ -179,19 +179,6 @@ impl SuffixArray {
 
         // Concatenate all the merged subs into a single vector
         merged_subs.into_iter().flatten().collect()
-    }
-
-    pub fn check(vals: &Vec<String>) -> Result<()> {
-        let mut prev: Option<String> = None;
-        for (i, cur) in vals.iter().enumerate() {
-            if let Some(p) = prev {
-                if p > *cur {
-                    bail!(">>> {i} not sorted <<<")
-                }
-            }
-            prev = Some(cur.clone());
-        }
-        Ok(())
     }
 
     pub fn partition_subarrays<'a>(
