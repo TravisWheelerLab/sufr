@@ -232,7 +232,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     info!("Partitioned subarrays in {:?}", start.elapsed());
     //dbg!(&part_sas);
 
-    // Merge the partitioned sub
+    // Merge the partitioned subs
     let start = Instant::now();
     let merged_sa = suf_arr.merge_part_subs(part_sas, part_lcps);
     info!("Merged subarrays in {:?}", start.elapsed());
