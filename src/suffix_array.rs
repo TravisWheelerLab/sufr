@@ -21,6 +21,17 @@ impl SuffixArray {
         input: impl BufRead,
         max_context: Option<usize>,
     ) -> SuffixArray {
+        let text = SuffixArray::read_input(input);
+        let len = text.len();
+
+        SuffixArray {
+            text,
+            len,
+            max_context: max_context.unwrap_or(len),
+        }
+    }
+
+    pub fn read_input(input: impl BufRead) -> Vec<u8> {
         // TODO: Is this good and proper? Any use of the results
         // will need to similarly filter the inputs.
         let mut text: Vec<_> = input
@@ -30,13 +41,7 @@ impl SuffixArray {
             .filter(|&b| b >= 0b1000001 && b <= 0b1011010) // A-Z
             .collect();
         text.push(b'$');
-        let len = text.len();
-
-        SuffixArray {
-            text,
-            len,
-            max_context: max_context.unwrap_or(len),
-        }
+        text
     }
 
     pub fn string_at(self: &Self, pos: usize) -> String {

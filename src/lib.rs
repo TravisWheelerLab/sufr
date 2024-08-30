@@ -2,15 +2,14 @@ mod suffix_array;
 
 use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
-use log::{debug, info};
+use log::info;
 use regex::Regex;
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{self, BufRead, BufReader, BufWriter, Read, Write},
     mem,
     num::NonZeroUsize,
     ops::Range,
-    path::PathBuf,
     slice,
     time::Instant,
 };
@@ -43,9 +42,13 @@ pub enum Command {
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub struct CheckArgs {
-    /// Input
-    #[arg(value_name = "INPUT", default_value = "-")]
-    pub input: String,
+    /// Suffix array file
+    #[arg(short, long, value_name = "SA")]
+    pub array: String,
+
+    /// Sequence file
+    #[arg(short, long, value_name = "SEQ")]
+    pub sequence: String,
 }
 
 #[derive(Debug, Parser)]
@@ -54,10 +57,6 @@ pub struct CreateArgs {
     /// Input file
     #[arg(value_name = "INPUT")]
     pub input: String,
-
-    /// Search pattern
-    #[arg(value_name = "PATTERN")]
-    pub pattern: Option<String>,
 
     /// Subproblem count
     #[arg(short, long, value_name = "SUBPROBLEMS", default_value = "16")]
@@ -90,11 +89,11 @@ pub struct CreateArgs {
 pub struct ReadArgs {
     /// Suffix array file
     #[arg(short, long, value_name = "SA")]
-    pub array: PathBuf,
+    pub array: String,
 
     /// Sequence file
     #[arg(short, long, value_name = "SEQ")]
-    pub sequence: PathBuf,
+    pub sequence: String,
 
     /// Maximum length of sequence
     #[arg(short, long, value_name = "MAX", default_value = "0")]
@@ -132,30 +131,57 @@ type PositionList = Vec<Range<usize>>;
 
 // --------------------------------------------------
 pub fn check(args: &CheckArgs) -> Result<()> {
-    let file = open(&args.input)?;
-    let mut previous_line: Option<String> = None;
-    let mut num_errors = 0;
+    let sa = read_suffix_array(&args.array)?;
+    let sa_len = sa.len();
+    let seq = SuffixArray::read_input(open(&args.sequence)?);
 
-    for (line_num, line) in file.lines().enumerate() {
-        let current = line?;
-        if let Some(ref previous) = previous_line {
-            if previous > &current {
+    if sa_len != seq.len() {
+        bail!("SA len {sa_len} does not match sequence len {}", seq.len());
+    }
+
+    let start = Instant::now();
+    let mut previous: Option<usize> = None;
+    let mut num_errors = 0;
+    for (i, &cur) in sa.iter().enumerate() {
+        if let Some(p) = previous {
+            if !is_less(&seq[p..sa_len], &seq[cur..sa_len]) {
                 num_errors += 1;
-                println!("LINE {line_num}");
-                //println!("PREV {previous}");
-                //println!("CUR  {current}");
-                //println!();
+                println!("POS {}", i + 1);
             }
         }
-        previous_line = Some(current);
+        previous = Some(cur);
     }
 
     println!(
-        "Found {num_errors} error{}.",
-        if num_errors == 1 { "" } else { "s" }
+        "Found {num_errors} error{} in {:?}.",
+        if num_errors == 1 { "" } else { "s" },
+        start.elapsed()
     );
 
     Ok(())
+}
+
+// --------------------------------------------------
+fn is_less(s1: &[u8], s2: &[u8]) -> bool {
+    let lcp = s1.iter().zip(s2).take_while(|(a, b)| a == b).count();
+    match (s1.get(lcp), s2.get(lcp)) {
+        (Some(a), Some(b)) => a < b,
+        (None, Some(_)) => true,
+        _ => false,
+    }
+}
+
+#[test]
+fn test_is_less() {
+    assert!(is_less("$".as_bytes(), "A".as_bytes()));
+    assert!(is_less("A".as_bytes(), "C".as_bytes()));
+    assert!(!is_less("C".as_bytes(), "A".as_bytes()));
+    assert!(is_less("A".as_bytes(), "AA".as_bytes()));
+    assert!(!is_less("AA".as_bytes(), "A".as_bytes()));
+    assert!(is_less("AA".as_bytes(), "AC".as_bytes()));
+    assert!(!is_less("AC".as_bytes(), "AA".as_bytes()));
+    assert!(is_less("AA".as_bytes(), "AAC".as_bytes()));
+    assert!(!is_less("CA".as_bytes(), "AAC".as_bytes()));
 }
 
 // --------------------------------------------------
@@ -352,44 +378,13 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 
 // --------------------------------------------------
 pub fn read(args: &ReadArgs) -> Result<()> {
-    let mut sa_file = File::open(&args.array)?;
-
-    // The first 64-bits of the file contain the size of the SA
-    let mut buffer = [0; 8];
-    sa_file.read_exact(&mut buffer)?;
-
-    // Convert the Vec<u8> to a usize
-    let sa_len = usize::from_ne_bytes(buffer);
-    info!("Length of suffix array: {sa_len}");
-
     let start = Instant::now();
-
-    // Allocate a buffer to hold the data
-    //let size = if sa_len < u32::MAX as usize {
-    //    mem::size_of::<u32>()
-    //} else {
-    //    mem::size_of::<u64>()
-    //};
-    //let mut buffer = vec![0u8; sa_len * size];
-
-    // Read the bytes into the buffer
-    let mut buffer = vec![0u8; sa_len * mem::size_of::<usize>()];
-    sa_file.read_exact(&mut buffer)?;
-
-    // How can I have either 32 or 64 vectors?
-    // Convert the buffer into a slice of i32 integers
-    //let suffix_array: &[u32] = unsafe {
-    //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
-    //};
-
-    let suffix_array: &[usize] = unsafe {
-        std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
-    };
-
+    let sa = read_suffix_array(&args.array)?;
+    let sa_len = sa.len();
     info!("Read SA in {:?}", start.elapsed());
 
-    let seq = fs::read_to_string(&args.sequence)?.to_uppercase();
-    let seq = format!("{}$", seq.trim());
+    let seq =
+        String::from_utf8(SuffixArray::read_input(open(&args.sequence)?))?;
 
     if seq.len() != sa_len {
         bail!("SA len {sa_len} does not match sequence len {}", seq.len());
@@ -401,7 +396,7 @@ pub fn read(args: &ReadArgs) -> Result<()> {
         .collect();
 
     for start in positions {
-        if let Some(&pos) = suffix_array.get(start) {
+        if let Some(&pos) = sa.get(start) {
             //let pos = pos as usize;
             let end = if args.max_len > 0 {
                 pos + args.max_len
@@ -453,4 +448,39 @@ pub fn read(args: &ReadArgs) -> Result<()> {
     //dbg!(&lcp);
 
     Ok(())
+}
+
+fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
+    let mut sa_file = File::open(&filename)?;
+
+    // The first 64-bits of the file contain the size of the SA
+    let mut buffer = [0; 8];
+    sa_file.read_exact(&mut buffer)?;
+
+    // Convert the Vec<u8> to a usize
+    let sa_len = usize::from_ne_bytes(buffer);
+
+    // Allocate a buffer to hold the data
+    //let size = if sa_len < u32::MAX as usize {
+    //    mem::size_of::<u32>()
+    //} else {
+    //    mem::size_of::<u64>()
+    //};
+    //let mut buffer = vec![0u8; sa_len * size];
+
+    // Read the bytes into the buffer
+    let mut buffer = vec![0u8; sa_len * mem::size_of::<usize>()];
+    sa_file.read_exact(&mut buffer)?;
+
+    // How can I have either 32 or 64 vectors?
+    // Convert the buffer into a slice of i32 integers
+    //let suffix_array: &[u32] = unsafe {
+    //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
+    //};
+
+    let suffix_array: &[usize] = unsafe {
+        std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
+    };
+
+    Ok(suffix_array.to_vec())
 }
