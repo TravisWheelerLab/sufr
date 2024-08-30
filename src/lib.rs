@@ -231,6 +231,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     // Collect all the subarray SA/LCP structures
     let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
     let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
+    mem::drop(sufs);
 
     // Determine the pivot suffixes
     let start = Instant::now();
@@ -243,6 +244,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let pivot_locs = sa.locate_pivots(&sub_suffixes, pivot_suffixes);
     info!("Located pivot suffixes in {:?}", start.elapsed());
     debug!("{pivot_locs:#?}");
+    //mem::drop(pivot_suffixes);
 
     // Use the pivot locations to partition the SA/LCP subs
     let start = Instant::now();
@@ -250,6 +252,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
     info!("Partitioned subarrays in {:?}", start.elapsed());
     debug!("{part_sas:#?}");
+    //mem::drop(sub_suffixes);
+    //mem::drop(sub_lcps);
+    //mem::drop(pivot_locs);
 
     // Merge the partitioned subs
     let start = Instant::now();
