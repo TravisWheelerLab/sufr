@@ -231,6 +231,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     // Collect all the subarray SA/LCP structures
     let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
     let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
+    info!("Collected SA/LCPs");
     mem::drop(sufs);
 
     // Determine the pivot suffixes
