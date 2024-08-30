@@ -6,6 +6,7 @@ use std::{
     io::BufRead,
     mem,
     ops::Range,
+    sync::{Arc, Mutex},
 };
 
 // --------------------------------------------------
@@ -44,10 +45,17 @@ impl SuffixArray {
         text
     }
 
+    // --------------------------------------------------
+    // Assumes pos is always found -- danger
     pub fn string_at(self: &Self, pos: usize) -> String {
-        String::from_utf8(self.text[pos..].to_vec()).unwrap()
+        self.text
+            .get(pos..)
+            .map(|v| String::from_utf8(v.to_vec()).unwrap())
+            .unwrap()
     }
 
+    // --------------------------------------------------
+    // TODO: Use binary_search?
     fn upper_bound(self: &Self, target: &str, sa: &[usize]) -> Option<usize> {
         if sa
             .first()
@@ -57,6 +65,7 @@ impl SuffixArray {
         } else {
             let i =
                 sa.partition_point(|&p| self.string_at(p).as_str() <= target);
+
             if sa
                 .get(i)
                 .map_or(false, |&p| self.string_at(p).as_str() == target)
@@ -79,12 +88,8 @@ impl SuffixArray {
             .map(|sub_sa| {
                 let mut sub_locs = vec![];
                 let mut prev_end: Option<usize> = None;
-
                 for suffix in &pivot_suffixes {
                     let found = self.upper_bound(suffix, sub_sa);
-                    //let sub: Vec<_> =
-                    //    sub_sa.iter().map(|&p| self.string_at(p)).collect();
-                    //println!("suffix '{suffix}' in {sub:?} = {found:?}");
                     match found {
                         Some(i) => {
                             sub_locs.push(Some(prev_end.unwrap_or(0)..i))
@@ -115,42 +120,26 @@ impl SuffixArray {
     ) -> Vec<usize> {
         let pairs: Vec<_> = part_sas.iter().zip(part_lcps).collect();
         let merged_subs: Vec<_> = pairs
-            //.into_par_iter()
-            .iter()
+            .into_par_iter()
+            //.iter()
             .map(|(part_sa, part_lcp)| {
-                //let vals: Vec<_> = part_sa
-                //    .iter()
-                //    .map(|v| {
-                //        v.iter()
-                //            .map(|&p| self.string_at(p))
-                //            .collect::<Vec<_>>()
-                //    })
-                //    .collect();
-                //dbg!(vals);
-
-                //println!("\n>>> PART_SA {part_sa:?}");
                 let mut target_sa = convert_slices_to_vecs(part_sa.to_vec());
                 let mut target_lcp =
                     convert_slices_to_vecs(part_lcp.to_vec());
 
+                // Iteratively merge in pairs
                 while target_sa.len() > 1 {
                     let mut i = 0;
-                    //println!("i {i} target_sa len {}", target_sa.len());
                     let mut tmp_sa = vec![];
                     let mut tmp_lcp = vec![];
+
                     while (2 * i) < target_sa.len() {
                         let first = 2 * i;
                         let second = first + 1;
                         if second >= target_sa.len() {
-                            //println!(
-                            //    "pushing {:?} to target",
-                            //    target_sa[first]
-                            //);
                             tmp_sa.push(target_sa[first].to_vec());
                             tmp_lcp.push(target_lcp[first].to_vec());
-                            //println!("tmp_sa {tmp_sa:?}");
                         } else {
-                            //println!("Merging {first}/{second}");
                             let mut sa = target_sa[first].to_vec();
                             let mid = sa.len();
                             let mut sa2 = target_sa[second].to_vec();
@@ -169,77 +158,19 @@ impl SuffixArray {
                             let mut sa_w = sa.clone();
                             let mut lcp_w = lcp.clone();
 
-                            //println!(
-                            //    "sa = {sa:?} mid = {mid}, lcp = {lcp:?}"
-                            //);
-
                             self.merge(
                                 &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
                             );
 
-                            //println!("pushing {sa_w:?} to tmp");
                             tmp_sa.push(sa_w);
                             tmp_lcp.push(lcp);
-                            //println!("tmp_sa {tmp_sa:?}");
                         }
                         i += 1;
                     }
                     mem::swap(&mut target_sa, &mut tmp_sa);
                     mem::swap(&mut target_lcp, &mut tmp_lcp);
                 }
-                //println!("target_sa = {target_sa:?}");
-                //println!("target_lcp = {target_lcp:?}");
                 target_sa.get(0).map_or(vec![], |v| v.to_vec())
-
-                // Make a mutable copy of the first SA/LCP
-                // Handle possibly empty
-                //let mut sa: Vec<_> =
-                //    part_sa.get(0).map_or(vec![], |v| v.to_vec());
-                //let mut lcp = part_lcp.get(0).map_or(vec![], |v| v.to_vec());
-
-                //// Zero out the first position as it's no longer useful
-                //if let Some(first) = lcp.get_mut(0) {
-                //    *first = 0;
-                //}
-
-                //debug!("First SA {sa:#?}");
-                ////let first_sa: Vec<_> =
-                ////    sa.iter().map(|&p| self.string_at(p)).collect();
-                ////dbg!(first_sa);
-
-                //// Process the rest, appending to the already done
-                //for i in 1..part_sa.len() {
-                //    // The "midpoint" is the length of the SA before appending
-                //    let mid = sa.len();
-                //    debug!("Using mid {mid}");
-
-                //    // Merge the first two SA/LCPs
-                //    let mut next_sa = part_sa[i].to_vec();
-                //    let mut next_lcp = part_lcp[i].to_vec();
-                //    if let Some(first) = next_lcp.get_mut(0) {
-                //        *first = 0;
-                //    }
-                //    debug!("Adding next_sa {next_sa:#?}");
-                //    //let next_sa_vals: Vec<_> =
-                //    //    next_sa.iter().map(|&p| self.string_at(p)).collect();
-                //    //dbg!(next_sa_vals);
-
-                //    sa.append(&mut next_sa);
-                //    lcp.append(&mut next_lcp);
-
-                //    // Create working copies for merge
-                //    let mut sa_w = sa.clone();
-                //    let mut lcp_w = lcp.clone();
-
-                //    //println!("sa = {sa:?} mid = {mid}, lcp = {lcp:?}");
-                //    self.merge(&mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp);
-                //    sa = sa_w;
-                //    debug!("After merge sa = {sa:#?}");
-                //    //let apres_merge: Vec<_> =
-                //    //    sa.iter().map(|&p| self.string_at(p)).collect();
-                //    //dbg!(&apres_merge);
-                //}
-                //sa
             })
             .filter(|v| !v.is_empty())
             .collect();
@@ -376,20 +307,21 @@ impl SuffixArray {
             if n == 1 { "" } else { "s" }
         );
 
-        // This seems weird to reuse SuffixArray in this loop
-        // but I need access to the "text" inside the merge_sort
+        let counter = Arc::new(Mutex::new(0));
         let par_iter = (0..n).into_par_iter().map(|i| {
             let start = i * subset_size;
             let len = subset_size + if i == n - 1 { text_len % n } else { 0 };
-            let tmp = self.clone();
-            let (sub_sa, sub_lcp) = tmp.generate(start..start + len);
+            let (sub_sa, sub_lcp) = self.generate(start..start + len);
+            if let Ok(mut num) = counter.lock() {
+                *num += 1;
+                if *num % 10 == 0 {
+                    info!("  Sorted {num} subarrays...");
+                }
+            }
             (sub_sa, sub_lcp)
         });
 
-        let subparts: Vec<_> = par_iter.collect();
-        // It's not important for the parts to be in any order (?)
-        //subparts.sort_by(|a, b| a.0.cmp(&b.0));
-        subparts
+        par_iter.collect()
     }
 
     // This is the standalone generator for a suffix array
@@ -397,13 +329,11 @@ impl SuffixArray {
         self: &Self,
         range: Range<usize>,
     ) -> (Vec<usize>, Vec<usize>) {
-        //let mut sa: Vec<usize> = (0..self.len).collect();
         let mut sa: Vec<usize> = range.collect();
         let len = sa.len();
         let mut sa_w = sa.clone();
         let mut lcp = vec![0; len];
         let mut lcp_w = vec![0; len];
-        //self.merge_sort(&mut sa_w, &mut sa, self.len, &mut lcp, &mut lcp_w);
         self.merge_sort(&mut sa_w, &mut sa, len, &mut lcp, &mut lcp_w);
         (sa, lcp)
     }
@@ -452,20 +382,15 @@ impl SuffixArray {
         let mut y = suffix_array[mid..].to_vec();
         let mut lcp_x = lcp_w[..mid].to_vec();
         let mut lcp_y = lcp_w[mid..].to_vec();
-        //println!("merge x {x:?} y {y:?} lcp_x {lcp_x:?} lcp_y {lcp_y:?}");
         let mut len_x = x.len();
         let mut len_y = y.len();
-
-        // Bookkeeping
-        let mut m = 0;
+        let mut m = 0; // Last LCP from left side (x)
         let mut i = 0; // Index into x
         let mut j = 0; // Index into y
         let mut k = 0; // Index into z
 
         while i < len_x && j < len_y {
-            //println!("i {i} {} j {j} {}", x[i], y[j]);
             let l_x = lcp_x[i];
-            //println!("l_x {l_x} m {m}");
 
             if l_x > m {
                 z[k] = x[i];
@@ -481,28 +406,12 @@ impl SuffixArray {
                 // Prefix-context length for the suffixes
                 let context = min(self.max_context, max_n);
 
-                //println!(
-                //    "left  = {:?}",
-                //    String::from_utf8(self.text[(x[i] + m)..].to_vec())
-                //);
-                //println!(
-                //    "right = {:?}",
-                //    String::from_utf8(self.text[(y[j] + m)..].to_vec())
-                //);
-                //println!("context = {}", context - m);
-
                 // LCP(X_i, Y_j)
                 let n = m + lcp(
                     &self.text[(x[i] + m)..],
                     &self.text[(y[j] + m)..],
                     context - m,
                 );
-                //println!("m = {m}, n = {n}, max_n = {max_n}");
-                //println!(
-                //    "next char left '{}' vs right '{}'",
-                //    self.text[x[i] + n],
-                //    self.text[y[j] + n]
-                //);
 
                 // If the len of the LCP is the entire shorter
                 // sequence, take that.
@@ -595,12 +504,11 @@ fn transpose(matrix: Vec<Vec<Option<&[usize]>>>) -> Vec<Vec<&[usize]>> {
 
 // --------------------------------------------------
 fn lcp(s1: &[u8], s2: &[u8], len: usize) -> usize {
-    for i in 0..len {
-        if s1[i] != s2[i] {
-            return i;
-        }
-    }
-    len
+    s1.iter()
+        .take(len)
+        .zip(s2.iter().take(len))
+        .take_while(|(a, b)| a == b)
+        .count()
 }
 
 // --------------------------------------------------
@@ -742,7 +650,7 @@ fn lcp(s1: &[u8], s2: &[u8], len: usize) -> usize {
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::SuffixArray;
+    use super::{lcp, SuffixArray};
     use anyhow::Result;
     //use std::io::Cursor;
 
@@ -814,17 +722,33 @@ mod tests {
     //    Ok(())
     //}
 
-    //#[test]
-    //fn test_lcp() -> Result<()> {
-    //    assert_eq!(lcp(&[b'A'], &[b'C'], 1), 0);
+    #[test]
+    fn test_lcp() -> Result<()> {
+        assert_eq!(
+            lcp("A".to_string().as_bytes(), "C".to_string().as_bytes(), 1),
+            0
+        );
 
-    //    assert_eq!(lcp(&[b'A'], &[b'A'], 1), 1);
+        assert_eq!(
+            lcp("A".to_string().as_bytes(), "A".to_string().as_bytes(), 1),
+            1
+        );
 
-    //    assert_eq!(lcp(&[b'A', b'A'], &[b'A', b'A', b'C'], 2), 2);
+        assert_eq!(
+            lcp("A".to_string().as_bytes(), "AA".to_string().as_bytes(), 1),
+            1
+        );
 
-    //    assert_eq!(lcp(&[b'A', b'C'], &[b'A', b'A', b'C'], 2), 1);
+        assert_eq!(
+            lcp("AA".to_string().as_bytes(), "AAC".to_string().as_bytes(), 3),
+            2
+        );
 
-    //    assert_eq!(lcp(&[b'A', b'A'], &[b'A', b'A', b'C'], 1), 1);
-    //    Ok(())
-    //}
+        assert_eq!(
+            lcp("AC".to_string().as_bytes(), "ACA".to_string().as_bytes(), 2),
+            2
+        );
+
+        Ok(())
+    }
 }

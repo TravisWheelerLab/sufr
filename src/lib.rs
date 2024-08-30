@@ -219,7 +219,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     //debug!("Raw input '{:?}'", suf_arr.text);
 
     let start = Instant::now();
-    //let sa = suf_arr.generate();
     let sufs = suf_arr.sort_subarrays(args.subproblem_count);
     info!("Sorted subarrays in {:?}", start.elapsed());
     //dbg!(&sufs);
@@ -227,16 +226,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Collect all the subarray SA/LCP structures
     let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
-    //let vals: Vec<_> = sub_suffixes
-    //    .iter()
-    //    .map(|v| v.iter().map(|&p| suf_arr.string_at(p)).collect::<Vec<_>>())
-    //    .collect();
-    //dbg!(&vals);
-    //for sub in vals {
-    //    if let Err(e) = SuffixArray::check(&sub) {
-    //        bail!(e);
-    //    }
-    //}
     let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
 
     // Determine the pivot suffixes
@@ -263,16 +252,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let merged_sa = suf_arr.merge_part_subs(part_sas, part_lcps);
     info!("Merged subarrays in {:?}", start.elapsed());
     //dbg!(&merged_sa);
-
-    //let vals: Vec<_> =
-    //    merged_sa.iter().map(|&p| suf_arr.string_at(p)).collect();
-    //if let Err(e) = SuffixArray::check(&vals) {
-    //    bail!(e);
-    //}
-
-    //for (i, v) in vals.iter().enumerate() {
-    //    println!("{i:3}: {v}");
-    //}
 
     info!("Generated suffix array in {:?}", total_start.elapsed());
 
