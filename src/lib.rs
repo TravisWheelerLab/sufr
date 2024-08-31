@@ -67,7 +67,7 @@ pub struct CreateArgs {
     pub max_context: Option<usize>,
 
     /// Number of threads
-    #[arg(short, long, value_name = "THREADS")]
+    #[arg(short, long, value_name = "THREADS", default_value = "16")]
     pub threads: Option<usize>,
 
     /// Output file
@@ -231,6 +231,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     // Collect all the subarray SA/LCP structures
     let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
     let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
+    let sub_pivots: Vec<_> = sufs.iter().map(|t| t.2.clone()).collect();
 
     // Determine the pivot suffixes
     let start = Instant::now();

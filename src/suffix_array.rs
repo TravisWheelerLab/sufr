@@ -283,7 +283,7 @@ impl SuffixArray {
     pub fn sort_subarrays(
         self: &Self,
         num_partitions: usize,
-    ) -> Vec<(Vec<usize>, Vec<usize>)> {
+    ) -> Vec<(Vec<usize>, Vec<usize>, Vec<usize>)> {
         // Handle very small inputs
         // TODO: Better to have a max partition size?
         let text_len = self.len;
@@ -293,19 +293,23 @@ impl SuffixArray {
             "Using {n} partition{} of {subset_size} elements",
             if n == 1 { "" } else { "s" }
         );
+        let len = self.len as f64;
+        let pivots_per_part =
+            max(1, min((32.0 * len.log10()).ceil() as usize, self.len / n));
 
         let counter = Arc::new(Mutex::new(0));
         let par_iter = (0..n).into_par_iter().map(|i| {
             let start = i * subset_size;
             let len = subset_size + if i == n - 1 { text_len % n } else { 0 };
             let (sub_sa, sub_lcp) = self.generate(start..start + len);
+            let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
             if let Ok(mut num) = counter.lock() {
                 *num += 1;
                 if *num % 10 == 0 {
                     info!("  Sorted {num} subarrays...");
                 }
             }
-            (sub_sa, sub_lcp)
+            (sub_sa, sub_lcp, pivots)
         });
 
         par_iter.collect()
