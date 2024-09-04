@@ -224,8 +224,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         args.ignore_start_n,
     );
     info!(
-        "Finished reading input of len {} in {:?}",
+        "Read input of len {} with {} suffixes in {:?}",
         sa.len,
+        sa.suffixes.len(),
         start.elapsed()
     );
     debug!("Raw input '{:?}'", sa.text);

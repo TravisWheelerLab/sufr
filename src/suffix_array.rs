@@ -12,10 +12,21 @@ use std::{
 // --------------------------------------------------
 #[derive(Clone, Debug)]
 pub struct SuffixArray {
+    // The original text stored as bytes
     pub text: Vec<u8>,
+
+    // The length of the original text
     pub len: usize,
+
+    // The maximum length when comparing suffixes
     pub max_context: usize,
-    pub ignore_start_n: bool,
+
+    // The start positions of the suffixes
+    // When "ignore_start_n" is false, this will
+    // be all the positions from 0..len
+    // When true, this will only be the positions
+    // for suffixes that DO NOT start with N
+    pub suffixes: Vec<usize>,
 }
 
 impl SuffixArray {
@@ -25,13 +36,23 @@ impl SuffixArray {
         ignore_start_n: bool,
     ) -> SuffixArray {
         let text = SuffixArray::read_input(input);
+        let suffixes: Vec<usize> = (0..text.len())
+            .flat_map(|i| {
+                // 78 = 'N'
+                if ignore_start_n && text[i] == 78 {
+                    None
+                } else {
+                    Some(i)
+                }
+            })
+            .collect();
         let len = text.len();
 
         SuffixArray {
             text,
             len,
             max_context: max_context.unwrap_or(len),
-            ignore_start_n,
+            suffixes,
         }
     }
 
@@ -150,7 +171,6 @@ impl SuffixArray {
         let pairs: Vec<_> = part_sas.iter().zip(part_lcps).collect();
         let merged_subs: Vec<_> = pairs
             .into_par_iter()
-            //.iter()
             .map(|(part_sa, part_lcp)| {
                 let mut target_sa = convert_slices_to_vecs(part_sa.to_vec());
                 let mut target_lcp =
@@ -333,9 +353,9 @@ impl SuffixArray {
     // TODO: Make this part of initialization? I don't like having
     // to worry about this when reusing SuffixArray for sort_subarrays
     fn calc_num_partitions(self: &Self, suggested: usize) -> usize {
-        if suggested < self.len {
+        if suggested < self.suffixes.len() {
             suggested
-        } else if self.len > 500 {
+        } else if self.suffixes.len() > 500 {
             100
         } else {
             1
@@ -348,10 +368,11 @@ impl SuffixArray {
     ) -> Vec<(Vec<usize>, Vec<usize>, Vec<usize>)> {
         // Handle very small inputs
         // TODO: Better to have a max partition size?
-        let text_len = self.len;
-        let n = self.calc_num_partitions(num_partitions);
-        let subset_size = text_len / n;
-        let len = self.len as f64;
+        let num_suffixes = self.suffixes.len();
+        let num_parts = self.calc_num_partitions(num_partitions);
+        let subset_size = num_suffixes / num_parts;
+        //let pivots_per_part = 50;
+        let len = self.suffixes.len() as f64;
         let mut pivots_per_part = (32.0 * len.log10()).ceil() as usize;
         if (pivots_per_part > subset_size) || (pivots_per_part < 1) {
             pivots_per_part =
@@ -359,19 +380,25 @@ impl SuffixArray {
         }
 
         info!(
-            "{n} partition{} of {subset_size}, {pivots_per_part} pivots each",
-            if n == 1 { "" } else { "s" }
+            "{num_parts} partition{} of {subset_size}, \
+            {pivots_per_part} pivots each",
+            if num_parts == 1 { "" } else { "s" }
         );
 
         let counter = Arc::new(Mutex::new(0));
-        let par_iter = (0..n).into_par_iter().map(|i| {
+        let par_iter = (0..num_parts).into_par_iter().map(|i| {
             let start = i * subset_size;
-            let len = subset_size + if i == n - 1 { text_len % n } else { 0 };
+            let len = subset_size
+                + if i == num_parts - 1 {
+                    num_suffixes % num_parts
+                } else {
+                    0
+                };
             let (sub_sa, sub_lcp) = self.generate(start..start + len);
             let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
             if let Ok(mut num) = counter.lock() {
                 *num += 1;
-                if *num % 10 == 0 {
+                if *num % 1000 == 0 {
                     info!("  Sorted {num} subarrays...");
                 }
             }
@@ -387,7 +414,7 @@ impl SuffixArray {
         self: &Self,
         range: Range<usize>,
     ) -> (Vec<usize>, Vec<usize>) {
-        let mut sa: Vec<usize> = range.collect();
+        let mut sa: Vec<usize> = self.suffixes[range].to_vec();
         let len = sa.len();
         let mut sa_w = sa.clone();
         let mut lcp = vec![0; len];
@@ -428,18 +455,61 @@ impl SuffixArray {
         }
     }
 
-    fn merge(
+    //pub fn merge_sort(
+    //    self: &Self,
+    //    sa: &mut Vec<usize>,
+    //    sa_w: &mut Vec<usize>,
+    //    n: usize,
+    //    lcp: &mut Vec<usize>,
+    //    lcp_w: &mut Vec<usize>,
+    //) {
+    //    if n == 1 {
+    //        lcp[0] = 0;
+    //    } else {
+    //        let mid = n / 2;
+    //        self.merge_sort(
+    //            &mut sa_w[..mid].to_vec(),
+    //            &mut sa[..mid].to_vec(),
+    //            mid,
+    //            &mut lcp_w[..mid].to_vec(),
+    //            &mut lcp[..mid].to_vec(),
+    //        );
+
+    //        self.merge_sort(
+    //            &mut sa_w[mid..].to_vec(),
+    //            &mut sa[mid..].to_vec(),
+    //            n - mid,
+    //            &mut lcp_w[mid..].to_vec(),
+    //            &mut lcp[mid..].to_vec(),
+    //        );
+
+    //        let (x, y) = sa.split_at_mut(mid);
+    //        let (lcp_x, lcp_y) = lcp.split_at_mut(mid);
+    //        self.merge(
+    //            &mut x.to_vec(),
+    //            &mut y.to_vec(),
+    //            &mut lcp_x.to_vec(),
+    //            &mut lcp_y.to_vec(),
+    //            sa_w,
+    //            lcp,
+    //        );
+    //    }
+    //}
+
+    fn merge<'a>(
         self: &Self,
         suffix_array: &mut [usize],
         mid: usize,
         lcp_w: &mut [usize],
+        //x: &'a mut Vec<usize>,
+        //y: &'a mut Vec<usize>,
+        //lcp_x: &'a mut Vec<usize>,
+        //lcp_y: &'a mut Vec<usize>,
         z: &mut [usize],
         lcp_z: &mut [usize],
     ) {
-        let mut x = suffix_array[..mid].to_vec();
-        let mut y = suffix_array[mid..].to_vec();
-        let mut lcp_x = lcp_w[..mid].to_vec();
-        let mut lcp_y = lcp_w[mid..].to_vec();
+        let (mut x, mut y) = suffix_array.split_at_mut(mid);
+        let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
         let mut len_x = x.len();
         let mut len_y = y.len();
         let mut m = 0; // Last LCP from left side (x)
@@ -710,17 +780,15 @@ fn lcp(s1: &[u8], s2: &[u8], len: usize) -> usize {
 mod tests {
     use super::{lcp, SuffixArray};
     use anyhow::Result;
-    //use std::io::Cursor;
+    use std::io::Cursor;
 
     #[test]
     fn test_upper_bound() {
-        //          012345
-        let text = "TTTAGC".as_bytes().to_vec();
-        let sa = SuffixArray {
-            text: text.clone(),
-            len: text.len(),
-            max_context: text.len(),
-        };
+        //                      012345
+        let text = Cursor::new("TTTAGC");
+        let max_context = None;
+        let ignore_start_n = false;
+        let sa = SuffixArray::new(text, max_context, ignore_start_n);
 
         // The suffix "AGC$" is found before "GC$" and "C$
         assert_eq!(sa.upper_bound(3, &[5, 4]), None);
@@ -734,22 +802,18 @@ mod tests {
 
     #[test]
     fn test_sort_subarrays() -> Result<()> {
-        let text = "AACTGCGGAT$".as_bytes().to_vec();
-        let suf_arr = SuffixArray {
-            text: text.clone(),
-            len: text.len(),
-            max_context: text.len(),
-        };
+        let text = Cursor::new("AACTGCGGAT$");
+        let max_context = None;
+        let ignore_start_n = false;
+        let suf_arr = SuffixArray::new(text, max_context, ignore_start_n);
 
         // Ensure we get two subarrays
         let subs = suf_arr.sort_subarrays(2);
         assert_eq!(subs.len(), 2);
 
         for (sa, _lcp, _) in subs {
-            let suffixes: Vec<String> = sa
-                .iter()
-                .flat_map(|&p| String::from_utf8(text[p..].to_vec()))
-                .collect();
+            let suffixes: Vec<String> =
+                sa.iter().map(|&p| suf_arr._string_at(p)).collect();
 
             // Check that suffixes are correctly ordered
             for pair in suffixes.windows(2) {
