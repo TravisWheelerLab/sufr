@@ -74,6 +74,10 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "OUTPUT", default_value = "sufr.sa")]
     pub output: String,
 
+    /// Ignore sequences starting with N
+    #[arg(short, long)]
+    pub ignore_start_n: bool,
+
     /// Verify order
     #[arg(short, long)]
     pub check: bool,
@@ -214,7 +218,11 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     let total_start = Instant::now();
     let start = Instant::now();
-    let sa = SuffixArray::new(open(&args.input)?, args.max_context);
+    let sa = SuffixArray::new(
+        open(&args.input)?,
+        args.max_context,
+        args.ignore_start_n,
+    );
     info!(
         "Finished reading input of len {} in {:?}",
         sa.len,
@@ -232,18 +240,19 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
     let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
     let sub_pivots: Vec<_> = sufs.iter().map(|t| t.2.clone()).collect();
+    mem::drop(sufs);
 
     // Determine the pivot suffixes
     let start = Instant::now();
-    let pivot_suffixes = sa.select_pivots(&sub_suffixes);
-    info!("Selected pivot suffixes in {:?}", start.elapsed());
-    debug!("{pivot_suffixes:#?}");
+    let pivots = sa.select_pivots(sub_pivots, sub_suffixes.len());
+    info!("Selected {} pivots in {:?}", pivots.len(), start.elapsed());
+    debug!("pivots = {pivots:#?}");
 
     // Find the pivots suffixes in each of the sub_suffixes
     let start = Instant::now();
-    let pivot_locs = sa.locate_pivots(&sub_suffixes, pivot_suffixes);
+    let pivot_locs = sa.locate_pivots(&sub_suffixes, pivots);
     info!("Located pivot suffixes in {:?}", start.elapsed());
-    debug!("{pivot_locs:#?}");
+    debug!("pivot_locs = {pivot_locs:#?}");
 
     // Use the pivot locations to partition the SA/LCP subs
     let start = Instant::now();
@@ -251,6 +260,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
     info!("Partitioned subarrays in {:?}", start.elapsed());
     debug!("{part_sas:#?}");
+    //mem::drop(sub_suffixes);
+    //mem::drop(sub_lcps);
+    //mem::drop(pivot_locs);
 
     // Merge the partitioned subs
     let start = Instant::now();
@@ -260,6 +272,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Check
     if args.check {
+        let start = Instant::now();
         let mut previous: Option<usize> = None;
         let mut num_errors = 0;
         for &cur in &merged_sa {
@@ -270,9 +283,11 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             }
             previous = Some(cur);
         }
+
         info!(
-            "Verified order, found {num_errors} error{}",
+            "Checked order, found {num_errors} error{} in {:?}",
             if num_errors == 1 { "" } else { "s" },
+            start.elapsed()
         );
     }
 

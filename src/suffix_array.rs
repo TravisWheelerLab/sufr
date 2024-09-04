@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{debug, info};
+use log::info;
 use rayon::prelude::*;
 use std::{
     cmp::{max, min},
@@ -15,12 +15,14 @@ pub struct SuffixArray {
     pub text: Vec<u8>,
     pub len: usize,
     pub max_context: usize,
+    pub ignore_start_n: bool,
 }
 
 impl SuffixArray {
     pub fn new(
         input: impl BufRead,
         max_context: Option<usize>,
+        ignore_start_n: bool,
     ) -> SuffixArray {
         let text = SuffixArray::read_input(input);
         let len = text.len();
@@ -29,6 +31,7 @@ impl SuffixArray {
             text,
             len,
             max_context: max_context.unwrap_or(len),
+            ignore_start_n,
         }
     }
 
@@ -47,7 +50,8 @@ impl SuffixArray {
 
     // --------------------------------------------------
     // Assumes pos is always found -- danger
-    pub fn string_at(self: &Self, pos: usize) -> String {
+    // TODO: Remove?
+    pub fn _string_at(self: &Self, pos: usize) -> String {
         self.text
             .get(pos..)
             .map(|v| String::from_utf8(v.to_vec()).unwrap())
@@ -55,23 +59,38 @@ impl SuffixArray {
     }
 
     // --------------------------------------------------
-    // TODO: Use binary_search?
-    fn upper_bound(self: &Self, target: &str, sa: &[usize]) -> Option<usize> {
-        if sa
-            .first()
-            .map_or(false, |&p| self.string_at(p).as_str() > target)
-        {
+    pub fn is_less(self: &Self, s1: usize, s2: usize) -> bool {
+        let lcp = (s1..self.len)
+            .zip(s2..self.len)
+            .take_while(|(a, b)| self.text[*a] == self.text[*b])
+            .count();
+
+        match (self.text.get(s1 + lcp), self.text.get(s2 + lcp)) {
+            (Some(a), Some(b)) => a < b,
+            (None, Some(_)) => true,
+            _ => false,
+        }
+    }
+
+    // --------------------------------------------------
+    fn upper_bound(
+        self: &Self,
+        target: usize,
+        sa: &[usize],
+    ) -> Option<usize> {
+        // See if target is less than the first element
+        if self.is_less(target, sa[0]) {
             None
         } else {
-            let i =
-                sa.partition_point(|&p| self.string_at(p).as_str() <= target);
+            // Find where all the values are less than target
+            let i = sa.partition_point(|&p| self.is_less(p, target));
 
-            if sa
-                .get(i)
-                .map_or(false, |&p| self.string_at(p).as_str() == target)
-            {
+            // If the value at the partition is the same as the target
+            if sa.get(i).map_or(false, |&v| v == target) {
+                // Then return the next value, which might be out of range
                 Some(i + 1)
             } else {
+                // Else return the partition point
                 Some(i)
             }
         }
@@ -81,25 +100,35 @@ impl SuffixArray {
     pub fn locate_pivots(
         self: &Self,
         sub_sas: &Vec<Vec<usize>>,
-        pivot_suffixes: Vec<String>,
+        pivots: Vec<usize>,
     ) -> Vec<Vec<Option<Range<usize>>>> {
         sub_sas
+            //.iter()
             .into_par_iter()
             .map(|sub_sa| {
                 let mut sub_locs = vec![];
                 let mut prev_end: Option<usize> = None;
-                for suffix in &pivot_suffixes {
-                    let found = self.upper_bound(suffix, sub_sa);
-                    match found {
-                        Some(i) => {
-                            sub_locs.push(Some(prev_end.unwrap_or(0)..i))
+                let mut exhausted = false;
+
+                for &pivot in &pivots {
+                    if exhausted {
+                        // Add None once a pivot has consumed the suffixes
+                        sub_locs.push(None);
+                    } else {
+                        let found = self.upper_bound(pivot, sub_sa);
+                        match found {
+                            Some(i) => {
+                                sub_locs.push(Some(prev_end.unwrap_or(0)..i));
+
+                                // Check if sub SA is exhausted
+                                exhausted = i == sub_sa.len();
+                            }
+                            _ => sub_locs.push(None),
                         }
-                        _ => sub_locs.push(None),
+                        prev_end = found;
                     }
-                    prev_end = found;
                 }
 
-                // The last partition
                 let last_index = prev_end.unwrap_or(0);
                 if last_index < sub_sa.len() {
                     sub_locs.push(Some(last_index..sub_sa.len()));
@@ -175,8 +204,6 @@ impl SuffixArray {
             .filter(|v| !v.is_empty())
             .collect();
 
-        debug!("merged_subs = {merged_subs:#?}");
-
         // Concatenate all the merged subs into a single vector
         merged_subs.into_iter().flatten().collect()
     }
@@ -216,40 +243,74 @@ impl SuffixArray {
         (transpose(ret_sa), transpose(ret_lcp))
     }
 
-    pub fn select_pivots(self: &Self, sa: &Vec<Vec<usize>>) -> Vec<String> {
-        let n = sa.len();
-        let len = self.len as f64;
-        let pivots_per_part =
-            max(1, min((32.0 * len.log10()).ceil() as usize, self.len / n));
-        //let pivots_per_part = 2;
-        debug!("pivots_per_part {pivots_per_part}");
-
-        let mut pivots: Vec<_> = sa
-            .into_par_iter()
-            .flat_map(|s| self.sample_pivots(s, pivots_per_part))
+    pub fn select_pivots(
+        self: &Self,
+        mut sub_pivots: Vec<Vec<usize>>,
+        num_partitions: usize,
+    ) -> Vec<usize> {
+        // The pivots were plucked from their sorted
+        // suffixes and have no LCPs, so construct.
+        let mut sub_lcps: Vec<Vec<usize>> = sub_pivots
+            .iter()
+            .map(|pivots| {
+                (0..pivots.len())
+                    .map(|i| {
+                        if i == 0 {
+                            0
+                        } else {
+                            let s1 = &self.text[pivots[i - 1]..];
+                            let s2 = &self.text[pivots[i]..];
+                            s1.iter()
+                                .take(self.max_context)
+                                .zip(s2)
+                                .take_while(|(a, b)| a == b)
+                                .count()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
             .collect();
-        //dbg!(&pivots);
 
-        let num_pivots = pivots.len();
-        let mut pivots_w = pivots.clone();
-        let mut temp1 = vec![0; num_pivots];
-        let mut temp2 = vec![0; num_pivots];
-        self.merge_sort(
-            &mut pivots,
-            &mut pivots_w,
-            num_pivots,
-            &mut temp1,
-            &mut temp2,
-        );
+        while sub_pivots.len() > 1 {
+            let mut i = 0;
+            let mut tmp_sa = vec![];
+            let mut tmp_lcp = vec![];
 
-        //println!("pivots after merge_sort = {:?}", &pivots);
-        //println!("pivots_w after merge_sort = {:?}", &pivots_w);
+            while (2 * i) < sub_pivots.len() {
+                let first = 2 * i;
+                let second = first + 1;
+                if second >= sub_pivots.len() {
+                    tmp_sa.push(sub_pivots[first].to_vec());
+                    tmp_lcp.push(sub_lcps[first].to_vec());
+                } else {
+                    let mut sa = sub_pivots[first].to_vec();
+                    let mid = sa.len();
+                    let mut sa2 = sub_pivots[second].to_vec();
+                    sa.append(&mut sa2);
 
-        let num_partitions = sa.len();
-        let final_pivots = self.sample_pivots(&pivots_w, num_partitions - 1);
-        let suffixes: Vec<String> =
-            final_pivots.iter().map(|&p| self.string_at(p)).collect();
-        suffixes
+                    let mut lcp = sub_lcps[first].to_vec();
+                    let mut lcp2 = sub_lcps[second].to_vec();
+                    lcp.append(&mut lcp2);
+
+                    // Create working copies for merge
+                    let mut sa_w = sa.clone();
+                    let mut lcp_w = lcp.clone();
+
+                    self.merge(&mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp);
+
+                    tmp_sa.push(sa_w);
+                    tmp_lcp.push(lcp);
+                }
+                i += 1;
+            }
+            mem::swap(&mut sub_pivots, &mut tmp_sa);
+            mem::swap(&mut sub_lcps, &mut tmp_lcp);
+        }
+
+        match sub_pivots.get(0) {
+            Some(pivots) => self.sample_pivots(&pivots, num_partitions - 1),
+            _ => vec![],
+        }
     }
 
     pub fn sample_pivots(
@@ -257,14 +318,15 @@ impl SuffixArray {
         sa: &[usize],
         pivots_per_part: usize,
     ) -> Vec<usize> {
-        let gap = sa.len()
+        let step = sa.len()
             / if pivots_per_part > 0 {
                 pivots_per_part
             } else {
                 1
             };
+
         (0..pivots_per_part)
-            .map(|i| sa[(i + 1) * gap - 1])
+            .map(|i| sa[(i + 1) * step - 1])
             .collect()
     }
 
@@ -289,13 +351,17 @@ impl SuffixArray {
         let text_len = self.len;
         let n = self.calc_num_partitions(num_partitions);
         let subset_size = text_len / n;
+        let len = self.len as f64;
+        let mut pivots_per_part = (32.0 * len.log10()).ceil() as usize;
+        if (pivots_per_part > subset_size) || (pivots_per_part < 1) {
+            pivots_per_part =
+                if subset_size == 1 { 1 } else { subset_size / 2 };
+        }
+
         info!(
-            "Using {n} partition{} of {subset_size} elements",
+            "{n} partition{} of {subset_size}, {pivots_per_part} pivots each",
             if n == 1 { "" } else { "s" }
         );
-        let len = self.len as f64;
-        let pivots_per_part =
-            max(1, min((32.0 * len.log10()).ceil() as usize, self.len / n));
 
         let counter = Arc::new(Mutex::new(0));
         let par_iter = (0..n).into_par_iter().map(|i| {
@@ -309,6 +375,7 @@ impl SuffixArray {
                     info!("  Sorted {num} subarrays...");
                 }
             }
+
             (sub_sa, sub_lcp, pivots)
         });
 
@@ -649,22 +716,20 @@ mod tests {
     fn test_upper_bound() {
         //          012345
         let text = "TTTAGC".as_bytes().to_vec();
-        let suf_arr = SuffixArray {
+        let sa = SuffixArray {
             text: text.clone(),
             len: text.len(),
             max_context: text.len(),
         };
 
-        assert_eq!(suf_arr.upper_bound("A$", &[3, 5, 4]), None);
-        assert_eq!(suf_arr.upper_bound("C$", &[3, 5, 4]), Some(2));
-        assert_eq!(suf_arr.upper_bound("G$", &[3, 5, 4]), Some(1));
-        //assert_eq!(suf_arr.upper_bound("T$", &[0, 1, 2]), 3);
-        //assert_eq!(suf_arr.upper_bound("ACG$", &[0, 1, 2]), Some(0));
-        //assert_eq!(suf_arr.upper_bound("G$", &[0, 1, 2]), Some(3));
-        //assert_eq!(suf_arr.upper_bound("A$", &[1, 2]), Some(0));
-        //assert_eq!(suf_arr.upper_bound("C$", &[0, 1, 2]), Some(1));
-        //assert_eq!(suf_arr.upper_bound("G$", &[0, 1, 2]), Some(2));
-        //assert_eq!(suf_arr.upper_bound("T$", &[0, 1, 2]), Some(3));
+        // The suffix "AGC$" is found before "GC$" and "C$
+        assert_eq!(sa.upper_bound(3, &[5, 4]), None);
+
+        // The suffix "TAGC$" is beyond all the values
+        assert_eq!(sa.upper_bound(2, &[3, 5, 4]), Some(3));
+
+        // The "C$" is the last value
+        assert_eq!(sa.upper_bound(5, &[3, 5, 4]), Some(2));
     }
 
     #[test]
@@ -680,7 +745,7 @@ mod tests {
         let subs = suf_arr.sort_subarrays(2);
         assert_eq!(subs.len(), 2);
 
-        for (sa, _lcp) in subs {
+        for (sa, _lcp, _) in subs {
             let suffixes: Vec<String> = sa
                 .iter()
                 .flat_map(|&p| String::from_utf8(text[p..].to_vec()))
