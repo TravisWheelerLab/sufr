@@ -414,6 +414,11 @@ impl SuffixArray {
         self: &Self,
         range: Range<usize>,
     ) -> (Vec<usize>, Vec<usize>) {
+        let mut iter_sa: Vec<usize> = self.suffixes[range.clone()].to_vec();
+        let mut tmp = iter_sa.clone();
+        let high = iter_sa.len() - 1;
+        self.iter_merge_sort(&mut iter_sa, &mut tmp, 0, high);
+
         let mut sa: Vec<usize> = self.suffixes[range].to_vec();
         let len = sa.len();
         let mut sa_w = sa.clone();
@@ -421,6 +426,74 @@ impl SuffixArray {
         let mut lcp_w = vec![0; len];
         self.merge_sort(&mut sa_w, &mut sa, len, &mut lcp, &mut lcp_w);
         (sa, lcp)
+    }
+
+    fn iter_merge_sort(
+        self: &Self,
+        a: &mut [usize],
+        temp: &mut [usize],
+        low: usize,
+        high: usize,
+    ) {
+        // divide the array into blocks of size `m`
+        // m = [1, 2, 4, 8, 16…]
+        let mut m = 1;
+        while m <= (high - low) {
+            // for m = 1, i = 0, 2, 4, 6, 8…
+            // for m = 2, i = 0, 4, 8…
+            // for m = 4, i = 0, 8…
+            // …
+            let mut i = low;
+            while i < high {
+                let from = i;
+                let mid = i + m - 1;
+                let to = min(i + 2 * m - 1, high);
+                self.iter_merge(a, temp, from, mid, to);
+                i += 2 * m;
+            }
+            m = 2 * m;
+        }
+    }
+
+    // Merge two sorted subarrays `A[from…mid]` and `A[mid+1…to]`
+    fn iter_merge(
+        self: &Self,
+        a: &mut [usize],
+        temp: &mut [usize],
+        from: usize,
+        mid: usize,
+        to: usize,
+    ) {
+        let mut k = from;
+        let mut i = from;
+        let mut j = mid + 1;
+
+        // loop till no elements are left in the left and right runs
+        while i <= mid && j <= to {
+            if a[i] < a[j] {
+                temp[k] = a[i];
+                i += 1;
+            } else {
+                temp[k] = a[j];
+                j += 1;
+            }
+            k += 1;
+        }
+
+        // copy remaining elements
+        while i <= mid {
+            temp[k] = a[i];
+            i += 1;
+            k += 1;
+        }
+
+        // no need to copy the second half (since the remaining items
+        // are already in their correct position in the temporary array)
+        // copy back to the original array to reflect sorted order
+        //for (int i = from; i <= to; i++) {
+        for i in from..=to {
+            a[i] = temp[i];
+        }
     }
 
     pub fn merge_sort(
@@ -455,56 +528,11 @@ impl SuffixArray {
         }
     }
 
-    //pub fn merge_sort(
-    //    self: &Self,
-    //    sa: &mut Vec<usize>,
-    //    sa_w: &mut Vec<usize>,
-    //    n: usize,
-    //    lcp: &mut Vec<usize>,
-    //    lcp_w: &mut Vec<usize>,
-    //) {
-    //    if n == 1 {
-    //        lcp[0] = 0;
-    //    } else {
-    //        let mid = n / 2;
-    //        self.merge_sort(
-    //            &mut sa_w[..mid].to_vec(),
-    //            &mut sa[..mid].to_vec(),
-    //            mid,
-    //            &mut lcp_w[..mid].to_vec(),
-    //            &mut lcp[..mid].to_vec(),
-    //        );
-
-    //        self.merge_sort(
-    //            &mut sa_w[mid..].to_vec(),
-    //            &mut sa[mid..].to_vec(),
-    //            n - mid,
-    //            &mut lcp_w[mid..].to_vec(),
-    //            &mut lcp[mid..].to_vec(),
-    //        );
-
-    //        let (x, y) = sa.split_at_mut(mid);
-    //        let (lcp_x, lcp_y) = lcp.split_at_mut(mid);
-    //        self.merge(
-    //            &mut x.to_vec(),
-    //            &mut y.to_vec(),
-    //            &mut lcp_x.to_vec(),
-    //            &mut lcp_y.to_vec(),
-    //            sa_w,
-    //            lcp,
-    //        );
-    //    }
-    //}
-
     fn merge<'a>(
         self: &Self,
         suffix_array: &mut [usize],
         mid: usize,
         lcp_w: &mut [usize],
-        //x: &'a mut Vec<usize>,
-        //y: &'a mut Vec<usize>,
-        //lcp_x: &'a mut Vec<usize>,
-        //lcp_y: &'a mut Vec<usize>,
         z: &mut [usize],
         lcp_z: &mut [usize],
     ) {

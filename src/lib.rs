@@ -114,6 +114,10 @@ pub struct ReadArgs {
     /// Number output
     #[arg(short, long)]
     pub number: bool,
+
+    /// Output
+    #[arg(short, long)]
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -414,6 +418,11 @@ pub fn read(args: &ReadArgs) -> Result<()> {
         .flat_map(|r| r.collect::<Vec<_>>())
         .collect();
 
+    let mut output: Box<dyn Write> = match &args.output {
+        Some(out_name) => Box::new(File::create(out_name)?),
+        _ => Box::new(io::stdout()),
+    };
+
     for start in positions {
         if let Some(&pos) = sa.get(start) {
             //let pos = pos as usize;
@@ -424,9 +433,14 @@ pub fn read(args: &ReadArgs) -> Result<()> {
             };
 
             if args.number {
-                println!("{:3}: {}", start + 1, seq.substring(pos, end));
+                writeln!(
+                    output,
+                    "{:3}: {}",
+                    start + 1,
+                    seq.substring(pos, end)
+                )?;
             } else {
-                println!("{}", seq.substring(pos, end));
+                writeln!(output, "{}", seq.substring(pos, end))?;
             }
         }
     }
@@ -470,7 +484,8 @@ pub fn read(args: &ReadArgs) -> Result<()> {
 }
 
 fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
-    let mut sa_file = File::open(&filename)?;
+    let mut sa_file =
+        File::open(&filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
     // The first 64-bits of the file contain the size of the SA
     let mut buffer = [0; 8];
