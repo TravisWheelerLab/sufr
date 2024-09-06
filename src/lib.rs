@@ -274,6 +274,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let merged_sa = sa.merge_part_subs(part_sas, part_lcps);
     info!("Merged subarrays in {:?}", start.elapsed());
     debug!("{merged_sa:#?}");
+    info!("Suffix generated in {:?}", total_start.elapsed());
 
     // Check
     if args.check {
@@ -322,7 +323,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     out.write_all(slice_u8)?;
     info!("Wrote output file in {:?}", start.elapsed());
 
-    info!("Total runtime {:?}", total_start.elapsed());
     println!("See output file '{}'", args.output);
 
     Ok(())
