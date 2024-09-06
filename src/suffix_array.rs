@@ -418,7 +418,7 @@ impl SuffixArray {
         self: &Self,
         range: Range<usize>,
     ) -> (Vec<usize>, Vec<usize>) {
-        info!("  Sorting {range:?}");
+        //info!("  Sorting {range:?}");
         let mut iter_sa: Vec<usize> = self.suffixes[range.clone()].to_vec();
         let mut tmp_sa = iter_sa.clone();
         //let mut iter_lcp = self.gen_lcp(&iter_sa);
