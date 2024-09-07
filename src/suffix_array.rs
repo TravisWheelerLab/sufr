@@ -69,6 +69,19 @@ impl SuffixArray {
         text
     }
 
+    #[allow(dead_code)]
+    pub fn check_order(&self, sa: &[usize]) -> Vec<usize> {
+        let mut errors = vec![];
+        for window in sa.windows(2) {
+            if let [prev, cur] = window {
+                if !self.is_less(*prev, *cur) {
+                    errors.push(*prev);
+                }
+            }
+        }
+        errors
+    }
+
     // --------------------------------------------------
     // Assumes pos is always found -- danger
     // TODO: Remove?
@@ -386,8 +399,8 @@ impl SuffixArray {
         );
 
         let counter = Arc::new(Mutex::new(0));
-        //let par_iter = (0..num_parts).into_par_iter().map(|i| {
-        let par_iter = (0..num_parts).map(|i| {
+        //let par_iter = (0..num_parts).map(|i| {
+        let par_iter = (0..num_parts).into_par_iter().map(|i| {
             let start = i * subset_size;
             let len = subset_size
                 + if i == num_parts - 1 {
@@ -412,75 +425,118 @@ impl SuffixArray {
 
     // This is the standalone generator for a suffix array
     pub fn generate(&self, range: Range<usize>) -> (Vec<usize>, Vec<usize>) {
-        info!("  Sorting {range:?}");
+        //info!("  Sorting {range:?}");
         let mut source_sa: Vec<usize> = self.suffixes[range.clone()].to_vec();
-        let mut target_sa = vec![0; source_sa.len()];
-        let mut source_lcp = target_sa.clone();
-        let mut target_lcp = target_sa.clone();
-        let high = source_sa.len() - 1;
+        let mut target_sa = source_sa.clone();
+        let mut source_lcp = vec![0; source_sa.len()];
+        let mut target_lcp = source_lcp.clone();
+
         self.iter_merge_sort(
             &mut source_sa,
             &mut target_sa,
             &mut source_lcp,
             &mut target_lcp,
-            0,
-            high,
         );
+
+        // Figure out which of source/target has the answer
+        let n = source_sa.len();
+        let depth = n.ilog2() + if n.is_power_of_two() { 0 } else { 1 };
+        if depth % 2 == 0 {
+            mem::swap(&mut source_sa, &mut target_sa);
+            mem::swap(&mut source_lcp, &mut target_lcp);
+        }
+
         (target_sa, target_lcp)
+
+        //println!("<<< AFTER MERGE SORT >>>");
+        //println!("final_sa  {final_sa:?}");
+        //println!("final_lcp {final_lcp:?}");
+
+        //let errors = self.check_order(final_sa);
+        //if !errors.is_empty() {
+        //    let suffixes: Vec<String> =
+        //        final_sa.iter().map(|&p| self._string_at(p)).collect();
+        //    dbg!(&final_sa);
+        //    dbg!(suffixes);
+        //    panic!("NOT ORDERED");
+        //}
+
+        //(final_sa.to_vec(), final_lcp.to_vec())
 
         //let mut sa: Vec<usize> = self.suffixes[range].to_vec();
         //let len = sa.len();
         //let mut sa_w = sa.clone();
         //let mut lcp = vec![0; len];
         //let mut lcp_w = vec![0; len];
-        //self.merge_sort(&mut sa_w, &mut sa, len, &mut lcp, &mut lcp_w);
+        //self._merge_sort(&mut sa_w, &mut sa, len, &mut lcp, &mut lcp_w);
         //(sa, lcp)
     }
 
-    fn iter_merge_sort(
+    //) -> (&'a [usize], &'a [usize]) {
+    fn iter_merge_sort<'a>(
         &self,
-        source_sa: &mut [usize],
-        target_sa: &mut [usize],
-        source_lcp: &mut [usize],
-        target_lcp: &mut [usize],
-        low: usize,
-        high: usize,
+        mut source_sa: &'a mut [usize],
+        mut target_sa: &'a mut [usize],
+        mut source_lcp: &'a mut [usize],
+        mut target_lcp: &'a mut [usize],
     ) {
+        let low = 0;
+        let high = source_sa.len() - 1;
+        //println!("low {low} high {high} top {}", high - low);
+
         // divide the array into blocks of size `m`
         // m = [1, 2, 4, 8, 16…]
         let mut m = 1;
+        let mut n = 0;
         while m <= (high - low) {
-            println!(
-                ">>> m {m} low {low} high {high} high - low {}",
-                high - low
-            );
+            // Don't swap the first time
+            if n > 0 {
+                //println!("n {n} SWAP target/source");
+                mem::swap(&mut target_sa, &mut source_sa);
+                mem::swap(&mut target_lcp, &mut source_lcp);
+            }
+
+            //println!(">>> m {m} <<<");
             // for m = 1, i = 0, 2, 4, 6, 8...
             // for m = 2, i = 0, 4, 8...
             // for m = 4, i = 0, 8...
             // ...
-            let mut i = low;
-            while i < high {
+            for i in (low..=high).step_by(2 * m) {
                 let from = i;
-                let to = min(i + 2 * m - 1, high);
-                //let dist = to - from;
-                //let half_dist = max(1, dist / 2);
-                //let half_dist = if dist == 1 { 1 } else { dist / 2 };
-                //let mid = from + half_dist;
-                //let mut mid = if m == 1 { i + m } else { i + m - 1 };
-                let mut mid = i + m;
-                if mid > to {
-                    mid = from + ((from - to) / 2)
+                let mut to = i + 2 * m - 1;
+                if to > high {
+                    to = high;
                 }
+                let mut mid = i + m;
+                if mid > high {
+                    mid = high;
+                }
+                //println!("  i {i}: from {from} to {to} mid {mid}");
 
                 self.iter_merge(
                     source_sa, target_sa, source_lcp, target_lcp, from, mid,
                     to,
                 );
-
-                i += 2 * m;
             }
             m = 2 * m;
+            n += 1;
         }
+
+        //let errors = self.check_order(target_sa);
+        //if !errors.is_empty() {
+        //    let suffixes: Vec<String> =
+        //        target_sa.iter().map(|&p| self._string_at(p)).collect();
+        //    dbg!(&target_sa);
+        //    dbg!(suffixes);
+        //    panic!("NOT ORDERED");
+        //}
+
+        //println!(".....Finished merge in {n}.....");
+        //println!("source_sa  {source_sa:?}");
+        //println!("target_sa  {target_sa:?}");
+        //println!("source_lcp {source_lcp:?}");
+        //println!("target_lcp {target_lcp:?}");
+        //(target_sa, target_lcp)
     }
 
     fn iter_merge<'a>(
@@ -493,46 +549,64 @@ impl SuffixArray {
         mid: usize,
         to: usize,
     ) {
-        println!(">>> MERGE FROM {from} MID {mid} TO {to}");
+        //println!("\n\n>>> MERGE FROM {from} MID {mid} TO {to}");
 
         let mut m = 0; // Last LCP from left side (x)
         let mut idx_x = from; // Index into x
         let mut idx_y = mid; // Index into y
-        let mut k = from; // Index into z
-                          //let mut len_x = mid - from;
-                          //let mut len_y = to - mid + 1;
-        let mut end_x = mid;
-        let mut end_y = to;
-        println!(
-            "x {:?} y {:?}",
-            &source_sa[idx_x..end_x],
-            &source_sa[idx_y..=end_y],
-        );
-        //println!("start values");
-        //dbg!(&source_sa);
-        //dbg!(&target_sa);
-        //dbg!(&source_lcp);
-        //dbg!(&target_lcp);
+        let mut k = from; // Index into target
+                          //let mut end_x = mid;
+                          //let mut end_y = to;
+        let mut take_x = mid - from;
+        let mut take_y = to - mid + 1;
+        //println!(
+        //    "idx_x {idx_x} idx_y {idx_y} take_x {take_x} take_y {take_y}"
+        //);
+        //println!(
+        //    "x {}-{} {:?} y {}-{} {:?}",
+        //    idx_x,
+        //    idx_x + take_x,
+        //    &source_sa[idx_x..idx_x + take_x],
+        //    idx_y,
+        //    idx_y + take_y,
+        //    &source_sa[idx_y..idx_y + take_y],
+        //);
+        //println!("merge start values");
+        //println!("source_sa  {source_sa:?}");
+        //println!("target_sa  {target_sa:?}");
+        //println!("source_lcp {source_lcp:?}");
+        //println!("target_lcp {target_lcp:?}");
 
-        let mut round = 0;
-        while idx_x < end_x && idx_y <= end_y {
-            round += 1;
-            println!("ROUND {round}");
+        //let mut round = 0;
+        //while i < len_x && j < len_y {
+        //while idx_x < end_x && idx_y < end_y {
+        while take_x > 0 && take_y > 0 {
+            //round += 1;
+            //println!("ROUND {round}");
             let l_x = source_lcp[idx_x];
-            println!("idx_x {idx_x} idx_y {idx_y} k {k} end_x {end_x} end_y {end_y} l_x {l_x} m {m}");
-            println!("x {} y {}", source_sa[idx_x], source_sa[idx_y]);
+            //println!("k {k} end_x {end_x} end_y {end_y} l_x {l_x} m {m}");
+            //println!(
+            //    "idx_x {} = {:?}",
+            //    source_sa[idx_x],
+            //    String::from_utf8((&self.text[source_sa[idx_x]..]).to_vec())
+            //);
+            //println!(
+            //    "idx_y {} = {:?}",
+            //    source_sa[idx_y],
+            //    String::from_utf8((&self.text[source_sa[idx_y]..]).to_vec())
+            //);
 
             if l_x > m {
-                println!("ONE");
+                //println!("ONE");
                 target_sa[k] = source_sa[idx_x];
                 target_lcp[k] = l_x;
             } else if l_x < m {
-                println!("TWO");
+                //println!("TWO");
                 target_sa[k] = source_sa[idx_y];
                 target_lcp[k] = m;
                 m = l_x;
             } else {
-                println!("THREE");
+                //println!("THREE");
                 // Length of shorter suffix
                 let max_n =
                     self.len - max(source_sa[idx_x], source_sa[idx_y]);
@@ -547,83 +621,96 @@ impl SuffixArray {
                     context - m,
                 );
 
-                println!("  n {n}");
+                //println!("  n {n}");
 
                 // If the len of the LCP is the entire shorter
                 // sequence, take that (the one with the higher SA value)
                 if n == max_n {
-                    println!("  A");
-                    target_sa[k] = max(source_sa[idx_x], source_sa[idx_y])
+                    target_sa[k] = max(source_sa[idx_x], source_sa[idx_y]);
+                    //println!("  A: took '{}'", target_sa[k]);
                 }
                 // Else, look at the next char after the LCP
                 // to determine order.
                 else if self.text[source_sa[idx_x] + n]
                     < self.text[source_sa[idx_y] + n]
                 {
-                    println!("  B");
-                    target_sa[k] = source_sa[idx_x]
+                    target_sa[k] = source_sa[idx_x];
+                    //println!("  B: took x '{}'", target_sa[k]);
                 }
                 // Else take from the right
                 else {
-                    println!("  C");
-                    target_sa[k] = source_sa[idx_y]
+                    target_sa[k] = source_sa[idx_y];
+                    //println!("  C: took y '{}'", target_sa[k]);
                 }
-
-                dbg!(&target_sa);
 
                 // If we took from the right...
                 if target_sa[k] == source_sa[idx_x] {
+                    //println!("Setting target_lcp[{k}] = l_x {l_x}");
                     target_lcp[k] = l_x;
                 } else {
+                    //println!("Setting target_lcp[{k}] = m {m}");
                     target_lcp[k] = m
                 }
+                //println!("Setting m {m} = n {n}");
                 m = n;
             }
 
             if target_sa[k] == source_sa[idx_x] {
                 idx_x += 1;
+                take_x -= 1;
+                //println!("Took from x, inc idx_x to '{idx_x}'");
             } else {
                 idx_y += 1;
+                take_y -= 1;
+                //println!("Took from y, inc idx_y to '{idx_y}' and SWAP");
                 mem::swap(&mut idx_x, &mut idx_y);
-                mem::swap(&mut end_x, &mut end_y);
-                //mem::swap(&mut lcp_x, &mut lcp_y);
-                //mem::swap(&mut i, &mut j);
+                //mem::swap(&mut end_x, &mut end_y);
+                mem::swap(&mut take_x, &mut take_y);
             }
+
+            //println!(
+            //    "END LOOP: idx_x {idx_x} idx_y {idx_y} take_x {take_x} take_y {take_y}"
+            //);
 
             k += 1;
         }
 
         // Copy rest of the data from X to Z.
-        while idx_x < end_x {
+        //while idx_x < end_x {
+        while take_x > 0 {
+            //println!("Copying idx_x {idx_x}");
             target_sa[k] = source_sa[idx_x];
             target_lcp[k] = source_lcp[idx_x];
             idx_x += 1;
+            take_x -= 1;
             k += 1;
         }
 
         // Copy rest of the data from Y to Z.
-        if idx_y < end_y {
+        //if idx_y < end_y {
+        if take_y > 0 {
+            //println!("Copying idx_y {idx_y}");
             target_sa[k] = source_sa[idx_y];
             target_lcp[k] = m;
             idx_y += 1;
+            take_y -= 1;
             k += 1;
 
-            while idx_y < end_y {
+            //while idx_y < end_y {
+            while take_y > 0 {
+                //println!("Copying idx_y {idx_y}");
                 target_sa[k] = source_sa[idx_y];
                 target_lcp[k] = source_lcp[idx_y];
                 idx_y += 1;
+                take_y -= 1;
                 k += 1;
             }
         }
-        //println!("end values");
-        //dbg!(&source_sa);
-        //dbg!(&target_sa);
-        //dbg!(&source_lcp);
-        //dbg!(&target_lcp);
-
-        // Why can't I swap?
-        //mem::swap(&mut target_sa, &mut source_sa);
-        //mem::swap(&mut target_lcp, &mut source_lcp);
+        //println!("merge end values");
+        //println!("source_sa  {source_sa:?}");
+        //println!("target_sa  {target_sa:?}");
+        //println!("source_lcp {source_lcp:?}");
+        //println!("target_lcp {target_lcp:?}");
     }
 
     // Merge two sorted subarrays `A[from…mid]` and `A[mid+1…to]`

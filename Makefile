@@ -1,15 +1,15 @@
-CHECK  = cargo run -- read
-CREATE = cargo run -- create --log debug
-READ   = cargo run -- check
+#CHECK  = cargo run -- read
+#CREATE = cargo run -- create --log info
+#READ   = cargo run -- check
 
-#SUFR   = ./target/release/sufr
-#CHECK  = $(SUFR) read
-#CREATE = $(SUFR) create --log info
-#READ   = $(SUFR) check
+SUFR   = ./target/release/sufr
+CHECK  = $(SUFR) read
+CREATE = $(SUFR) create --log info
+READ   = $(SUFR) check
 
 create-s1:
 	#$(CREATE) tests/inputs/seq1.txt -o seq1.sa
-	cargo run -- create --log debug tests/inputs/seq1.txt -o seq1.sa
+	cargo run -- create --log debug tests/inputs/seq1.txt -o seq1.sa -s 3
 
 read-s1:
 	$(READ) -s tests/inputs/seq1.txt -a seq1.sa -e 1-100
