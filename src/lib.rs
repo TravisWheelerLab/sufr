@@ -234,6 +234,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         start.elapsed()
     );
     debug!("Raw input '{:?}'", sa.text);
+    //dbg!(&sa);
 
     let start = Instant::now();
     let sufs = sa.sort_subarrays(args.subproblem_count);

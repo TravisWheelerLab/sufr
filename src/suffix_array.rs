@@ -132,6 +132,20 @@ impl SuffixArray {
         sub_sas: &Vec<Vec<usize>>,
         pivots: Vec<usize>,
     ) -> Vec<Vec<Option<Range<usize>>>> {
+        // The pivots divide the SA into
+        // sections, so we may have a section
+        // before the first pivot and one after
+        // the last such that two pivots may
+        // divide the SA into 3 parts like so:
+        // 0 ----- P1 -- P2 ------ END
+        // We could also have no values that fall
+        // into a pivot range so that we get just
+        // something at the end:
+        // 0 <None> P1 <None> P2 ------ END
+        // Or something at the start:
+        // 0 ----- P1 <None> P2 <None> END
+        // Or nothing at all:
+        // 0 <None> P1 <None> P2 <None> END
         sub_sas
             //.iter()
             .into_par_iter()
@@ -172,18 +186,24 @@ impl SuffixArray {
     }
 
     // --------------------------------------------------
+    // TODO: Take SA/LCPs as mutable
     pub fn merge_part_subs(
         &self,
         part_sas: Vec<Vec<&[usize]>>,
         part_lcps: Vec<Vec<&[usize]>>,
     ) -> Vec<usize> {
         let pairs: Vec<_> = part_sas.iter().zip(part_lcps).collect();
+        //let merged_subs: Vec<_> = (0..part_sas.len())
         let merged_subs: Vec<_> = pairs
             .into_par_iter()
             .map(|(part_sa, part_lcp)| {
+                //.map(|i| {
+                // TODO: Avoid allocation here?
                 let mut target_sa = convert_slices_to_vecs(part_sa.to_vec());
                 let mut target_lcp =
                     convert_slices_to_vecs(part_lcp.to_vec());
+                //let target_sa = part_sas[i];
+                //let mut target_lcp = part_lcps[i];
 
                 // Iteratively merge in pairs
                 while target_sa.len() > 1 {
@@ -198,30 +218,42 @@ impl SuffixArray {
                             tmp_sa.push(target_sa[first].to_vec());
                             tmp_lcp.push(target_lcp[first].to_vec());
                         } else {
-                            let mut sa = target_sa[first].to_vec();
-                            let mid = sa.len();
+                            let mut source_sa = target_sa[first].to_vec();
+                            let mid = source_sa.len();
                             let mut sa2 = target_sa[second].to_vec();
-                            sa.append(&mut sa2);
+                            source_sa.append(&mut sa2);
 
-                            let mut lcp = target_lcp[first].to_vec();
+                            let mut source_lcp = target_lcp[first].to_vec();
                             let mut lcp2 = target_lcp[second].to_vec();
-                            lcp.append(&mut lcp2);
+                            source_lcp.append(&mut lcp2);
 
                             // Zero out first LCP
-                            if let Some(v) = lcp.get_mut(0) {
+                            if let Some(v) = source_lcp.get_mut(0) {
                                 *v = 0;
                             }
 
                             // Create working copies for merge
-                            let mut sa_w = sa.clone();
-                            let mut lcp_w = lcp.clone();
+                            let mut target_sa = source_sa.clone();
+                            let mut target_lcp = source_lcp.clone();
 
-                            self._merge(
-                                &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
+                            //self._merge(
+                            //    &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
+                            //);
+
+                            let from = 0;
+                            let to = source_sa.len() - 1;
+                            self.iter_merge(
+                                &mut source_sa,
+                                &mut target_sa,
+                                &mut source_lcp,
+                                &mut target_lcp,
+                                from,
+                                mid,
+                                to,
                             );
 
-                            tmp_sa.push(sa_w);
-                            tmp_lcp.push(lcp);
+                            tmp_sa.push(target_sa);
+                            tmp_lcp.push(target_lcp);
                         }
                         i += 1;
                     }
@@ -243,6 +275,9 @@ impl SuffixArray {
         lcp: &'a Vec<Vec<usize>>,
         pivot_locs: Vec<Vec<Option<Range<usize>>>>,
     ) -> (Vec<Vec<&'a [usize]>>, Vec<Vec<&'a [usize]>>) {
+        // Given the SA/LCP arrays for each of the subarrays
+        // and the pivot locations, subdivide the SA/LCP
+        // subarrays further.
         let lcp_pairs: Vec<_> = lcp.iter().zip(&pivot_locs).collect();
         let ret_lcp: Vec<_> = lcp_pairs
             .into_par_iter()
@@ -269,6 +304,10 @@ impl SuffixArray {
             })
             .collect();
 
+        //dbg!(&ret_sa);
+        //dbg!(transpose(ret_sa.clone()));
+
+        // Rotate the
         (transpose(ret_sa), transpose(ret_lcp))
     }
 
@@ -290,6 +329,8 @@ impl SuffixArray {
             .collect()
     }
 
+    // TODO: Is it possible to take the sub_pivots mutably?
+    // As written, I make temporary copies to use mem::swap
     pub fn select_pivots(
         &self,
         mut sub_pivots: Vec<Vec<usize>>,
@@ -302,6 +343,11 @@ impl SuffixArray {
             .map(|pivots| self.gen_lcp(pivots))
             .collect();
 
+        // This uses a sliding function to merge
+        // Given 0, 1, 2, 3, 4, 5, it will
+        // Merge 0/1, 2/3, 5 => 0, 1, 2
+        // Merge 0/1, 2      => 0, 1
+        // Merge 0/1         => 0
         while sub_pivots.len() > 1 {
             let mut i = 0;
             let mut tmp_sa = vec![];
@@ -311,28 +357,45 @@ impl SuffixArray {
                 let first = 2 * i;
                 let second = first + 1;
                 if second >= sub_pivots.len() {
+                    // TODO: This is the base case, down to just one
+                    // partition. Do I have to make copies of the final
+                    // pivots or could I do something clever here?
                     tmp_sa.push(sub_pivots[first].to_vec());
                     tmp_lcp.push(sub_lcps[first].to_vec());
                 } else {
-                    let mut sa = sub_pivots[first].to_vec();
-                    let mid = sa.len();
+                    // I have to make copies of the data to pass
+                    // mutably into the merge function
+                    let mut source_sa = sub_pivots[first].to_vec();
+                    let mid = source_sa.len();
                     let mut sa2 = sub_pivots[second].to_vec();
-                    sa.append(&mut sa2);
+                    source_sa.append(&mut sa2);
 
-                    let mut lcp = sub_lcps[first].to_vec();
+                    let mut source_lcp = sub_lcps[first].to_vec();
                     let mut lcp2 = sub_lcps[second].to_vec();
-                    lcp.append(&mut lcp2);
+                    source_lcp.append(&mut lcp2);
 
                     // Create working copies for merge
-                    let mut sa_w = sa.clone();
-                    let mut lcp_w = lcp.clone();
+                    let mut target_sa = source_sa.clone();
+                    let mut target_lcp = source_lcp.clone();
 
-                    self._merge(
-                        &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
+                    //self._merge(
+                    //    &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
+                    //);
+
+                    let from = 0;
+                    let to = source_sa.len() - 1;
+                    self.iter_merge(
+                        &mut source_sa,
+                        &mut target_sa,
+                        &mut source_lcp,
+                        &mut target_lcp,
+                        from,
+                        mid,
+                        to,
                     );
 
-                    tmp_sa.push(sa_w);
-                    tmp_lcp.push(lcp);
+                    tmp_sa.push(target_sa);
+                    tmp_lcp.push(target_lcp);
                 }
                 i += 1;
             }
@@ -431,6 +494,15 @@ impl SuffixArray {
         let mut source_lcp = vec![0; source_sa.len()];
         let mut target_lcp = source_lcp.clone();
 
+        //let high = source_sa.len();
+        //self.iter_merge_sort(
+        //    vec![source_sa, target_sa],
+        //    vec![source_lcp, target_lcp],
+        //    0,
+        //    1,
+        //    high,
+        //);
+
         self.iter_merge_sort(
             &mut source_sa,
             &mut target_sa,
@@ -472,7 +544,15 @@ impl SuffixArray {
         //(sa, lcp)
     }
 
-    //) -> (&'a [usize], &'a [usize]) {
+    //fn iter_merge_sort(
+    //    &self,
+    //    sa: Vec<Vec<usize>>,
+    //    lcp: Vec<Vec<usize>>,
+    //    mut source: usize,
+    //    mut target: usize,
+    //    high: usize,
+    //) {
+
     fn iter_merge_sort<'a>(
         &self,
         mut source_sa: &'a mut [usize],
@@ -488,6 +568,7 @@ impl SuffixArray {
         // m = [1, 2, 4, 8, 16…]
         let mut m = 1;
         let mut n = 0;
+
         while m <= (high - low) {
             // Don't swap the first time
             if n > 0 {
@@ -517,9 +598,12 @@ impl SuffixArray {
                     source_sa, target_sa, source_lcp, target_lcp, from, mid,
                     to,
                 );
+                //self.iter_merge(sa, lcp, source, target, from, mid, to);
             }
             m = 2 * m;
             n += 1;
+            //source = (source + 1) % 2;
+            //target = (target + 1) % 2;
         }
 
         //let errors = self.check_order(target_sa);
@@ -539,6 +623,10 @@ impl SuffixArray {
         //(target_sa, target_lcp)
     }
 
+    //sa: &mut Vec<Vec<usize>>,
+    //lcp: &mut Vec<Vec<usize>>,
+    //source: usize,
+    //target: usize,
     fn iter_merge<'a>(
         &self,
         source_sa: &'a mut [usize],
@@ -549,7 +637,11 @@ impl SuffixArray {
         mid: usize,
         to: usize,
     ) {
-        //println!("\n\n>>> MERGE FROM {from} MID {mid} TO {to}");
+        //println!("\n>>> MERGE FROM {from} MID {mid} TO {to} source");
+        //let (&mut ref source_sa, &mut ref source_lcp) =
+        //    (&mut sa[source], &mut lcp[source]);
+        //let (&mut ref target_sa, &mut ref target_lcp) =
+        //    (&mut sa[target], &mut lcp[target]);
 
         let mut m = 0; // Last LCP from left side (x)
         let mut idx_x = from; // Index into x
@@ -615,13 +707,13 @@ impl SuffixArray {
                 let context = min(self.max_context, max_n);
 
                 // LCP(X_i, Y_j)
-                let n = m + lcp(
+                let n = m + find_lcp(
                     &self.text[(source_sa[idx_x] + m)..],
                     &self.text[(source_sa[idx_y] + m)..],
                     context - m,
                 );
 
-                //println!("  n {n}");
+                //println!(" lcp {n}");
 
                 // If the len of the LCP is the entire shorter
                 // sequence, take that (the one with the higher SA value)
@@ -663,8 +755,8 @@ impl SuffixArray {
                 idx_y += 1;
                 take_y -= 1;
                 //println!("Took from y, inc idx_y to '{idx_y}' and SWAP");
-                mem::swap(&mut idx_x, &mut idx_y);
                 //mem::swap(&mut end_x, &mut end_y);
+                mem::swap(&mut idx_x, &mut idx_y);
                 mem::swap(&mut take_x, &mut take_y);
             }
 
@@ -824,7 +916,7 @@ impl SuffixArray {
                 let context = min(self.max_context, max_n);
 
                 // LCP(X_i, Y_j)
-                let n = m + lcp(
+                let n = m + find_lcp(
                     &self.text[(x[i] + m)..],
                     &self.text[(y[j] + m)..],
                     context - m,
@@ -920,7 +1012,7 @@ fn transpose(matrix: Vec<Vec<Option<&[usize]>>>) -> Vec<Vec<&[usize]>> {
 }
 
 // --------------------------------------------------
-fn lcp(s1: &[u8], s2: &[u8], len: usize) -> usize {
+fn find_lcp(s1: &[u8], s2: &[u8], len: usize) -> usize {
     s1.iter()
         .take(len)
         .zip(s2.iter().take(len))
@@ -1067,7 +1159,7 @@ fn lcp(s1: &[u8], s2: &[u8], len: usize) -> usize {
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::{lcp, SuffixArray};
+    use super::{find_lcp, SuffixArray};
     use anyhow::Result;
     use std::io::Cursor;
 
@@ -1132,29 +1224,49 @@ mod tests {
     //}
 
     #[test]
-    fn test_lcp() -> Result<()> {
+    fn test_find_lcp() -> Result<()> {
         assert_eq!(
-            lcp("A".to_string().as_bytes(), "C".to_string().as_bytes(), 1),
+            find_lcp(
+                "A".to_string().as_bytes(),
+                "C".to_string().as_bytes(),
+                1
+            ),
             0
         );
 
         assert_eq!(
-            lcp("A".to_string().as_bytes(), "A".to_string().as_bytes(), 1),
+            find_lcp(
+                "A".to_string().as_bytes(),
+                "A".to_string().as_bytes(),
+                1
+            ),
             1
         );
 
         assert_eq!(
-            lcp("A".to_string().as_bytes(), "AA".to_string().as_bytes(), 1),
+            find_lcp(
+                "A".to_string().as_bytes(),
+                "AA".to_string().as_bytes(),
+                1
+            ),
             1
         );
 
         assert_eq!(
-            lcp("AA".to_string().as_bytes(), "AAC".to_string().as_bytes(), 3),
+            find_lcp(
+                "AA".to_string().as_bytes(),
+                "AAC".to_string().as_bytes(),
+                3
+            ),
             2
         );
 
         assert_eq!(
-            lcp("AC".to_string().as_bytes(), "ACA".to_string().as_bytes(), 2),
+            find_lcp(
+                "AC".to_string().as_bytes(),
+                "ACA".to_string().as_bytes(),
+                2
+            ),
             2
         );
 
