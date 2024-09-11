@@ -5,12 +5,12 @@ I copied many ideas from the original C++ implementation [CaPS-SA](https://githu
 
 The basic ideas are as follow:
 
-* Read the input file as `u8` (unsigned 8-bit integer values). Note: The original C++ uses 32-bit integers if the number of suffixes falls is less than 2^32 and 64-bit integers, otherwise. This Rust implementation currently only uses `usize` values, which defaults to 64-bit on 64-bit architectures. Copying this idea would certainly use less disk space for the resulting SA and may result in greater performance and less memory usage when creating.
-* Select the suffixes, which are normally 0 to the length of the text but there is the option to skip suffixes starting with _N_.
-* Split the input into subarrays and sort, also producing LCPs and candidate suffixes for global pivots
-* Select and order global pivots.
-* Use the global pivots to partition the original subarrays into new subarrays where all the values fall into given ranges. E.g., all the values less than the first/lowest pivot suffix, then all the values greater than or equal to the first pivot and less than the second, and so on.
-* The resulting sub-subarrays will have sorted selections from the original subarrays that can be merged into one array. Because the values fall into nonoverlapping ranges, these subarrays can be appended in order to produce the final SA.
+* Read the input file as `u8` (unsigned 8-bit integer values). 
+* Select the suffixes, which are normally 0 to the length of the text but there is the option to skip suffixes starting with _N_. Note: The original C++ uses 32-bit integers if the input length is less than 2^32 and 64-bit integers, otherwise. This Rust implementation currently only uses `usize` values, which defaults to 64-bit on 64-bit architectures. Copying this idea would certainly use less disk space for the resulting SA and may result in greater performance and less memory usage.
+* Split the input into subarrays and sort, also producing arrays for the LCP and ordered candidate suffixes for global pivots.
+* Merge the candidate pivots and downsample to select suffixes for global pivots.
+* Use the global pivots to partition the original subarrays into sub-subarrays containing the suffixes that fall into given ranges. E.g., all the values less than the first/lowest pivot suffix, then all the values greater than or equal to the first pivot and less than the second, and so on.
+* The resulting sub-subarrays are sorted that are merged. Because the values fall into nonoverlapping ranges, these subarrays can be appended in order to produce the final SA.
 * Produce a binary-encoded output file of `usize` values containing the length of the SA in the first position and the sorted SA values following.
 
 Some advantages to this algorithm:
@@ -38,7 +38,7 @@ Options:
   -h, --help  Print help
 ```
 
-* Execute `cargo build --release` to build an optimized binary in _./target/release/sufr_, whic you can execute directly and copy into your `$PATH`:
+* Execute `cargo build --release` to build an optimized binary in _./target/release/sufr_, which you can execute directly and copy into your `$PATH`:
 
 ```
 $ cargo build --release
@@ -104,7 +104,7 @@ $ cat tests/inputs/seq1.txt
 CTCACC
 ```
 
-The algorithm works in the following steps.
+The algorithm works as follows.
 First, read the input file as a string of `u8` bytes (note this could therefore fail if provided UTF-8) and uppercase the characters. 
 At present, no filtering is applied, i.e., screening for a particular genomic alphabet (DNA/RNA/AA) or ambiguity codes (IUPAC), which is why the sequence should include no line breaks (at present).
 To illustrate, consider the following input:
@@ -122,7 +122,7 @@ The raw input to the program looks like the following:
 ```
 
 Next, determine the start positions of the suffixes starting from the first character and going to the end, which is noted with an appended `$`.
-The suffix array for the preceding sequence is as follows:
+The unsorted suffix array for the preceding sequence is as follows:
 
 ```
 [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ]
@@ -143,7 +143,7 @@ The suffixes are as follows:
 8 $
 ```
 
-If `-i|--ignore-start-n` is true, then suffixes beginning with `N` are skipped.
+If `-i|--ignore-start-n` is true, then suffixes beginning with _N_ are skipped.
 Using the same example sequence, the suffixes would be as follows:
 
 ```
@@ -156,16 +156,18 @@ Using the same example sequence, the suffixes would be as follows:
 8 $
 ```
 
+NOTE: Sequences with long runs of _N_ (such as the run of 18 million _Ns_ in the telomeric region of Hg38 chr1) require `--ignore-start-n` to finish.
+
 Split the input sequence into `-s|--subproblem-count` arrays of equal size and sort, optionally using the `-m|--max-context` argument to limit string comparisons to a length less than the entire string.
 For example, if you are aligning very short sequences, you might care to set a context of 16 or 20 base pairs.
-This will speed up the creation of the SA, but the resulting SA will be only partially sorted.
+This will speed up the creation of the SA with the understand that the result will be only partially sorted.
 
 The `sort_subarrays` function returns the sorted SA, the LCP, and an evenly selected sample of suffixes that will be used to find pivots later in the algorithm.
 For example the previous sequence split into 3 subproblems will produce the following:
 
 ```
 [
-    (
+    (          // This is the first subproblem
         [      // This is the sorted SA
             0, // CTNNCACC$ sorts before
             1, // TNNCACC$
@@ -178,7 +180,7 @@ For example the previous sequence split into 3 subproblems will produce the foll
             1, // The suffix "TNNCACC$" was selected
         ],
     ),
-    (
+    (          // This is the second subproblem
         [      
             5, // ACC$ sorts before
             4, // CACC$
@@ -191,7 +193,7 @@ For example the previous sequence split into 3 subproblems will produce the foll
             4, // CACC$ was selected for pivot
         ],
     ),
-    (
+    (          // This is the third subproblem
         [
             8, // $ sorts before
             7, // C$ sorts before
@@ -264,39 +266,39 @@ Use these ranges to partition the original subarrays:
 
 ```
 [
-    [             // For the subarray [ 0, 1 ] => [ CTNNCACC$, TNNCACC$ ]
-        None,     // Values <= CACC$
-        None,     // Values <= CC$
-        Some(     // Values >  CC$
+    [              // For the subarray [ 0, 1 ] => [ CTNNCACC$, TNNCACC$ ]
+        None,      // Values <= CACC$
+        None,      // Values <= CC$
+        Some(      // Values >  CC$
             [
-                0,
-                1,
+                0, // CTNNCACC$
+                1, // TNNCACC$
             ],
         ),
     ],
-    [             // For the subarray [ 5, 4 ] => [ ACC$, CACC$ ]
-        Some(     // Values <= CACC$
+    [              // For the subarray [ 5, 4 ] => [ ACC$, CACC$ ]
+        Some(      // Values <= CACC$
             [
-                5,
-                4,
+                5, // ACC$
+                4, // CACC$
             ],
         ),
-        None,     // Values <= CC$
-        None,     // Values >  CC$
+        None,      // Values <= CC$
+        None,      // Values >  CC$
     ],
-    [             // For the subarray [ 8, 7, 6 ] => [ $, C$, CC$ ]
-        Some(     // Values <= CACC$
+    [              // For the subarray [ 8, 7, 6 ] => [ $, C$, CC$ ]
+        Some(      // Values <= CACC$
             [
-                8,
-                7,
+                8, // $
+                7, // C$
             ],
         ),
-        Some(    // Values <= CC$
+        Some(      // Values <= CC$
             [
-                6,
+                6, // CC$
             ],
         ),
-        None,    // Values >  CC$
+        None,      // Values >  CC$
     ],
 ]
 ```
