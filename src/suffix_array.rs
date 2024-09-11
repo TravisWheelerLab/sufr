@@ -187,6 +187,7 @@ impl SuffixArray {
 
     // --------------------------------------------------
     // TODO: Take SA/LCPs as mutable
+    #[allow(unused_assignments)]
     pub fn merge_part_subs(
         &self,
         part_sas: Vec<Vec<&[usize]>>,
@@ -257,6 +258,8 @@ impl SuffixArray {
                         }
                         i += 1;
                     }
+                    //(target_sa, target_lcp, tmp_sa, tmp_lcp) =
+                    //    (tmp_sa, tmp_lcp, target_sa, target_lcp);
                     mem::swap(&mut target_sa, &mut tmp_sa);
                     mem::swap(&mut target_lcp, &mut tmp_lcp);
                 }
@@ -331,6 +334,7 @@ impl SuffixArray {
 
     // TODO: Is it possible to take the sub_pivots mutably?
     // As written, I make temporary copies to use mem::swap
+    #[allow(unused_assignments)]
     pub fn select_pivots(
         &self,
         mut sub_pivots: Vec<Vec<usize>>,
@@ -399,6 +403,9 @@ impl SuffixArray {
                 }
                 i += 1;
             }
+            // Doesn't seem better
+            //(sub_pivots, sub_lcps, tmp_sa, tmp_lcp) =
+            //    (tmp_sa, tmp_lcp, sub_pivots, sub_lcps);
             mem::swap(&mut sub_pivots, &mut tmp_sa);
             mem::swap(&mut sub_lcps, &mut tmp_lcp);
         }
