@@ -1,9 +1,9 @@
+CHR1 = ../data/t2t-chr1.txt
+#CHR1 = /xdisk/twheeler/data/genomes/human/t2t/chr1.txt
+
 #CHECK  = cargo run -- read
 #CREATE = cargo run -- create --log info
 #READ   = cargo run -- check
-
-CHR1 = ../data/t2t-chr1.txt
-CHR1 = /xdisk/twheeler/data/genomes/human/t2t/chr1.txt
 
 SUFR   = ./target/release/sufr
 CHECK  = $(SUFR) read

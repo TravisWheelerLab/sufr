@@ -6,7 +6,7 @@ use std::{
     io::BufRead,
     mem,
     ops::Range,
-    sync::{Arc, Mutex},
+    //sync::{Arc, Mutex},
 };
 
 // --------------------------------------------------
@@ -493,7 +493,7 @@ impl SuffixArray {
             if num_parts == 1 { "" } else { "s" }
         );
 
-        let counter = Arc::new(Mutex::new(0));
+        //let counter = Arc::new(Mutex::new(0));
         //let partitions = (0..num_parts).map(|i| {
         let partitions = (0..num_parts).into_par_iter().map(|i| {
             let start = i * subset_size;
@@ -503,14 +503,31 @@ impl SuffixArray {
                 } else {
                     0
                 };
-            let (sub_sa, sub_lcp) = self.generate(start..start + len);
+            let source_sa: Vec<usize> =
+                self.suffixes[start..start + len].to_vec();
+            let target_sa = source_sa.clone();
+            let source_lcp = vec![0; source_sa.len()];
+            let target_lcp = source_lcp.clone();
+            let high = source_sa.len() - 1;
+            let mut sa = vec![source_sa, target_sa];
+            let mut lcp = vec![source_lcp, target_lcp];
+            let source = 0;
+            let target = 1;
+            let final_target =
+                self.iter_merge_sort(&mut sa, &mut lcp, source, target, high);
+            let sub_sa = sa[final_target].clone();
+            let sub_lcp = lcp[final_target].clone();
             let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
-            if let Ok(mut num) = counter.lock() {
-                *num += 1;
-                if *num % 1000 == 0 {
-                    info!("  Sorted {num} subarrays...");
-                }
-            }
+
+            //let (sub_sa, sub_lcp) = self.generate(start..start + len);
+            //let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
+
+            //if let Ok(mut num) = counter.lock() {
+            //    *num += 1;
+            //    if *num % 1000 == 0 {
+            //        info!("  Sorted {num} subarrays...");
+            //    }
+            //}
 
             (sub_sa, sub_lcp, pivots)
         });
@@ -599,14 +616,13 @@ impl SuffixArray {
         mut target: usize,
         high: usize,
     ) -> usize {
-        let low = 0;
-        //println!("source {source} target {target} high {high}");
-        //println!("low {low} high {high} top {}", high - low);
-
         // divide the array into blocks of size `m`
         // m = [1, 2, 4, 8, 16…]
         let mut m = 1;
         let mut n = 0;
+        let low = 0;
+        //println!("source {source} target {target} high {high}");
+        //println!("low {low} high {high} top {}", high - low);
 
         while m <= (high - low) {
             //println!("m {m}");
