@@ -234,22 +234,25 @@ impl SuffixArray {
                             }
 
                             // Create working copies for merge
-                            let mut target_sa = source_sa.clone();
-                            let mut target_lcp = source_lcp.clone();
+                            let target_sa = source_sa.clone();
+                            let target_lcp = source_lcp.clone();
 
                             //self._merge(
                             //    &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
                             //);
                             //
-                            let sa = [source_sa, target_sa];
-                            let lcp = [source_lcp, target_lcp];
+                            let to = source_sa.len() - 1;
+                            let mut sa = vec![source_sa, target_sa];
+                            let mut lcp = vec![source_lcp, target_lcp];
                             let source = 0;
                             let target = 1;
                             let from = 0;
-                            let to = source_sa.len() - 1;
                             self.iter_merge(
-                                sa, lcp, source, target, from, mid, to,
+                                &mut sa, &mut lcp, source, target, from, mid,
+                                to,
                             );
+                            tmp_sa.push(sa[target].to_vec());
+                            tmp_lcp.push(lcp[target].to_vec());
 
                             //let from = 0;
                             //let to = source_sa.len() - 1;
@@ -263,8 +266,8 @@ impl SuffixArray {
                             //    to,
                             //);
 
-                            tmp_sa.push(target_sa);
-                            tmp_lcp.push(target_lcp);
+                            //tmp_sa.push(target_sa);
+                            //tmp_lcp.push(target_lcp);
                         }
                         i += 1;
                     }
@@ -344,7 +347,6 @@ impl SuffixArray {
 
     // TODO: Is it possible to take the sub_pivots mutably?
     // As written, I make temporary copies to use mem::swap
-    #[allow(unused_assignments)]
     pub fn select_pivots(
         &self,
         mut sub_pivots: Vec<Vec<usize>>,
@@ -396,17 +398,18 @@ impl SuffixArray {
                     //    &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
                     //);
 
+                    let from = 0;
                     let to = source_sa.len() - 1;
-                    let mut sa = [source_sa, target_sa];
-                    let mut lcp = [source_lcp, target_lcp];
+                    let mut sa = vec![source_sa, target_sa];
+                    let mut lcp = vec![source_lcp, target_lcp];
                     let source = 0;
                     let target = 1;
-                    let final_target = self.iter_merge_sort(
-                        &mut sa, &mut lcp, source, target, to,
+                    self.iter_merge(
+                        &mut sa, &mut lcp, source, target, from, mid, to,
                     );
 
-                    tmp_sa.push(sa[final_target].clone());
-                    tmp_lcp.push(lcp[final_target].clone());
+                    tmp_sa.push(sa[target].to_vec());
+                    tmp_lcp.push(lcp[target].to_vec());
 
                     //let from = 0;
                     //let to = source_sa.len() - 1;
@@ -491,8 +494,8 @@ impl SuffixArray {
         );
 
         let counter = Arc::new(Mutex::new(0));
-        //let par_iter = (0..num_parts).map(|i| {
-        let par_iter = (0..num_parts).into_par_iter().map(|i| {
+        //let partitions = (0..num_parts).map(|i| {
+        let partitions = (0..num_parts).into_par_iter().map(|i| {
             let start = i * subset_size;
             let len = subset_size
                 + if i == num_parts - 1 {
@@ -512,7 +515,7 @@ impl SuffixArray {
             (sub_sa, sub_lcp, pivots)
         });
 
-        par_iter.collect()
+        partitions.collect()
     }
 
     // This is the standalone generator for a suffix array
@@ -527,13 +530,18 @@ impl SuffixArray {
         let target_sa = source_sa.clone();
         let source_lcp = vec![0; source_sa.len()];
         let target_lcp = source_lcp.clone();
-        let high = source_sa.len();
-        let mut sa = [source_sa, target_sa];
-        let mut lcp = [source_lcp, target_lcp];
+        let high = source_sa.len() - 1;
+        let mut sa = vec![source_sa, target_sa];
+        let mut lcp = vec![source_lcp, target_lcp];
         let source = 0;
         let target = 1;
+        //println!("BEFORE MERGE SORT");
+        //dbg!(&sa);
         let final_target =
             self.iter_merge_sort(&mut sa, &mut lcp, source, target, high);
+        //println!("final_target {final_target}");
+        //println!("AFTER MERGE SORT");
+        //dbg!(&sa);
         (sa[final_target].to_vec(), lcp[final_target].to_vec())
 
         //self.iter_merge_sort(
@@ -585,28 +593,35 @@ impl SuffixArray {
 
     fn iter_merge_sort(
         &self,
-        mut sa: &mut [Vec<usize>],
-        mut lcp: &mut [Vec<usize>],
+        mut sa: &mut Vec<Vec<usize>>,
+        mut lcp: &mut Vec<Vec<usize>>,
         mut source: usize,
         mut target: usize,
         high: usize,
     ) -> usize {
         let low = 0;
+        //println!("source {source} target {target} high {high}");
+        //dbg!(&sa);
+        //dbg!(&lcp);
         //let high = source_sa.len() - 1;
         //println!("low {low} high {high} top {}", high - low);
 
         // divide the array into blocks of size `m`
         // m = [1, 2, 4, 8, 16…]
         let mut m = 1;
-        //let mut n = 0;
+        let mut n = 0;
 
         while m <= (high - low) {
-            //// Don't swap the first time
-            //if n > 0 {
-            //    //println!("n {n} SWAP target/source");
-            //    mem::swap(&mut target_sa, &mut source_sa);
-            //    mem::swap(&mut target_lcp, &mut source_lcp);
-            //}
+            //println!("m {m}");
+            // Don't swap the first time
+            if n > 0 {
+                //println!("n {n} SWAP target/source");
+                source = (source + 1) % 2;
+                target = (target + 1) % 2;
+                //mem::swap(&mut target_sa, &mut source_sa);
+                //mem::swap(&mut target_lcp, &mut source_lcp);
+            }
+            //println!("... source {source} target {target} ...");
 
             //println!(">>> m {m} <<<");
             // for m = 1, i = 0, 2, 4, 6, 8...
@@ -635,11 +650,10 @@ impl SuffixArray {
                 );
             }
             m = 2 * m;
-            //n += 1;
-            source = (source + 1) % 2;
-            target = (target + 1) % 2;
+            n += 1;
         }
 
+        // Return the index of the final target
         target
 
         //let errors = self.check_order(target_sa);
@@ -672,8 +686,8 @@ impl SuffixArray {
 
     fn iter_merge<'a>(
         &self,
-        sa: &mut &[Vec<usize>],
-        lcp: &mut &[Vec<usize>],
+        sa: &mut Vec<Vec<usize>>,
+        lcp: &mut Vec<Vec<usize>>,
         source: usize,
         target: usize,
         from: usize,
@@ -681,11 +695,6 @@ impl SuffixArray {
         to: usize,
     ) {
         //println!("\n>>> MERGE FROM {from} MID {mid} TO {to} source");
-        //let (&mut ref source_sa, &mut ref source_lcp) =
-        //    (&mut sa[source], &mut lcp[source]);
-        //let (&mut ref target_sa, &mut ref target_lcp) =
-        //    (&mut sa[target], &mut lcp[target]);
-
         let mut m = 0; // Last LCP from left side (x)
         let mut idx_x = from; // Index into x
         let mut idx_y = mid; // Index into y
@@ -701,10 +710,10 @@ impl SuffixArray {
         //    "x {}-{} {:?} y {}-{} {:?}",
         //    idx_x,
         //    idx_x + take_x,
-        //    &source_sa[idx_x..idx_x + take_x],
+        //    &sa[source][idx_x..idx_x + take_x],
         //    idx_y,
         //    idx_y + take_y,
-        //    &source_sa[idx_y..idx_y + take_y],
+        //    &sa[source][idx_y..idx_y + take_y],
         //);
         //println!("merge start values");
         //println!("source_sa  {source_sa:?}");
@@ -866,8 +875,8 @@ impl SuffixArray {
             }
         }
         //println!("merge end values");
-        //println!("source_sa  {source_sa:?}");
-        //println!("target_sa  {target_sa:?}");
+        //println!("source ({source}) sa  {:?}", sa[source]);
+        //println!("target ({target}) sa  {:?}", sa[target]);
         //println!("source_lcp {source_lcp:?}");
         //println!("target_lcp {target_lcp:?}");
     }
