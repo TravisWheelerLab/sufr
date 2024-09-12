@@ -240,18 +240,28 @@ impl SuffixArray {
                             //self._merge(
                             //    &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
                             //);
-
+                            //
+                            let sa = [source_sa, target_sa];
+                            let lcp = [source_lcp, target_lcp];
+                            let source = 0;
+                            let target = 1;
                             let from = 0;
                             let to = source_sa.len() - 1;
                             self.iter_merge(
-                                &mut source_sa,
-                                &mut target_sa,
-                                &mut source_lcp,
-                                &mut target_lcp,
-                                from,
-                                mid,
-                                to,
+                                sa, lcp, source, target, from, mid, to,
                             );
+
+                            //let from = 0;
+                            //let to = source_sa.len() - 1;
+                            //self.iter_merge(
+                            //    &mut source_sa,
+                            //    &mut target_sa,
+                            //    &mut source_lcp,
+                            //    &mut target_lcp,
+                            //    from,
+                            //    mid,
+                            //    to,
+                            //);
 
                             tmp_sa.push(target_sa);
                             tmp_lcp.push(target_lcp);
@@ -379,27 +389,39 @@ impl SuffixArray {
                     source_lcp.append(&mut lcp2);
 
                     // Create working copies for merge
-                    let mut target_sa = source_sa.clone();
-                    let mut target_lcp = source_lcp.clone();
+                    let target_sa = source_sa.clone();
+                    let target_lcp = source_lcp.clone();
 
                     //self._merge(
                     //    &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
                     //);
 
-                    let from = 0;
                     let to = source_sa.len() - 1;
-                    self.iter_merge(
-                        &mut source_sa,
-                        &mut target_sa,
-                        &mut source_lcp,
-                        &mut target_lcp,
-                        from,
-                        mid,
-                        to,
+                    let mut sa = [source_sa, target_sa];
+                    let mut lcp = [source_lcp, target_lcp];
+                    let source = 0;
+                    let target = 1;
+                    let final_target = self.iter_merge_sort(
+                        &mut sa, &mut lcp, source, target, to,
                     );
 
-                    tmp_sa.push(target_sa);
-                    tmp_lcp.push(target_lcp);
+                    tmp_sa.push(sa[final_target].clone());
+                    tmp_lcp.push(lcp[final_target].clone());
+
+                    //let from = 0;
+                    //let to = source_sa.len() - 1;
+                    //self.iter_merge(
+                    //    &mut source_sa,
+                    //    &mut target_sa,
+                    //    &mut source_lcp,
+                    //    &mut target_lcp,
+                    //    from,
+                    //    mid,
+                    //    to,
+                    //);
+
+                    //tmp_sa.push(target_sa);
+                    //tmp_lcp.push(target_lcp);
                 }
                 i += 1;
             }
@@ -496,36 +518,38 @@ impl SuffixArray {
     // This is the standalone generator for a suffix array
     pub fn generate(&self, range: Range<usize>) -> (Vec<usize>, Vec<usize>) {
         //info!("  Sorting {range:?}");
-        let mut source_sa: Vec<usize> = self.suffixes[range.clone()].to_vec();
-        let mut target_sa = source_sa.clone();
-        let mut source_lcp = vec![0; source_sa.len()];
-        let mut target_lcp = source_lcp.clone();
+        //let mut source_sa: Vec<usize> = self.suffixes[range.clone()].to_vec();
+        //let mut target_sa = source_sa.clone();
+        //let mut source_lcp = vec![0; source_sa.len()];
+        //let mut target_lcp = source_lcp.clone();
 
-        //let high = source_sa.len();
+        let source_sa: Vec<usize> = self.suffixes[range.clone()].to_vec();
+        let target_sa = source_sa.clone();
+        let source_lcp = vec![0; source_sa.len()];
+        let target_lcp = source_lcp.clone();
+        let high = source_sa.len();
+        let mut sa = [source_sa, target_sa];
+        let mut lcp = [source_lcp, target_lcp];
+        let source = 0;
+        let target = 1;
+        let final_target =
+            self.iter_merge_sort(&mut sa, &mut lcp, source, target, high);
+        (sa[final_target].to_vec(), lcp[final_target].to_vec())
+
         //self.iter_merge_sort(
-        //    vec![source_sa, target_sa],
-        //    vec![source_lcp, target_lcp],
-        //    0,
-        //    1,
-        //    high,
+        //    &mut source_sa,
+        //    &mut target_sa,
+        //    &mut source_lcp,
+        //    &mut target_lcp,
         //);
 
-        self.iter_merge_sort(
-            &mut source_sa,
-            &mut target_sa,
-            &mut source_lcp,
-            &mut target_lcp,
-        );
-
         // Figure out which of source/target has the answer
-        let n = source_sa.len();
-        let depth = n.ilog2() + if n.is_power_of_two() { 0 } else { 1 };
-        if depth % 2 == 0 {
-            mem::swap(&mut source_sa, &mut target_sa);
-            mem::swap(&mut source_lcp, &mut target_lcp);
-        }
-
-        (target_sa, target_lcp)
+        //let n = source_sa.len();
+        //let depth = n.ilog2() + if n.is_power_of_two() { 0 } else { 1 };
+        //if depth % 2 == 0 {
+        //    mem::swap(&mut source_sa, &mut target_sa);
+        //    mem::swap(&mut source_lcp, &mut target_lcp);
+        //}
 
         //println!("<<< AFTER MERGE SORT >>>");
         //println!("final_sa  {final_sa:?}");
@@ -551,38 +575,38 @@ impl SuffixArray {
         //(sa, lcp)
     }
 
-    //fn iter_merge_sort(
+    //fn iter_merge_sort<'a>(
     //    &self,
-    //    sa: Vec<Vec<usize>>,
-    //    lcp: Vec<Vec<usize>>,
-    //    mut source: usize,
-    //    mut target: usize,
-    //    high: usize,
+    //    mut source_sa: &'a mut [usize],
+    //    mut target_sa: &'a mut [usize],
+    //    mut source_lcp: &'a mut [usize],
+    //    mut target_lcp: &'a mut [usize],
     //) {
 
-    fn iter_merge_sort<'a>(
+    fn iter_merge_sort(
         &self,
-        mut source_sa: &'a mut [usize],
-        mut target_sa: &'a mut [usize],
-        mut source_lcp: &'a mut [usize],
-        mut target_lcp: &'a mut [usize],
-    ) {
+        mut sa: &mut [Vec<usize>],
+        mut lcp: &mut [Vec<usize>],
+        mut source: usize,
+        mut target: usize,
+        high: usize,
+    ) -> usize {
         let low = 0;
-        let high = source_sa.len() - 1;
+        //let high = source_sa.len() - 1;
         //println!("low {low} high {high} top {}", high - low);
 
         // divide the array into blocks of size `m`
         // m = [1, 2, 4, 8, 16…]
         let mut m = 1;
-        let mut n = 0;
+        //let mut n = 0;
 
         while m <= (high - low) {
-            // Don't swap the first time
-            if n > 0 {
-                //println!("n {n} SWAP target/source");
-                mem::swap(&mut target_sa, &mut source_sa);
-                mem::swap(&mut target_lcp, &mut source_lcp);
-            }
+            //// Don't swap the first time
+            //if n > 0 {
+            //    //println!("n {n} SWAP target/source");
+            //    mem::swap(&mut target_sa, &mut source_sa);
+            //    mem::swap(&mut target_lcp, &mut source_lcp);
+            //}
 
             //println!(">>> m {m} <<<");
             // for m = 1, i = 0, 2, 4, 6, 8...
@@ -601,17 +625,22 @@ impl SuffixArray {
                 }
                 //println!("  i {i}: from {from} to {to} mid {mid}");
 
+                //self.iter_merge(
+                //    source_sa, target_sa, source_lcp, target_lcp, from, mid,
+                //    to,
+                //);
+
                 self.iter_merge(
-                    source_sa, target_sa, source_lcp, target_lcp, from, mid,
-                    to,
+                    &mut sa, &mut lcp, source, target, from, mid, to,
                 );
-                //self.iter_merge(sa, lcp, source, target, from, mid, to);
             }
             m = 2 * m;
-            n += 1;
-            //source = (source + 1) % 2;
-            //target = (target + 1) % 2;
+            //n += 1;
+            source = (source + 1) % 2;
+            target = (target + 1) % 2;
         }
+
+        target
 
         //let errors = self.check_order(target_sa);
         //if !errors.is_empty() {
@@ -630,16 +659,23 @@ impl SuffixArray {
         //(target_sa, target_lcp)
     }
 
-    //sa: &mut Vec<Vec<usize>>,
-    //lcp: &mut Vec<Vec<usize>>,
-    //source: usize,
-    //target: usize,
+    //fn iter_merge<'a>(
+    //    &self,
+    //    source_sa: &'a mut [usize],
+    //    target_sa: &'a mut [usize],
+    //    source_lcp: &'a mut [usize],
+    //    target_lcp: &'a mut [usize],
+    //    from: usize,
+    //    mid: usize,
+    //    to: usize,
+    //) {
+
     fn iter_merge<'a>(
         &self,
-        source_sa: &'a mut [usize],
-        target_sa: &'a mut [usize],
-        source_lcp: &'a mut [usize],
-        target_lcp: &'a mut [usize],
+        sa: &mut &[Vec<usize>],
+        lcp: &mut &[Vec<usize>],
+        source: usize,
+        target: usize,
         from: usize,
         mid: usize,
         to: usize,
@@ -682,7 +718,9 @@ impl SuffixArray {
         while take_x > 0 && take_y > 0 {
             //round += 1;
             //println!("ROUND {round}");
-            let l_x = source_lcp[idx_x];
+            //let l_x = source_lcp[idx_x];
+            let l_x = lcp[source][idx_x];
+
             //println!("k {k} end_x {end_x} end_y {end_y} l_x {l_x} m {m}");
             //println!(
             //    "idx_x {} = {:?}",
@@ -697,26 +735,35 @@ impl SuffixArray {
 
             if l_x > m {
                 //println!("ONE");
-                target_sa[k] = source_sa[idx_x];
-                target_lcp[k] = l_x;
+                //target_sa[k] = source_sa[idx_x];
+                //target_lcp[k] = l_x;
+                sa[target][k] = sa[source][idx_x];
+                lcp[target][k] = l_x;
             } else if l_x < m {
                 //println!("TWO");
-                target_sa[k] = source_sa[idx_y];
-                target_lcp[k] = m;
+                //target_sa[k] = source_sa[idx_y];
+                //target_lcp[k] = m;
+                sa[target][k] = sa[source][idx_y];
+                lcp[target][k] = m;
                 m = l_x;
             } else {
                 //println!("THREE");
                 // Length of shorter suffix
+                //let max_n =
+                //    self.len - max(source_sa[idx_x], source_sa[idx_y]);
+
                 let max_n =
-                    self.len - max(source_sa[idx_x], source_sa[idx_y]);
+                    self.len - max(sa[source][idx_x], sa[source][idx_y]);
 
                 // Prefix-context length for the suffixes
                 let context = min(self.max_context, max_n);
 
                 // LCP(X_i, Y_j)
                 let n = m + find_lcp(
-                    &self.text[(source_sa[idx_x] + m)..],
-                    &self.text[(source_sa[idx_y] + m)..],
+                    //&self.text[(source_sa[idx_x] + m)..],
+                    //&self.text[(source_sa[idx_y] + m)..],
+                    &self.text[(sa[source][idx_x] + m)..],
+                    &self.text[(sa[source][idx_y] + m)..],
                     context - m,
                 );
 
@@ -725,36 +772,43 @@ impl SuffixArray {
                 // If the len of the LCP is the entire shorter
                 // sequence, take that (the one with the higher SA value)
                 if n == max_n {
-                    target_sa[k] = max(source_sa[idx_x], source_sa[idx_y]);
+                    //target_sa[k] = max(source_sa[idx_x], source_sa[idx_y]);
+                    sa[target][k] = max(sa[source][idx_x], sa[source][idx_y]);
                     //println!("  A: took '{}'", target_sa[k]);
                 }
                 // Else, look at the next char after the LCP
                 // to determine order.
-                else if self.text[source_sa[idx_x] + n]
-                    < self.text[source_sa[idx_y] + n]
+                else if self.text[sa[source][idx_x] + n]
+                    < self.text[sa[source][idx_y] + n]
                 {
-                    target_sa[k] = source_sa[idx_x];
+                    //target_sa[k] = source_sa[idx_x];
+                    sa[target][k] = sa[source][idx_x];
                     //println!("  B: took x '{}'", target_sa[k]);
                 }
                 // Else take from the right
                 else {
-                    target_sa[k] = source_sa[idx_y];
+                    //target_sa[k] = source_sa[idx_y];
+                    sa[target][k] = sa[source][idx_y];
                     //println!("  C: took y '{}'", target_sa[k]);
                 }
 
                 // If we took from the right...
-                if target_sa[k] == source_sa[idx_x] {
+                //if target_sa[k] == source_sa[idx_x] {
+                if sa[target][k] == sa[source][idx_x] {
                     //println!("Setting target_lcp[{k}] = l_x {l_x}");
-                    target_lcp[k] = l_x;
+                    //target_lcp[k] = l_x;
+                    lcp[target][k] = l_x;
                 } else {
                     //println!("Setting target_lcp[{k}] = m {m}");
-                    target_lcp[k] = m
+                    //target_lcp[k] = m
+                    lcp[target][k] = m
                 }
                 //println!("Setting m {m} = n {n}");
                 m = n;
             }
 
-            if target_sa[k] == source_sa[idx_x] {
+            //if target_sa[k] == source_sa[idx_x] {
+            if sa[target][k] == sa[source][idx_x] {
                 idx_x += 1;
                 take_x -= 1;
                 //println!("Took from x, inc idx_x to '{idx_x}'");
@@ -778,8 +832,10 @@ impl SuffixArray {
         //while idx_x < end_x {
         while take_x > 0 {
             //println!("Copying idx_x {idx_x}");
-            target_sa[k] = source_sa[idx_x];
-            target_lcp[k] = source_lcp[idx_x];
+            //target_sa[k] = source_sa[idx_x];
+            //target_lcp[k] = source_lcp[idx_x];
+            sa[target][k] = sa[source][idx_x];
+            lcp[target][k] = lcp[source][idx_x];
             idx_x += 1;
             take_x -= 1;
             k += 1;
@@ -789,8 +845,10 @@ impl SuffixArray {
         //if idx_y < end_y {
         if take_y > 0 {
             //println!("Copying idx_y {idx_y}");
-            target_sa[k] = source_sa[idx_y];
-            target_lcp[k] = m;
+            //target_sa[k] = source_sa[idx_y];
+            //target_lcp[k] = m;
+            sa[target][k] = sa[source][idx_y];
+            lcp[target][k] = m;
             idx_y += 1;
             take_y -= 1;
             k += 1;
@@ -798,8 +856,10 @@ impl SuffixArray {
             //while idx_y < end_y {
             while take_y > 0 {
                 //println!("Copying idx_y {idx_y}");
-                target_sa[k] = source_sa[idx_y];
-                target_lcp[k] = source_lcp[idx_y];
+                //target_sa[k] = source_sa[idx_y];
+                //target_lcp[k] = source_lcp[idx_y];
+                sa[target][k] = sa[source][idx_y];
+                lcp[target][k] = lcp[source][idx_y];
                 idx_y += 1;
                 take_y -= 1;
                 k += 1;
