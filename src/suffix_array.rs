@@ -601,9 +601,6 @@ impl SuffixArray {
     ) -> usize {
         let low = 0;
         //println!("source {source} target {target} high {high}");
-        //dbg!(&sa);
-        //dbg!(&lcp);
-        //let high = source_sa.len() - 1;
         //println!("low {low} high {high} top {}", high - low);
 
         // divide the array into blocks of size `m`
@@ -655,22 +652,6 @@ impl SuffixArray {
 
         // Return the index of the final target
         target
-
-        //let errors = self.check_order(target_sa);
-        //if !errors.is_empty() {
-        //    let suffixes: Vec<String> =
-        //        target_sa.iter().map(|&p| self._string_at(p)).collect();
-        //    dbg!(&target_sa);
-        //    dbg!(suffixes);
-        //    panic!("NOT ORDERED");
-        //}
-
-        //println!(".....Finished merge in {n}.....");
-        //println!("source_sa  {source_sa:?}");
-        //println!("target_sa  {target_sa:?}");
-        //println!("source_lcp {source_lcp:?}");
-        //println!("target_lcp {target_lcp:?}");
-        //(target_sa, target_lcp)
     }
 
     //fn iter_merge<'a>(
