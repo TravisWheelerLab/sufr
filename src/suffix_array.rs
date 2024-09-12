@@ -22,12 +22,13 @@ pub struct SuffixArray {
     // The maximum length when comparing suffixes
     pub max_context: usize,
 
-    // The start positions of the suffixes
-    // When "ignore_start_n" is false, this will
-    // be all the positions from 0..len
-    // When true, this will only be the positions
-    // for suffixes that DO NOT start with N
-    pub suffixes: Vec<usize>,
+    // Whether or not to skip suffixes that start with N
+    pub ignore_start_n: bool, // The start positions of the suffixes
+                              // When "ignore_start_n" is false, this will
+                              // be all the positions from 0..len
+                              // When true, this will only be the positions
+                              // for suffixes that DO NOT start with N
+                              //pub suffixes: Vec<usize>,
 }
 
 impl SuffixArray {
@@ -37,23 +38,14 @@ impl SuffixArray {
         ignore_start_n: bool,
     ) -> SuffixArray {
         let text = SuffixArray::read_input(input);
-        let suffixes: Vec<usize> = (0..text.len())
-            .flat_map(|i| {
-                // 78 = 'N'
-                if ignore_start_n && text[i] == 78 {
-                    None
-                } else {
-                    Some(i)
-                }
-            })
-            .collect();
         let len = text.len();
 
         SuffixArray {
             text,
             len,
             max_context: max_context.unwrap_or(len),
-            suffixes,
+            ignore_start_n,
+            //suffixes,
         }
     }
 
@@ -459,29 +451,30 @@ impl SuffixArray {
             .collect()
     }
 
-    // TODO: Make this part of initialization? I don't like having
-    // to worry about this when reusing SuffixArray for sort_subarrays
-    fn calc_num_partitions(&self, suggested: usize) -> usize {
-        if suggested < self.suffixes.len() {
-            suggested
-        } else if self.suffixes.len() > 500 {
-            100
-        } else {
-            1
-        }
-    }
-
+    // --------------------------------------------------
     pub fn sort_subarrays(
         &self,
         num_partitions: usize,
     ) -> Vec<(Vec<usize>, Vec<usize>, Vec<usize>)> {
-        // Handle very small inputs
-        // TODO: Better to have a max partition size?
-        let num_suffixes = self.suffixes.len();
-        let num_parts = self.calc_num_partitions(num_partitions);
-        let subset_size = num_suffixes / num_parts;
-        //let pivots_per_part = 50;
-        let len = self.suffixes.len() as f64;
+        let mut suffixes: Vec<usize> = if self.ignore_start_n {
+            self.text
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &c)| (c != 78).then(|| i))
+                .collect()
+        } else {
+            (0..self.text.len()).collect()
+        };
+        let num_suffixes = suffixes.len();
+        if num_partitions < num_suffixes {
+            num_partitions
+        } else if num_suffixes > 500 {
+            100
+        } else {
+            1
+        };
+        let subset_size = num_suffixes / num_partitions;
+        let len = num_suffixes as f64;
         let mut pivots_per_part = (32.0 * len.log10()).ceil() as usize;
         if (pivots_per_part > subset_size) || (pivots_per_part < 1) {
             pivots_per_part =
@@ -489,56 +482,63 @@ impl SuffixArray {
         }
 
         info!(
-            "{num_parts} partition{} of {subset_size}, \
+            "{num_partitions} partition{} of {subset_size}, \
             {pivots_per_part} pivots each",
-            if num_parts == 1 { "" } else { "s" }
+            if num_partitions == 1 { "" } else { "s" }
         );
 
+        let now = Instant::now();
+        let partitions: Vec<_> = (0..num_partitions)
+            .map(|i| {
+                let len = subset_size
+                    + if i == num_partitions - 1 {
+                        num_suffixes % num_partitions
+                    } else {
+                        0
+                    };
+                suffixes.drain(0..len).collect::<Vec<_>>()
+            })
+            .collect();
+        println!("Finished making parts in {:?}", now.elapsed());
+
         //let counter = Arc::new(Mutex::new(0));
-        //let partitions = (0..num_parts).map(|i| {
-        let partitions = (0..num_parts).into_par_iter().map(|i| {
-            let start = i * subset_size;
-            let len = subset_size
-                + if i == num_parts - 1 {
-                    num_suffixes % num_parts
-                } else {
-                    0
-                };
-            let now = Instant::now();
-            let source_sa: Vec<usize> =
-                self.suffixes[start..start + len].to_vec();
-            let target_sa: Vec<usize> =
-                self.suffixes[start..start + len].to_vec();
-            let source_lcp = vec![0; source_sa.len()];
-            let target_lcp = vec![0; source_sa.len()];
-            println!("CLONE FINISHED IN {:?}", now.elapsed());
-            let high = source_sa.len() - 1;
-            let mut sa = vec![source_sa, target_sa];
-            let mut lcp = vec![source_lcp, target_lcp];
-            let source = 0;
-            let target = 1;
-            //let now = Instant::now();
-            let final_target =
-                self.iter_merge_sort(&mut sa, &mut lcp, source, target, high);
-            //println!("MERGESORT FINISHED IN {:?}", now.elapsed());
-            let sub_sa = sa[final_target].clone();
-            let sub_lcp = lcp[final_target].clone();
-            let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
+        partitions
+            .into_par_iter()
+            .map(|source_sa| {
+                let now = Instant::now();
+                let len = source_sa.len();
+                let target_sa = source_sa.clone();
+                let source_lcp = vec![0; len];
+                let target_lcp = vec![0; len];
+                let mut sa = vec![source_sa, target_sa];
+                let mut lcp = vec![source_lcp, target_lcp];
+                println!("Finished allocs in {:?}", now.elapsed());
 
-            //let (sub_sa, sub_lcp) = self.generate(start..start + len);
-            //let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
+                let source = 0;
+                let target = 1;
+                let now = Instant::now();
+                let final_target = self.iter_merge_sort(
+                    &mut sa,
+                    &mut lcp,
+                    source,
+                    target,
+                    len - 1,
+                );
+                println!("Finished merge in {:?}", now.elapsed());
+                let sub_sa = sa[final_target].clone();
+                let sub_lcp = lcp[final_target].clone();
+                let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
 
-            //if let Ok(mut num) = counter.lock() {
-            //    *num += 1;
-            //    if *num % 1000 == 0 {
-            //        info!("  Sorted {num} subarrays...");
-            //    }
-            //}
+                //if let Ok(mut num) = counter.lock() {
+                //    *num += 1;
+                //    if *num % 1000 == 0 {
+                //        info!("  Sorted {num} subarrays...");
+                //    }
+                //}
 
-            (sub_sa, sub_lcp, pivots)
-        });
-
-        partitions.collect()
+                (sub_sa, sub_lcp, pivots)
+            })
+            .collect()
     }
 
     //fn iter_merge_sort<'a>(

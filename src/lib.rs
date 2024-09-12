@@ -227,12 +227,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         args.max_context,
         args.ignore_start_n,
     );
-    info!(
-        "Read input of len {} with {} suffixes in {:?}",
-        sa.len,
-        sa.suffixes.len(),
-        start.elapsed()
-    );
+    info!("Read input of len {} in {:?}", sa.len, start.elapsed());
     debug!("Raw input '{:?}'", sa.text);
     //dbg!(&sa);
 
