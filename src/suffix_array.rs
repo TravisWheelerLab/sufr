@@ -7,6 +7,7 @@ use std::{
     mem,
     ops::Range,
     //sync::{Arc, Mutex},
+    time::Instant,
 };
 
 // --------------------------------------------------
@@ -503,18 +504,23 @@ impl SuffixArray {
                 } else {
                     0
                 };
+            let now = Instant::now();
             let source_sa: Vec<usize> =
                 self.suffixes[start..start + len].to_vec();
-            let target_sa = source_sa.clone();
+            let target_sa: Vec<usize> =
+                self.suffixes[start..start + len].to_vec();
             let source_lcp = vec![0; source_sa.len()];
-            let target_lcp = source_lcp.clone();
+            let target_lcp = vec![0; source_sa.len()];
+            println!("CLONE FINISHED IN {:?}", now.elapsed());
             let high = source_sa.len() - 1;
             let mut sa = vec![source_sa, target_sa];
             let mut lcp = vec![source_lcp, target_lcp];
             let source = 0;
             let target = 1;
+            //let now = Instant::now();
             let final_target =
                 self.iter_merge_sort(&mut sa, &mut lcp, source, target, high);
+            //println!("MERGESORT FINISHED IN {:?}", now.elapsed());
             let sub_sa = sa[final_target].clone();
             let sub_lcp = lcp[final_target].clone();
             let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
@@ -533,71 +539,6 @@ impl SuffixArray {
         });
 
         partitions.collect()
-    }
-
-    // This is the standalone generator for a suffix array
-    pub fn generate(&self, range: Range<usize>) -> (Vec<usize>, Vec<usize>) {
-        //info!("  Sorting {range:?}");
-        //let mut source_sa: Vec<usize> = self.suffixes[range.clone()].to_vec();
-        //let mut target_sa = source_sa.clone();
-        //let mut source_lcp = vec![0; source_sa.len()];
-        //let mut target_lcp = source_lcp.clone();
-
-        let source_sa: Vec<usize> = self.suffixes[range.clone()].to_vec();
-        let target_sa = source_sa.clone();
-        let source_lcp = vec![0; source_sa.len()];
-        let target_lcp = source_lcp.clone();
-        let high = source_sa.len() - 1;
-        let mut sa = vec![source_sa, target_sa];
-        let mut lcp = vec![source_lcp, target_lcp];
-        let source = 0;
-        let target = 1;
-        //println!("BEFORE MERGE SORT");
-        //dbg!(&sa);
-        let final_target =
-            self.iter_merge_sort(&mut sa, &mut lcp, source, target, high);
-        //println!("final_target {final_target}");
-        //println!("AFTER MERGE SORT");
-        //dbg!(&sa);
-        (sa[final_target].to_vec(), lcp[final_target].to_vec())
-
-        //self.iter_merge_sort(
-        //    &mut source_sa,
-        //    &mut target_sa,
-        //    &mut source_lcp,
-        //    &mut target_lcp,
-        //);
-
-        // Figure out which of source/target has the answer
-        //let n = source_sa.len();
-        //let depth = n.ilog2() + if n.is_power_of_two() { 0 } else { 1 };
-        //if depth % 2 == 0 {
-        //    mem::swap(&mut source_sa, &mut target_sa);
-        //    mem::swap(&mut source_lcp, &mut target_lcp);
-        //}
-
-        //println!("<<< AFTER MERGE SORT >>>");
-        //println!("final_sa  {final_sa:?}");
-        //println!("final_lcp {final_lcp:?}");
-
-        //let errors = self.check_order(final_sa);
-        //if !errors.is_empty() {
-        //    let suffixes: Vec<String> =
-        //        final_sa.iter().map(|&p| self._string_at(p)).collect();
-        //    dbg!(&final_sa);
-        //    dbg!(suffixes);
-        //    panic!("NOT ORDERED");
-        //}
-
-        //(final_sa.to_vec(), final_lcp.to_vec())
-
-        //let mut sa: Vec<usize> = self.suffixes[range].to_vec();
-        //let len = sa.len();
-        //let mut sa_w = sa.clone();
-        //let mut lcp = vec![0; len];
-        //let mut lcp_w = vec![0; len];
-        //self._merge_sort(&mut sa_w, &mut sa, len, &mut lcp, &mut lcp_w);
-        //(sa, lcp)
     }
 
     //fn iter_merge_sort<'a>(
