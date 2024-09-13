@@ -280,6 +280,10 @@ where
     let sub_pivots: Vec<_> = sufs.iter().map(|t| t.2.clone()).collect();
     mem::drop(sufs);
 
+    sub_lcps.iter().for_each(|lcp| {
+        println!("{}", lcp.iter().map(|i| i.to_usize()).sum::<usize>());
+    });
+
     // Determine the pivot suffixes
     let start = Instant::now();
     let pivots = sa.select_pivots(sub_pivots);

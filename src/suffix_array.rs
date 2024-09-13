@@ -1,10 +1,9 @@
-use anyhow::Result;
 use format_num::NumberFormat;
 use log::info;
 use rayon::prelude::*;
 use std::{
     cmp::{max, min, Ordering},
-    io::BufRead,
+    fmt::Display,
     mem,
     ops::{Add, Range, Sub},
 };
@@ -25,7 +24,7 @@ impl FromUsize<u64> for u64 {
     }
 }
 
-pub trait Int: Add<Output = Self> + Sub<Output = Self> + Copy + Default + Ord {
+pub trait Int: Add<Output = Self> + Sub<Output = Self> + Copy + Default + Display + Ord {
     fn to_usize(&self) -> usize;
 }
 
@@ -97,14 +96,25 @@ where
         errors
     }
     // --------------------------------------------------
+    #[inline(always)]
     fn find_lcp(s1: &[u8], s2: &[u8], len: T) -> T {
-        T::from_usize(
-            s1.iter()
-                .take(len.to_usize())
-                .zip(s2.iter().take(len.to_usize()))
-                .take_while(|(a, b)| a == b)
-                .count(),
-        )
+        for i in 0..len.to_usize() {
+            unsafe {
+                if s1.get_unchecked(i) != s2.get_unchecked(i) {
+                    return T::from_usize(i);
+                }
+            }
+        }
+
+        len
+
+        // T::from_usize(
+        //     s1.iter()
+        //         .take(len.to_usize())
+        //         .zip(s2.iter().take(len.to_usize()))
+        //         .take_while(|(a, b)| a == b)
+        //         .count(),
+        // )
     }
     // --------------------------------------------------
     fn convert_slices_to_vecs(vec_of_slices: Vec<&[T]>) -> Vec<Vec<T>> {
@@ -671,8 +681,6 @@ where
                         &self.text[(sa[source_idx][idx_y] + m).to_usize()..],
                         context - m,
                     );
-
-                    //println!(" lcp {n}");
 
                     // If the len of the LCP is the entire shorter
                     // sequence, take that (the one with the higher SA value)
