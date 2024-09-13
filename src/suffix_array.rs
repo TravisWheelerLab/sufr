@@ -184,10 +184,19 @@ impl SuffixArray {
         part_sas: &[Vec<&[usize]>],
         part_lcps: &[Vec<&[usize]>],
     ) -> Vec<usize> {
+        //let pairs: Vec<_> = part_sas.iter().zip(part_lcps).collect();
+        //let merged_subs: Vec<_> = pairs
         let merged_subs: Vec<_> = (0..part_sas.len())
             .into_par_iter()
             .map(|i| {
+                //.map(|(target_sa, target_lcp)| {
                 // TODO: Avoid allocation here?
+                //let lens: Vec<_> =
+                //    part_sas[i].iter().map(|v| v.len()).collect();
+                //dbg!(lens);
+                //let tmp: Vec<usize> = *part_sas[i].iter().concat();
+                //dbg!(tmp);
+
                 let mut target_sa =
                     convert_slices_to_vecs(part_sas[i].to_vec());
                 let mut target_lcp =
@@ -242,6 +251,7 @@ impl SuffixArray {
                     //    (tmp_sa, tmp_lcp, target_sa, target_lcp);
                     mem::swap(&mut target_sa, &mut tmp_sa);
                     mem::swap(&mut target_lcp, &mut tmp_lcp);
+                    //target_sa = mem::take(&mut tmp_sa);
                 }
                 target_sa.first().map_or(vec![], |v| v.to_vec())
             })
