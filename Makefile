@@ -15,7 +15,7 @@ perf:
 
 create-s1:
 	#$(CREATE) tests/inputs/seq1.txt -o seq1.sa
-	cargo run -- create --log debug tests/inputs/seq1.txt -o seq1.sa -s 3
+	cargo run -- create --log debug tests/inputs/seq1.txt -o seq1.sa -n 3
 
 read-s1:
 	$(READ) -s tests/inputs/seq1.txt -a seq1.sa -e 1-100
@@ -39,7 +39,7 @@ check-ecoli:
 	$(READ) -s ../data/ecoli.txt -a ecoli.sa
 
 create-t2t-chr1:
-	$(CREATE) ../data/t2t-chr1.txt -o t2t-chr1.sa -s 64
+	$(CREATE) ../data/t2t-chr1.txt -o t2t-chr1.sa -n 64
 
 check-t2t-chr1:
 	$(READ) -s ../data/t2t-chr1.txt -a t2t-chr1.sa

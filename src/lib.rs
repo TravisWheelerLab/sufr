@@ -60,8 +60,8 @@ pub struct CreateArgs {
     pub input: String,
 
     /// Subproblem count
-    #[arg(short, long, value_name = "SUBPROBLEMS", default_value = "16")]
-    pub subproblem_count: usize,
+    #[arg(short, long, value_name = "NUM_PARTS", default_value = "16")]
+    pub num_partitions: usize,
 
     /// Max context
     #[arg(short, long, value_name = "CONTEXT")]
@@ -236,10 +236,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         start.elapsed()
     );
     debug!("Raw input '{:?}'", sa.text);
-    //dbg!(&sa);
 
     let start = Instant::now();
-    let sufs = sa.sort_subarrays(args.subproblem_count);
+    let sufs = sa.sort_subarrays(args.num_partitions);
     info!("Sorted subarrays in {:?}", start.elapsed());
     //dbg!(&sufs);
     debug!("sorted subarrays = {sufs:#?}");
@@ -252,7 +251,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Determine the pivot suffixes
     let start = Instant::now();
-    let pivots = sa.select_pivots(sub_pivots, sub_suffixes.len());
+    let pivots = sa.select_pivots(sub_pivots);
     info!("Selected {} pivots in {:?}", pivots.len(), start.elapsed());
     debug!("pivots = {pivots:#?}");
 
@@ -268,9 +267,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
     info!("Partitioned subarrays in {:?}", start.elapsed());
     debug!("{part_sas:#?}");
-    //mem::drop(sub_suffixes);
-    //mem::drop(sub_lcps);
-    //mem::drop(pivot_locs);
 
     // Merge the partitioned subs
     let start = Instant::now();
@@ -314,7 +310,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     //};
 
     // Write out suffix array length
-    out.write(&usize_to_bytes(merged_sa.len()))?;
+    let _ = out.write(&usize_to_bytes(merged_sa.len()))?;
 
     // Write out suffix array as raw bytes
     let slice_u8: &[u8] = unsafe {
@@ -486,9 +482,10 @@ pub fn read(args: &ReadArgs) -> Result<()> {
     Ok(())
 }
 
+// --------------------------------------------------
 fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
     let mut sa_file =
-        File::open(&filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+        File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
     // The first 64-bits of the file contain the size of the SA
     let mut buffer = [0; 8];

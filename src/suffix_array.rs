@@ -3,12 +3,12 @@ use format_num::NumberFormat;
 use log::info;
 use rayon::prelude::*;
 use std::{
-    cmp::{max, min},
+    //sync::{Arc, Mutex},
+    //time::Instant,
+    cmp::{max, min, Ordering},
     io::BufRead,
     mem,
     ops::Range,
-    //sync::{Arc, Mutex},
-    //time::Instant,
 };
 
 // --------------------------------------------------
@@ -28,6 +28,7 @@ pub struct SuffixArray {
 }
 
 impl SuffixArray {
+    // --------------------------------------------------
     pub fn new(
         input: impl BufRead,
         max_context: Option<usize>,
@@ -44,19 +45,21 @@ impl SuffixArray {
         }
     }
 
+    // --------------------------------------------------
     pub fn read_input(input: impl BufRead) -> Vec<u8> {
         // TODO: Is this good and proper? Any use of the results
         // will need to similarly filter the inputs.
         let mut text: Vec<_> = input
             .bytes()
             .map_while(Result::ok)
-            .map(|b| b & 0b1011111) // Uppercase
-            .filter(|&b| b >= 0b1000001 && b <= 0b1011010) // A-Z
+            .map(|b| b & 0b1011111) // Uppercase (mask w/32)
+            .filter(|&b| (0b1000001..=0b1011010).contains(&b)) // A-Z
             .collect();
         text.push(b'$');
         text
     }
 
+    // --------------------------------------------------
     #[allow(dead_code)]
     pub fn check_order(&self, sa: &[usize]) -> Vec<usize> {
         let mut errors = vec![];
@@ -264,7 +267,7 @@ impl SuffixArray {
                     mem::swap(&mut target_sa, &mut tmp_sa);
                     mem::swap(&mut target_lcp, &mut tmp_lcp);
                 }
-                target_sa.get(0).map_or(vec![], |v| v.to_vec())
+                target_sa.first().map_or(vec![], |v| v.to_vec())
             })
             .filter(|v| !v.is_empty())
             .collect();
@@ -273,10 +276,11 @@ impl SuffixArray {
         merged_subs.into_iter().flatten().collect()
     }
 
+    // --------------------------------------------------
     pub fn partition_subarrays<'a>(
         &self,
-        sa: &'a Vec<Vec<usize>>,
-        lcp: &'a Vec<Vec<usize>>,
+        sa: &'a [Vec<usize>],
+        lcp: &'a [Vec<usize>],
         pivot_locs: Vec<Vec<Option<Range<usize>>>>,
     ) -> (Vec<Vec<&'a [usize]>>, Vec<Vec<&'a [usize]>>) {
         // Given the SA/LCP arrays for each of the subarrays
@@ -308,13 +312,10 @@ impl SuffixArray {
             })
             .collect();
 
-        //dbg!(&ret_sa);
-        //dbg!(transpose(ret_sa.clone()));
-
-        // Rotate the
         (transpose(ret_sa), transpose(ret_lcp))
     }
 
+    // --------------------------------------------------
     fn gen_lcp(&self, sa: &[usize]) -> Vec<usize> {
         (0..sa.len())
             .map(|i| {
@@ -333,13 +334,15 @@ impl SuffixArray {
             .collect()
     }
 
+    // --------------------------------------------------
     // TODO: Is it possible to take the sub_pivots mutably?
     // As written, I make temporary copies to use mem::swap
     pub fn select_pivots(
         &self,
         mut sub_pivots: Vec<Vec<usize>>,
-        num_partitions: usize,
     ) -> Vec<usize> {
+        let num_partitions = sub_pivots.len();
+
         // The pivots were plucked from their sorted
         // suffixes and have no LCPs, so construct.
         let mut sub_lcps: Vec<Vec<usize>> = sub_pivots
@@ -423,52 +426,47 @@ impl SuffixArray {
             mem::swap(&mut sub_lcps, &mut tmp_lcp);
         }
 
-        match sub_pivots.get(0) {
-            Some(pivots) => self.sample_pivots(&pivots, num_partitions - 1),
-            _ => vec![],
-        }
+        sub_pivots
+            .first()
+            .map(|pivots| self.sample_pivots(pivots, num_partitions - 1))
+            .unwrap_or_default()
     }
 
+    // --------------------------------------------------
     pub fn sample_pivots(
         &self,
         sa: &[usize],
-        pivots_per_part: usize,
+        num_pivots: usize,
     ) -> Vec<usize> {
-        let step = sa.len()
-            / if pivots_per_part > 0 {
-                pivots_per_part
-            } else {
-                1
-            };
+        let step = sa.len() / if num_pivots > 0 { num_pivots } else { 1 };
 
-        (0..pivots_per_part)
-            .map(|i| sa[(i + 1) * step - 1])
-            .collect()
+        (0..num_pivots).map(|i| sa[(i + 1) * step - 1]).collect()
     }
 
     // --------------------------------------------------
     pub fn sort_subarrays(
         &self,
-        num_partitions: usize,
+        suggested_num_partitions: usize,
     ) -> Vec<(Vec<usize>, Vec<usize>, Vec<usize>)> {
         let mut suffixes: Vec<usize> = if self.ignore_start_n {
+            // Text will already be "uppercase" (but bytes), N = 78
             self.text
                 .iter()
                 .enumerate()
-                .filter_map(|(i, &c)| (c != 78).then(|| i))
+                .filter_map(|(i, &c)| (c != 78).then_some(i))
                 .collect()
         } else {
             (0..self.text.len()).collect()
         };
         let num_suffixes = suffixes.len();
-        if num_partitions < num_suffixes {
-            num_partitions
+        let num_parts = if suggested_num_partitions < num_suffixes {
+            suggested_num_partitions
         } else if num_suffixes > 500 {
-            100
+            16
         } else {
             1
         };
-        let subset_size = num_suffixes / num_partitions;
+        let subset_size = num_suffixes / num_parts;
         let len = num_suffixes as f64;
         let mut pivots_per_part = (32.0 * len.log10()).ceil() as usize;
         if (pivots_per_part > subset_size) || (pivots_per_part < 1) {
@@ -478,19 +476,19 @@ impl SuffixArray {
 
         let num_fmt = NumberFormat::new();
         info!(
-            "{num_partitions} partition{} with {} element{} and {pivots_per_part} pivot{} each",
+            "{num_parts} partition{} with {} element{} and {pivots_per_part} pivot{} each",
             if subset_size == 1 { "" } else { "s" },
             num_fmt.format(",.0", subset_size as f64),
-            if num_partitions == 1 { "" } else { "s" },
+            if num_parts == 1 { "" } else { "s" },
             if pivots_per_part == 1 { "" } else { "s" },
         );
 
         //let now = Instant::now();
-        let partitions: Vec<_> = (0..num_partitions)
+        let partitions: Vec<_> = (0..num_parts)
             .map(|i| {
                 let len = subset_size
-                    + if i == num_partitions - 1 {
-                        num_suffixes % num_partitions
+                    + if i == num_parts - 1 {
+                        num_suffixes % num_parts
                     } else {
                         0
                     };
@@ -522,6 +520,7 @@ impl SuffixArray {
                     target,
                     len - 1,
                 );
+
                 //println!("Finished merge in {:?}", now.elapsed());
                 let sub_sa = sa[final_target].clone();
                 let sub_lcp = lcp[final_target].clone();
@@ -539,47 +538,26 @@ impl SuffixArray {
             .collect()
     }
 
-    //fn iter_merge_sort<'a>(
-    //    &self,
-    //    mut source_sa: &'a mut [usize],
-    //    mut target_sa: &'a mut [usize],
-    //    mut source_lcp: &'a mut [usize],
-    //    mut target_lcp: &'a mut [usize],
-    //) {
-
+    // --------------------------------------------------
     fn iter_merge_sort(
         &self,
-        mut sa: &mut Vec<Vec<usize>>,
-        mut lcp: &mut Vec<Vec<usize>>,
+        sa: &mut [Vec<usize>],
+        lcp: &mut [Vec<usize>],
         mut source: usize,
         mut target: usize,
         high: usize,
     ) -> usize {
-        // divide the array into blocks of size `m`
-        // m = [1, 2, 4, 8, 16…]
         let mut m = 1;
-        let mut n = 0;
-        let low = 0;
-        //println!("source {source} target {target} high {high}");
-        //println!("low {low} high {high} top {}", high - low);
 
-        while m <= (high - low) {
+        // divide the array into blocks of size `m`
+        while m <= high {
             // Don't swap the first time
-            if n > 0 {
-                //println!("n {n} SWAP target/source");
+            if m > 1 {
                 source = (source + 1) % 2;
                 target = (target + 1) % 2;
-                //mem::swap(&mut target_sa, &mut source_sa);
-                //mem::swap(&mut target_lcp, &mut source_lcp);
             }
-            //println!("... source {source} target {target} ...");
 
-            //println!(">>> m {m} <<<");
-            // for m = 1, i = 0, 2, 4, 6, 8...
-            // for m = 2, i = 0, 4, 8...
-            // for m = 4, i = 0, 8...
-            // ...
-            for i in (low..=high).step_by(2 * m) {
+            for i in (0..=high).step_by(2 * m) {
                 let from = i;
                 let mut to = i + 2 * m - 1;
                 if to > high {
@@ -589,40 +567,21 @@ impl SuffixArray {
                 if mid > high {
                     mid = high;
                 }
-                //println!("  i {i}: from {from} to {to} mid {mid}");
-
-                //self.iter_merge(
-                //    source_sa, target_sa, source_lcp, target_lcp, from, mid,
-                //    to,
-                //);
-
-                self.iter_merge(
-                    &mut sa, &mut lcp, source, target, from, mid, to,
-                );
+                self.iter_merge(sa, lcp, source, target, from, mid, to);
             }
-            m = 2 * m;
-            n += 1;
+            // m = [1, 2, 4, 8, 16...]
+            m *= 2;
         }
 
         // Return the index of the final target
         target
     }
 
-    //fn iter_merge<'a>(
-    //    &self,
-    //    source_sa: &'a mut [usize],
-    //    target_sa: &'a mut [usize],
-    //    source_lcp: &'a mut [usize],
-    //    target_lcp: &'a mut [usize],
-    //    from: usize,
-    //    mid: usize,
-    //    to: usize,
-    //) {
-
-    fn iter_merge<'a>(
+    // --------------------------------------------------
+    fn iter_merge(
         &self,
-        sa: &mut Vec<Vec<usize>>,
-        lcp: &mut Vec<Vec<usize>>,
+        sa: &mut [Vec<usize>],
+        lcp: &mut [Vec<usize>],
         source: usize,
         target: usize,
         from: usize,
@@ -634,8 +593,6 @@ impl SuffixArray {
         let mut idx_x = from; // Index into x
         let mut idx_y = mid; // Index into y
         let mut k = from; // Index into target
-                          //let mut end_x = mid;
-                          //let mut end_y = to;
         let mut take_x = mid - from;
         let mut take_y = to - mid + 1;
         //println!(
@@ -650,19 +607,8 @@ impl SuffixArray {
         //    idx_y + take_y,
         //    &sa[source][idx_y..idx_y + take_y],
         //);
-        //println!("merge start values");
-        //println!("source_sa  {source_sa:?}");
-        //println!("target_sa  {target_sa:?}");
-        //println!("source_lcp {source_lcp:?}");
-        //println!("target_lcp {target_lcp:?}");
 
-        //let mut round = 0;
-        //while i < len_x && j < len_y {
-        //while idx_x < end_x && idx_y < end_y {
         while take_x > 0 && take_y > 0 {
-            //round += 1;
-            //println!("ROUND {round}");
-            //let l_x = source_lcp[idx_x];
             let l_x = lcp[source][idx_x];
 
             //println!("k {k} end_x {end_x} end_y {end_y} l_x {l_x} m {m}");
@@ -676,93 +622,67 @@ impl SuffixArray {
             //    source_sa[idx_y],
             //    String::from_utf8((&self.text[source_sa[idx_y]..]).to_vec())
             //);
-
-            if l_x > m {
-                //println!("ONE");
-                //target_sa[k] = source_sa[idx_x];
-                //target_lcp[k] = l_x;
-                sa[target][k] = sa[source][idx_x];
-                lcp[target][k] = l_x;
-            } else if l_x < m {
-                //println!("TWO");
-                //target_sa[k] = source_sa[idx_y];
-                //target_lcp[k] = m;
-                sa[target][k] = sa[source][idx_y];
-                lcp[target][k] = m;
-                m = l_x;
-            } else {
-                //println!("THREE");
-                // Length of shorter suffix
-                //let max_n =
-                //    self.len - max(source_sa[idx_x], source_sa[idx_y]);
-
-                let max_n =
-                    self.len - max(sa[source][idx_x], sa[source][idx_y]);
-
-                // Prefix-context length for the suffixes
-                let context = min(self.max_context, max_n);
-
-                // LCP(X_i, Y_j)
-                let n = m + find_lcp(
-                    //&self.text[(source_sa[idx_x] + m)..],
-                    //&self.text[(source_sa[idx_y] + m)..],
-                    &self.text[(sa[source][idx_x] + m)..],
-                    &self.text[(sa[source][idx_y] + m)..],
-                    context - m,
-                );
-
-                //println!(" lcp {n}");
-
-                // If the len of the LCP is the entire shorter
-                // sequence, take that (the one with the higher SA value)
-                if n == max_n {
-                    //target_sa[k] = max(source_sa[idx_x], source_sa[idx_y]);
-                    sa[target][k] = max(sa[source][idx_x], sa[source][idx_y]);
-                    //println!("  A: took '{}'", target_sa[k]);
-                }
-                // Else, look at the next char after the LCP
-                // to determine order.
-                else if self.text[sa[source][idx_x] + n]
-                    < self.text[sa[source][idx_y] + n]
-                {
-                    //target_sa[k] = source_sa[idx_x];
+            match l_x.cmp(&m) {
+                Ordering::Greater => {
                     sa[target][k] = sa[source][idx_x];
-                    //println!("  B: took x '{}'", target_sa[k]);
-                }
-                // Else take from the right
-                else {
-                    //target_sa[k] = source_sa[idx_y];
-                    sa[target][k] = sa[source][idx_y];
-                    //println!("  C: took y '{}'", target_sa[k]);
-                }
-
-                // If we took from the right...
-                //if target_sa[k] == source_sa[idx_x] {
-                if sa[target][k] == sa[source][idx_x] {
-                    //println!("Setting target_lcp[{k}] = l_x {l_x}");
-                    //target_lcp[k] = l_x;
                     lcp[target][k] = l_x;
-                } else {
-                    //println!("Setting target_lcp[{k}] = m {m}");
-                    //target_lcp[k] = m
-                    lcp[target][k] = m
                 }
-                //println!("Setting m {m} = n {n}");
-                m = n;
+                Ordering::Less => {
+                    sa[target][k] = sa[source][idx_y];
+                    lcp[target][k] = m;
+                    m = l_x;
+                }
+                _ => {
+                    // Length of shorter suffix
+                    let max_n =
+                        self.len - max(sa[source][idx_x], sa[source][idx_y]);
+
+                    // Prefix-context length for the suffixes
+                    let context = min(self.max_context, max_n);
+
+                    // LCP(X_i, Y_j)
+                    let n = m + find_lcp(
+                        &self.text[(sa[source][idx_x] + m)..],
+                        &self.text[(sa[source][idx_y] + m)..],
+                        context - m,
+                    );
+
+                    //println!(" lcp {n}");
+
+                    // If the len of the LCP is the entire shorter
+                    // sequence, take that (the one with the higher SA value)
+                    if n == max_n {
+                        sa[target][k] =
+                            max(sa[source][idx_x], sa[source][idx_y]);
+                    }
+                    // Else, look at the next char after the LCP
+                    // to determine order.
+                    else if self.text[sa[source][idx_x] + n]
+                        < self.text[sa[source][idx_y] + n]
+                    {
+                        sa[target][k] = sa[source][idx_x];
+                    }
+                    // Else take from the right
+                    else {
+                        sa[target][k] = sa[source][idx_y];
+                    }
+
+                    // If we took from the right...
+                    if sa[target][k] == sa[source][idx_x] {
+                        lcp[target][k] = l_x;
+                    } else {
+                        lcp[target][k] = m
+                    }
+                    m = n;
+                }
             }
 
-            //if target_sa[k] == source_sa[idx_x] {
             if sa[target][k] == sa[source][idx_x] {
                 idx_x += 1;
                 take_x -= 1;
-                //println!("Took from x, inc idx_x to '{idx_x}'");
             } else {
                 idx_y += 1;
                 take_y -= 1;
-                //println!("Took from y, inc idx_y to '{idx_y}' and SWAP");
-                //mem::swap(&mut end_x, &mut end_y);
-                //mem::swap(&mut idx_x, &mut idx_y);
-                //mem::swap(&mut take_x, &mut take_y);
                 (idx_x, idx_y) = (idx_y, idx_x);
                 (take_x, take_y) = (take_y, take_x);
             }
@@ -775,11 +695,7 @@ impl SuffixArray {
         }
 
         // Copy rest of the data from X to Z.
-        //while idx_x < end_x {
         while take_x > 0 {
-            //println!("Copying idx_x {idx_x}");
-            //target_sa[k] = source_sa[idx_x];
-            //target_lcp[k] = source_lcp[idx_x];
             sa[target][k] = sa[source][idx_x];
             lcp[target][k] = lcp[source][idx_x];
             idx_x += 1;
@@ -788,204 +704,18 @@ impl SuffixArray {
         }
 
         // Copy rest of the data from Y to Z.
-        //if idx_y < end_y {
         if take_y > 0 {
-            //println!("Copying idx_y {idx_y}");
-            //target_sa[k] = source_sa[idx_y];
-            //target_lcp[k] = m;
             sa[target][k] = sa[source][idx_y];
             lcp[target][k] = m;
             idx_y += 1;
             take_y -= 1;
             k += 1;
 
-            //while idx_y < end_y {
             while take_y > 0 {
-                //println!("Copying idx_y {idx_y}");
-                //target_sa[k] = source_sa[idx_y];
-                //target_lcp[k] = source_lcp[idx_y];
                 sa[target][k] = sa[source][idx_y];
                 lcp[target][k] = lcp[source][idx_y];
                 idx_y += 1;
                 take_y -= 1;
-                k += 1;
-            }
-        }
-    }
-
-    // Merge two sorted subarrays `A[from…mid]` and `A[mid+1…to]`
-    fn _iter_merge(
-        &self,
-        sa: &mut [usize],
-        temp_sa: &mut [usize],
-        _lcp: &mut [usize],
-        _temp_lcp: &mut [usize],
-        from: usize,
-        mid: usize,
-        to: usize,
-    ) {
-        println!("from {from} mid {mid} to {to}");
-        let mut k = from;
-        let mut i = from;
-        let mut j = mid + 1;
-
-        // loop till no elements are left in the left and right runs
-        while i <= mid && j <= to {
-            if self.is_less(sa[i], sa[j]) {
-                temp_sa[k] = sa[i];
-                i += 1;
-            } else {
-                temp_sa[k] = sa[j];
-                j += 1;
-            }
-            k += 1;
-        }
-
-        // copy remaining elements
-        while i < sa.len() && i <= mid {
-            temp_sa[k] = sa[i];
-            i += 1;
-            k += 1;
-        }
-
-        // no need to copy the second half (since the remaining items
-        // are already in their correct position in the temporary array)
-        // copy back to the original array to reflect sorted order
-        //for (int i = from; i <= to; i++) {
-        for i in from..=to {
-            sa[i] = temp_sa[i];
-        }
-    }
-
-    pub fn _merge_sort(
-        &self,
-        x: &mut [usize],
-        y: &mut [usize],
-        n: usize,
-        lcp: &mut [usize],
-        lcp_w: &mut [usize],
-    ) {
-        if n == 1 {
-            lcp[0] = 0;
-        } else {
-            let mid = n / 2;
-            self._merge_sort(
-                &mut y[..mid],
-                &mut x[..mid],
-                mid,
-                &mut lcp_w[..mid],
-                &mut lcp[..mid],
-            );
-
-            self._merge_sort(
-                &mut y[mid..],
-                &mut x[mid..],
-                n - mid,
-                &mut lcp_w[mid..],
-                &mut lcp[mid..],
-            );
-
-            self._merge(x, mid, lcp_w, y, lcp);
-        }
-    }
-
-    fn _merge<'a>(
-        &self,
-        suffix_array: &mut [usize],
-        mid: usize,
-        lcp_w: &mut [usize],
-        z: &mut [usize],
-        lcp_z: &mut [usize],
-    ) {
-        let (mut x, mut y) = suffix_array.split_at_mut(mid);
-        let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
-        let mut len_x = x.len();
-        let mut len_y = y.len();
-        let mut m = 0; // Last LCP from left side (x)
-        let mut i = 0; // Index into x
-        let mut j = 0; // Index into y
-        let mut k = 0; // Index into z
-
-        while i < len_x && j < len_y {
-            let l_x = lcp_x[i];
-
-            if l_x > m {
-                z[k] = x[i];
-                lcp_z[k] = l_x;
-            } else if l_x < m {
-                z[k] = y[j];
-                lcp_z[k] = m;
-                m = l_x;
-            } else {
-                // Length of shorter suffix
-                let max_n = self.len - max(x[i], y[j]);
-
-                // Prefix-context length for the suffixes
-                let context = min(self.max_context, max_n);
-
-                // LCP(X_i, Y_j)
-                let n = m + find_lcp(
-                    &self.text[(x[i] + m)..],
-                    &self.text[(y[j] + m)..],
-                    context - m,
-                );
-
-                // If the len of the LCP is the entire shorter
-                // sequence, take that.
-                if n == max_n {
-                    z[k] = max(x[i], y[j])
-                }
-                // Else, look at the next char after the LCP
-                // to determine order.
-                else if self.text[x[i] + n] < self.text[y[j] + n] {
-                    z[k] = x[i]
-                }
-                // Else take from the right
-                else {
-                    z[k] = y[j]
-                }
-
-                // If we took from the right...
-                if z[k] == x[i] {
-                    lcp_z[k] = l_x;
-                } else {
-                    lcp_z[k] = m
-                }
-                m = n;
-            }
-
-            if z[k] == x[i] {
-                i += 1;
-            } else {
-                j += 1;
-                mem::swap(&mut x, &mut y);
-                mem::swap(&mut len_x, &mut len_y);
-                mem::swap(&mut lcp_x, &mut lcp_y);
-                mem::swap(&mut i, &mut j);
-            }
-
-            k += 1;
-        }
-
-        // Copy rest of the data from X to Z.
-        while i < len_x {
-            z[k] = x[i];
-            lcp_z[k] = lcp_x[i];
-            i += 1;
-            k += 1;
-        }
-
-        // Copy rest of the data from Y to Z.
-        if j < len_y {
-            z[k] = y[j];
-            lcp_z[k] = m;
-            j += 1;
-            k += 1;
-
-            while j < len_y {
-                z[k] = y[j];
-                lcp_z[k] = lcp_y[j];
-                j += 1;
                 k += 1;
             }
         }
@@ -1012,7 +742,7 @@ fn transpose(matrix: Vec<Vec<Option<&[usize]>>>) -> Vec<Vec<&[usize]>> {
                 .iter()
                 .filter_map(|row| row.get(col))
                 .cloned()
-                .flat_map(|v| v)
+                .flatten()
                 .filter(|v| !v.is_empty())
                 .collect()
         })
