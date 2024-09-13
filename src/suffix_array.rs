@@ -608,8 +608,8 @@ impl SuffixArray {
                     lcp[target][k] = m;
                     m = l_x;
                 }
-                _ => {
-                    // Length of shorter suffix
+                Ordering::Equal => {
+                    // Find the length of shorter suffix
                     let max_n =
                         self.len - max(sa[source][idx_x], sa[source][idx_y]);
 
@@ -617,7 +617,7 @@ impl SuffixArray {
                     let context = min(self.max_context, max_n);
 
                     // LCP(X_i, Y_j)
-                    let n = m + find_lcp(
+                    let len_lcp = m + find_lcp(
                         &self.text[(sa[source][idx_x] + m)..],
                         &self.text[(sa[source][idx_y] + m)..],
                         context - m,
@@ -627,14 +627,14 @@ impl SuffixArray {
 
                     // If the len of the LCP is the entire shorter
                     // sequence, take that (the one with the higher SA value)
-                    if n == max_n {
+                    if len_lcp == max_n {
                         sa[target][k] =
                             max(sa[source][idx_x], sa[source][idx_y]);
                     }
                     // Else, look at the next char after the LCP
                     // to determine order.
-                    else if self.text[sa[source][idx_x] + n]
-                        < self.text[sa[source][idx_y] + n]
+                    else if self.text[sa[source][idx_x] + len_lcp]
+                        < self.text[sa[source][idx_y] + len_lcp]
                     {
                         sa[target][k] = sa[source][idx_x];
                     }
@@ -649,7 +649,7 @@ impl SuffixArray {
                     } else {
                         lcp[target][k] = m
                     }
-                    m = n;
+                    m = len_lcp;
                 }
             }
 
@@ -659,6 +659,7 @@ impl SuffixArray {
             } else {
                 idx_y += 1;
                 take_y -= 1;
+                // Swap X/Y
                 (idx_x, idx_y) = (idx_y, idx_x);
                 (take_x, take_y) = (take_y, take_x);
             }
