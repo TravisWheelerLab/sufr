@@ -8,6 +8,7 @@ anyhow = "1.0.86"
 assert_cmd = "2.0.16"
 clap = { version = "4.5.13", features = ["derive"] }
 env_logger = "0.11.5"
+format_num = "0.1.0"
 log = "0.4.22"
 pretty_assertions = "1.4.0"
 rayon = "1.10.0"

@@ -2,6 +2,7 @@ mod suffix_array;
 
 use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
+use format_num::NumberFormat;
 use log::{debug, info};
 use regex::Regex;
 use std::{
@@ -198,13 +199,6 @@ fn test_is_less() {
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
-    if let Some(num) = args.threads {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(num)
-            .build_global()
-            .unwrap();
-    }
-
     env_logger::Builder::new()
         .filter_level(match args.log {
             Some(LogLevel::Debug) => log::LevelFilter::Debug,
@@ -220,6 +214,14 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         })
         .init();
 
+    if let Some(num) = args.threads {
+        info!("Using {num} thread{}", if num == 1 { "" } else { "s" });
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num)
+            .build_global()
+            .unwrap();
+    }
+
     let total_start = Instant::now();
     let start = Instant::now();
     let sa = SuffixArray::new(
@@ -227,7 +229,12 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         args.max_context,
         args.ignore_start_n,
     );
-    info!("Read input of len {} in {:?}", sa.len, start.elapsed());
+    let num_fmt = NumberFormat::new();
+    info!(
+        "Read input of len {} in {:?}",
+        num_fmt.format(",.0", sa.len as f64),
+        start.elapsed()
+    );
     debug!("Raw input '{:?}'", sa.text);
     //dbg!(&sa);
 

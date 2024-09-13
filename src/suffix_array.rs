@@ -1,4 +1,5 @@
 use anyhow::Result;
+use format_num::NumberFormat;
 use log::info;
 use rayon::prelude::*;
 use std::{
@@ -7,7 +8,7 @@ use std::{
     mem,
     ops::Range,
     //sync::{Arc, Mutex},
-    time::Instant,
+    //time::Instant,
 };
 
 // --------------------------------------------------
@@ -23,12 +24,7 @@ pub struct SuffixArray {
     pub max_context: usize,
 
     // Whether or not to skip suffixes that start with N
-    pub ignore_start_n: bool, // The start positions of the suffixes
-                              // When "ignore_start_n" is false, this will
-                              // be all the positions from 0..len
-                              // When true, this will only be the positions
-                              // for suffixes that DO NOT start with N
-                              //pub suffixes: Vec<usize>,
+    pub ignore_start_n: bool,
 }
 
 impl SuffixArray {
@@ -45,7 +41,6 @@ impl SuffixArray {
             len,
             max_context: max_context.unwrap_or(len),
             ignore_start_n,
-            //suffixes,
         }
     }
 
@@ -481,13 +476,16 @@ impl SuffixArray {
                 if subset_size == 1 { 1 } else { subset_size / 2 };
         }
 
+        let num_fmt = NumberFormat::new();
         info!(
-            "{num_partitions} partition{} of {subset_size}, \
-            {pivots_per_part} pivots each",
-            if num_partitions == 1 { "" } else { "s" }
+            "{num_partitions} partition{} with {} element{} and {pivots_per_part} pivot{} each",
+            if subset_size == 1 { "" } else { "s" },
+            num_fmt.format(",.0", subset_size as f64),
+            if num_partitions == 1 { "" } else { "s" },
+            if pivots_per_part == 1 { "" } else { "s" },
         );
 
-        let now = Instant::now();
+        //let now = Instant::now();
         let partitions: Vec<_> = (0..num_partitions)
             .map(|i| {
                 let len = subset_size
@@ -499,24 +497,24 @@ impl SuffixArray {
                 suffixes.drain(0..len).collect::<Vec<_>>()
             })
             .collect();
-        println!("Finished making parts in {:?}", now.elapsed());
+        //println!("Finished making parts in {:?}", now.elapsed());
 
         //let counter = Arc::new(Mutex::new(0));
         partitions
             .into_par_iter()
             .map(|source_sa| {
-                let now = Instant::now();
+                //let now = Instant::now();
                 let len = source_sa.len();
                 let target_sa = source_sa.clone();
                 let source_lcp = vec![0; len];
                 let target_lcp = vec![0; len];
                 let mut sa = vec![source_sa, target_sa];
                 let mut lcp = vec![source_lcp, target_lcp];
-                println!("Finished allocs in {:?}", now.elapsed());
+                //println!("Finished allocs in {:?}", now.elapsed());
 
                 let source = 0;
                 let target = 1;
-                let now = Instant::now();
+                //let now = Instant::now();
                 let final_target = self.iter_merge_sort(
                     &mut sa,
                     &mut lcp,
@@ -524,7 +522,7 @@ impl SuffixArray {
                     target,
                     len - 1,
                 );
-                println!("Finished merge in {:?}", now.elapsed());
+                //println!("Finished merge in {:?}", now.elapsed());
                 let sub_sa = sa[final_target].clone();
                 let sub_lcp = lcp[final_target].clone();
                 let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
@@ -566,7 +564,6 @@ impl SuffixArray {
         //println!("low {low} high {high} top {}", high - low);
 
         while m <= (high - low) {
-            //println!("m {m}");
             // Don't swap the first time
             if n > 0 {
                 //println!("n {n} SWAP target/source");
@@ -764,8 +761,10 @@ impl SuffixArray {
                 take_y -= 1;
                 //println!("Took from y, inc idx_y to '{idx_y}' and SWAP");
                 //mem::swap(&mut end_x, &mut end_y);
-                mem::swap(&mut idx_x, &mut idx_y);
-                mem::swap(&mut take_x, &mut take_y);
+                //mem::swap(&mut idx_x, &mut idx_y);
+                //mem::swap(&mut take_x, &mut take_y);
+                (idx_x, idx_y) = (idx_y, idx_x);
+                (take_x, take_y) = (take_y, take_x);
             }
 
             //println!(
@@ -812,11 +811,6 @@ impl SuffixArray {
                 k += 1;
             }
         }
-        //println!("merge end values");
-        //println!("source ({source}) sa  {:?}", sa[source]);
-        //println!("target ({target}) sa  {:?}", sa[target]);
-        //println!("source_lcp {source_lcp:?}");
-        //println!("target_lcp {target_lcp:?}");
     }
 
     // Merge two sorted subarrays `A[from…mid]` and `A[mid+1…to]`
