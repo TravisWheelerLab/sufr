@@ -181,21 +181,17 @@ impl SuffixArray {
     #[allow(unused_assignments)]
     pub fn merge_part_subs(
         &self,
-        part_sas: Vec<Vec<&[usize]>>,
-        part_lcps: Vec<Vec<&[usize]>>,
+        part_sas: &[Vec<&[usize]>],
+        part_lcps: &[Vec<&[usize]>],
     ) -> Vec<usize> {
-        let pairs: Vec<_> = part_sas.iter().zip(part_lcps).collect();
-        //let merged_subs: Vec<_> = (0..part_sas.len())
-        let merged_subs: Vec<_> = pairs
+        let merged_subs: Vec<_> = (0..part_sas.len())
             .into_par_iter()
-            .map(|(part_sa, part_lcp)| {
-                //.map(|i| {
+            .map(|i| {
                 // TODO: Avoid allocation here?
-                let mut target_sa = convert_slices_to_vecs(part_sa.to_vec());
+                let mut target_sa =
+                    convert_slices_to_vecs(part_sas[i].to_vec());
                 let mut target_lcp =
-                    convert_slices_to_vecs(part_lcp.to_vec());
-                //let target_sa = part_sas[i];
-                //let mut target_lcp = part_lcps[i];
+                    convert_slices_to_vecs(part_lcps[i].to_vec());
 
                 // Iteratively merge in pairs
                 while target_sa.len() > 1 {
@@ -227,11 +223,6 @@ impl SuffixArray {
                             // Create working copies for merge
                             let target_sa = source_sa.clone();
                             let target_lcp = source_lcp.clone();
-
-                            //self._merge(
-                            //    &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
-                            //);
-                            //
                             let to = source_sa.len() - 1;
                             let mut sa = vec![source_sa, target_sa];
                             let mut lcp = vec![source_lcp, target_lcp];
@@ -244,21 +235,6 @@ impl SuffixArray {
                             );
                             tmp_sa.push(sa[target].to_vec());
                             tmp_lcp.push(lcp[target].to_vec());
-
-                            //let from = 0;
-                            //let to = source_sa.len() - 1;
-                            //self.iter_merge(
-                            //    &mut source_sa,
-                            //    &mut target_sa,
-                            //    &mut source_lcp,
-                            //    &mut target_lcp,
-                            //    from,
-                            //    mid,
-                            //    to,
-                            //);
-
-                            //tmp_sa.push(target_sa);
-                            //tmp_lcp.push(target_lcp);
                         }
                         i += 1;
                     }

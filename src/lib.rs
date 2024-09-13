@@ -270,7 +270,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Merge the partitioned subs
     let start = Instant::now();
-    let merged_sa = sa.merge_part_subs(part_sas, part_lcps);
+    let merged_sa = sa.merge_part_subs(&part_sas, &part_lcps);
     info!("Merged subarrays in {:?}", start.elapsed());
     debug!("{merged_sa:#?}");
     info!("Suffix generated in {:?}", total_start.elapsed());
