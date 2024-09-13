@@ -6,6 +6,7 @@ use format_num::NumberFormat;
 use log::{debug, info};
 use regex::Regex;
 use std::{
+    fmt::Debug,
     fs::File,
     io::{self, BufRead, BufReader, BufWriter, Read, Write},
     mem,
@@ -15,7 +16,7 @@ use std::{
     time::Instant,
 };
 use substring::Substring;
-use suffix_array::SuffixArray;
+use suffix_array::{FromUsize, Int, SuffixArray};
 
 // --------------------------------------------------
 #[derive(Parser, Debug)]
@@ -146,7 +147,7 @@ type PositionList = Vec<Range<usize>>;
 pub fn check(args: &CheckArgs) -> Result<()> {
     let sa = read_suffix_array(&args.array)?;
     let sa_len = sa.len();
-    let seq = SuffixArray::read_input(open(&args.sequence)?);
+    let seq = read_input(open(&args.sequence)?);
 
     if sa_len != seq.len() {
         bail!("SA len {sa_len} does not match sequence len {}", seq.len());
@@ -198,7 +199,41 @@ fn test_is_less() {
 }
 
 // --------------------------------------------------
+pub fn read_input(input: impl BufRead) -> Vec<u8> {
+    // TODO: Is this good and proper? Any use of the results
+    // will need to similarly filter the inputs.
+    let mut text: Vec<_> = input
+        .bytes()
+        .map_while(Result::ok)
+        .map(|b| b & 0b1011111) // Uppercase (mask w/32)
+        .filter(|&b| (0b1000001..=0b1011010).contains(&b)) // A-Z
+        .collect();
+    text.push(b'$');
+    text
+}
+
+// --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
+    let text = read_input(&mut BufReader::new(File::open(&args.input)?));
+    let len = text.len() as u64;
+    // let max_context = args.max_context;
+    let ignore_start_n = args.ignore_start_n;
+
+    if len < u32::MAX as u64 {
+        let sa: SuffixArray<u32> = SuffixArray::new(text, len as u32, None, ignore_start_n);
+        _create(sa, args)?;
+    } else {
+        let sa: SuffixArray<u64> = SuffixArray::new(text, len, None, ignore_start_n);
+        _create(sa, args)?;
+    }
+
+    Ok(())
+}
+
+pub fn _create<T>(sa: SuffixArray<T>, args: &CreateArgs) -> Result<()>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+{
     env_logger::Builder::new()
         .filter_level(match args.log {
             Some(LogLevel::Debug) => log::LevelFilter::Debug,
@@ -207,9 +242,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         })
         .target(match args.log_file {
             // Optional log file, default to STDOUT
-            Some(ref filename) => env_logger::Target::Pipe(Box::new(
-                BufWriter::new(File::create(filename)?),
-            )),
+            Some(ref filename) => {
+                env_logger::Target::Pipe(Box::new(BufWriter::new(File::create(filename)?)))
+            }
             _ => env_logger::Target::Stdout,
         })
         .init();
@@ -224,15 +259,11 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     let total_start = Instant::now();
     let start = Instant::now();
-    let sa = SuffixArray::new(
-        open(&args.input)?,
-        args.max_context,
-        args.ignore_start_n,
-    );
+
     let num_fmt = NumberFormat::new();
     info!(
         "Read input of len {} in {:?}",
-        num_fmt.format(",.0", sa.len as f64),
+        num_fmt.format(",.0", sa.len.to_usize() as f64),
         start.elapsed()
     );
     debug!("Raw input '{:?}'", sa.text);
@@ -263,8 +294,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Use the pivot locations to partition the SA/LCP subs
     let start = Instant::now();
-    let (part_sas, part_lcps) =
-        sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
+    let (part_sas, part_lcps) = sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
     info!("Partitioned subarrays in {:?}", start.elapsed());
     debug!("{part_sas:#?}");
 
@@ -282,11 +312,14 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         let mut num_errors = 0;
         for &cur in &merged_sa {
             if let Some(p) = previous {
-                if !is_less(&sa.text[p..sa.len], &sa.text[cur..sa.len]) {
+                if !is_less(
+                    &sa.text[p..sa.len.to_usize()],
+                    &sa.text[cur.to_usize()..sa.len.to_usize()],
+                ) {
                     num_errors += 1;
                 }
             }
-            previous = Some(cur);
+            previous = Some(cur.to_usize());
         }
 
         info!(
@@ -299,16 +332,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let start = Instant::now();
     let mut out = File::create(&args.output)?;
 
-    // Dynamically choose 32/64
-    //let size = if sa.len < u32::MAX as usize {
-    //    mem::size_of::<u32>()
-    //} else {
-    //    mem::size_of::<u64>()
-    //};
-    //let slice_u8: &[u8] = unsafe {
-    //    slice::from_raw_parts(sa.as_ptr() as *const _, sa.len * size)
-    //};
-
     // Write out suffix array length
     let _ = out.write(&usize_to_bytes(merged_sa.len()))?;
 
@@ -316,7 +339,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let slice_u8: &[u8] = unsafe {
         slice::from_raw_parts(
             merged_sa.as_ptr() as *const _,
-            merged_sa.len() * mem::size_of::<usize>(),
+            merged_sa.len() * mem::size_of::<T>(),
         )
     };
     out.write_all(slice_u8)?;
@@ -405,8 +428,7 @@ pub fn read(args: &ReadArgs) -> Result<()> {
     let sa_len = sa.len();
     info!("Read SA in {:?}", start.elapsed());
 
-    let seq =
-        String::from_utf8(SuffixArray::read_input(open(&args.sequence)?))?;
+    let seq = String::from_utf8(read_input(open(&args.sequence)?))?;
 
     if seq.len() != sa_len {
         bail!("SA len {sa_len} does not match sequence len {}", seq.len());
@@ -432,12 +454,7 @@ pub fn read(args: &ReadArgs) -> Result<()> {
             };
 
             if args.number {
-                writeln!(
-                    output,
-                    "{:3}: {}",
-                    start + 1,
-                    seq.substring(pos, end)
-                )?;
+                writeln!(output, "{:3}: {}", start + 1, seq.substring(pos, end))?;
             } else {
                 writeln!(output, "{}", seq.substring(pos, end))?;
             }
@@ -484,8 +501,7 @@ pub fn read(args: &ReadArgs) -> Result<()> {
 
 // --------------------------------------------------
 fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
-    let mut sa_file =
-        File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+    let mut sa_file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
     // The first 64-bits of the file contain the size of the SA
     let mut buffer = [0; 8];
@@ -512,9 +528,8 @@ fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
     //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
     //};
 
-    let suffix_array: &[usize] = unsafe {
-        std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
-    };
+    let suffix_array: &[usize] =
+        unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len) };
 
     Ok(suffix_array.to_vec())
 }

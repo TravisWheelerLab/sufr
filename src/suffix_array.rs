@@ -3,39 +3,77 @@ use format_num::NumberFormat;
 use log::info;
 use rayon::prelude::*;
 use std::{
-    //sync::{Arc, Mutex},
-    //time::Instant,
     cmp::{max, min, Ordering},
     io::BufRead,
     mem,
-    ops::Range,
+    ops::{Add, Range, Sub},
 };
+
+pub trait FromUsize<T> {
+    fn from_usize(val: usize) -> T;
+}
+
+impl FromUsize<u32> for u32 {
+    fn from_usize(val: usize) -> u32 {
+        val as u32
+    }
+}
+
+impl FromUsize<u64> for u64 {
+    fn from_usize(val: usize) -> u64 {
+        val as u64
+    }
+}
+
+pub trait Int: Add<Output = Self> + Sub<Output = Self> + Copy + Default + Ord {
+    fn to_usize(&self) -> usize;
+}
+
+impl Int for u32 {
+    fn to_usize(&self) -> usize {
+        *self as usize
+    }
+}
+
+impl Int for u64 {
+    fn to_usize(&self) -> usize {
+        *self as usize
+    }
+}
 
 // --------------------------------------------------
 #[derive(Clone, Debug)]
-pub struct SuffixArray {
+pub struct SuffixArray<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync,
+{
     // The original text stored as bytes
     pub text: Vec<u8>,
 
     // The length of the original text
-    pub len: usize,
+    pub len: T,
 
     // The maximum length when comparing suffixes
-    pub max_context: usize,
+    pub max_context: T,
 
     // Whether or not to skip suffixes that start with N
     pub ignore_start_n: bool,
 }
 
-impl SuffixArray {
+impl<T> SuffixArray<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync,
+{
     // --------------------------------------------------
     pub fn new(
-        input: impl BufRead,
-        max_context: Option<usize>,
+        // input: impl BufRead,
+        text: Vec<u8>,
+        len: T,
+        max_context: Option<T>,
         ignore_start_n: bool,
-    ) -> SuffixArray {
-        let text = SuffixArray::read_input(input);
-        let len = text.len();
+    ) -> SuffixArray<T> {
+        // let text = SuffixArray::read_input(input);
+        // let len = text.len();
 
         SuffixArray {
             text,
@@ -46,22 +84,8 @@ impl SuffixArray {
     }
 
     // --------------------------------------------------
-    pub fn read_input(input: impl BufRead) -> Vec<u8> {
-        // TODO: Is this good and proper? Any use of the results
-        // will need to similarly filter the inputs.
-        let mut text: Vec<_> = input
-            .bytes()
-            .map_while(Result::ok)
-            .map(|b| b & 0b1011111) // Uppercase (mask w/32)
-            .filter(|&b| (0b1000001..=0b1011010).contains(&b)) // A-Z
-            .collect();
-        text.push(b'$');
-        text
-    }
-
-    // --------------------------------------------------
     #[allow(dead_code)]
-    pub fn check_order(&self, sa: &[usize]) -> Vec<usize> {
+    pub fn check_order(&self, sa: &[T]) -> Vec<T> {
         let mut errors = vec![];
         for window in sa.windows(2) {
             if let [prev, cur] = window {
@@ -71,6 +95,42 @@ impl SuffixArray {
             }
         }
         errors
+    }
+    // --------------------------------------------------
+    fn find_lcp(s1: &[u8], s2: &[u8], len: T) -> T {
+        T::from_usize(
+            s1.iter()
+                .take(len.to_usize())
+                .zip(s2.iter().take(len.to_usize()))
+                .take_while(|(a, b)| a == b)
+                .count(),
+        )
+    }
+    // --------------------------------------------------
+    fn convert_slices_to_vecs(vec_of_slices: Vec<&[T]>) -> Vec<Vec<T>> {
+        vec_of_slices
+            .into_iter() // Convert Vec<&[usize]> into an iterator
+            .map(|slice| slice.to_vec()) // Convert each slice into a Vec<usize>
+            .collect() // Collect into a Vec<Vec<usize>>
+    }
+
+    // --------------------------------------------------
+    fn transpose(matrix: Vec<Vec<Option<&[T]>>>) -> Vec<Vec<&[T]>> {
+        // Determine the number of columns (max length of rows)
+        let num_cols = matrix.iter().map(|row| row.len()).max().unwrap_or(0);
+
+        // Collect transposed rows, unpack the Options to remove None values
+        (0..num_cols)
+            .map(|col| {
+                matrix
+                    .iter()
+                    .filter_map(|row| row.get(col))
+                    .cloned()
+                    .flatten()
+                    .filter(|v| !v.is_empty())
+                    .collect()
+            })
+            .collect()
     }
 
     // --------------------------------------------------
@@ -84,13 +144,16 @@ impl SuffixArray {
     }
 
     // --------------------------------------------------
-    pub fn is_less(&self, s1: usize, s2: usize) -> bool {
-        let lcp = (s1..self.max_context)
-            .zip(s2..self.max_context)
+    pub fn is_less(&self, s1: T, s2: T) -> bool {
+        let lcp = (s1.to_usize()..self.max_context.to_usize())
+            .zip(s2.to_usize()..self.max_context.to_usize())
             .take_while(|(a, b)| self.text[*a] == self.text[*b])
             .count();
 
-        match (self.text.get(s1 + lcp), self.text.get(s2 + lcp)) {
+        match (
+            self.text.get(s1.to_usize() + lcp),
+            self.text.get(s2.to_usize() + lcp),
+        ) {
             (Some(a), Some(b)) => a < b,
             (None, Some(_)) => true,
             _ => false,
@@ -98,7 +161,7 @@ impl SuffixArray {
     }
 
     // --------------------------------------------------
-    fn upper_bound(&self, target: usize, sa: &[usize]) -> Option<usize> {
+    fn upper_bound(&self, target: T, sa: &[T]) -> Option<T> {
         // See if target is less than the first element
         if self.is_less(target, sa[0]) {
             None
@@ -109,10 +172,10 @@ impl SuffixArray {
             // If the value at the partition is the same as the target
             if sa.get(i).map_or(false, |&v| v == target) {
                 // Then return the next value, which might be out of range
-                Some(i + 1)
+                Some(T::from_usize(i + 1))
             } else {
                 // Else return the partition point
-                Some(i)
+                Some(T::from_usize(i))
             }
         }
     }
@@ -120,8 +183,8 @@ impl SuffixArray {
     // --------------------------------------------------
     pub fn locate_pivots(
         &self,
-        sub_sas: &Vec<Vec<usize>>,
-        pivots: Vec<usize>,
+        sub_sas: &Vec<Vec<T>>,
+        pivots: Vec<T>,
     ) -> Vec<Vec<Option<Range<usize>>>> {
         // The pivots divide the SA into
         // sections, so we may have a section
@@ -141,8 +204,8 @@ impl SuffixArray {
             //.iter()
             .into_par_iter()
             .map(|sub_sa| {
-                let mut sub_locs = vec![];
-                let mut prev_end: Option<usize> = None;
+                let mut sub_locs: Vec<Option<Range<usize>>> = vec![];
+                let mut prev_end: Option<T> = None;
                 let mut exhausted = false;
 
                 for &pivot in &pivots {
@@ -153,10 +216,11 @@ impl SuffixArray {
                         let found = self.upper_bound(pivot, sub_sa);
                         match found {
                             Some(i) => {
-                                sub_locs.push(Some(prev_end.unwrap_or(0)..i));
+                                sub_locs
+                                    .push(Some(prev_end.map_or(0, |p| p.to_usize())..i.to_usize()));
 
                                 // Check if sub SA is exhausted
-                                exhausted = i == sub_sa.len();
+                                exhausted = i == T::from_usize(sub_sa.len());
                             }
                             _ => sub_locs.push(None),
                         }
@@ -164,9 +228,9 @@ impl SuffixArray {
                     }
                 }
 
-                let last_index = prev_end.unwrap_or(0);
-                if last_index < sub_sa.len() {
-                    sub_locs.push(Some(last_index..sub_sa.len()));
+                let last_index = prev_end.unwrap_or(T::from_usize(0));
+                if last_index < T::from_usize(sub_sa.len()) {
+                    sub_locs.push(Some(last_index.to_usize()..sub_sa.len()));
                 } else {
                     sub_locs.push(None);
                 }
@@ -179,11 +243,7 @@ impl SuffixArray {
     // --------------------------------------------------
     // TODO: Take SA/LCPs as mutable
     #[allow(unused_assignments)]
-    pub fn merge_part_subs(
-        &self,
-        part_sas: &[Vec<&[usize]>],
-        part_lcps: &[Vec<&[usize]>],
-    ) -> Vec<usize> {
+    pub fn merge_part_subs(&self, part_sas: &[Vec<&[T]>], part_lcps: &[Vec<&[T]>]) -> Vec<T> {
         //let pairs: Vec<_> = part_sas.iter().zip(part_lcps).collect();
         //let merged_subs: Vec<_> = pairs
         let merged_subs: Vec<_> = (0..part_sas.len())
@@ -197,10 +257,8 @@ impl SuffixArray {
                 //let tmp: Vec<usize> = *part_sas[i].iter().concat();
                 //dbg!(tmp);
 
-                let mut target_sa =
-                    convert_slices_to_vecs(part_sas[i].to_vec());
-                let mut target_lcp =
-                    convert_slices_to_vecs(part_lcps[i].to_vec());
+                let mut target_sa = Self::convert_slices_to_vecs(part_sas[i].to_vec());
+                let mut target_lcp = Self::convert_slices_to_vecs(part_lcps[i].to_vec());
 
                 // Iteratively merge in pairs
                 while target_sa.len() > 1 {
@@ -226,7 +284,7 @@ impl SuffixArray {
 
                             // Zero out first LCP
                             if let Some(v) = source_lcp.get_mut(0) {
-                                *v = 0;
+                                *v = T::from_usize(0);
                             }
 
                             // Create working copies for merge
@@ -238,10 +296,7 @@ impl SuffixArray {
                             let source = 0;
                             let target = 1;
                             let from = 0;
-                            self.iter_merge(
-                                &mut sa, &mut lcp, source, target, from, mid,
-                                to,
-                            );
+                            self.iter_merge(&mut sa, &mut lcp, source, target, from, mid, to);
                             tmp_sa.push(sa[target].to_vec());
                             tmp_lcp.push(lcp[target].to_vec());
                         }
@@ -265,10 +320,10 @@ impl SuffixArray {
     // --------------------------------------------------
     pub fn partition_subarrays<'a>(
         &self,
-        sa: &'a [Vec<usize>],
-        lcp: &'a [Vec<usize>],
+        sa: &'a [Vec<T>],
+        lcp: &'a [Vec<T>],
         pivot_locs: Vec<Vec<Option<Range<usize>>>>,
-    ) -> (Vec<Vec<&'a [usize]>>, Vec<Vec<&'a [usize]>>) {
+    ) -> (Vec<Vec<&'a [T]>>, Vec<Vec<&'a [T]>>) {
         // Given the SA/LCP arrays for each of the subarrays
         // and the pivot locations, subdivide the SA/LCP
         // subarrays further.
@@ -298,23 +353,26 @@ impl SuffixArray {
             })
             .collect();
 
-        (transpose(ret_sa), transpose(ret_lcp))
+        (Self::transpose(ret_sa), Self::transpose(ret_lcp))
     }
 
     // --------------------------------------------------
-    fn gen_lcp(&self, sa: &[usize]) -> Vec<usize> {
+    fn gen_lcp(&self, sa: &[T]) -> Vec<T> {
         (0..sa.len())
             .map(|i| {
                 if i == 0 {
-                    0
+                    T::from_usize(0)
                 } else {
-                    let s1 = &self.text[sa[i - 1]..];
-                    let s2 = &self.text[sa[i]..];
-                    s1.iter()
-                        .take(self.max_context)
-                        .zip(s2)
-                        .take_while(|(a, b)| a == b)
-                        .count()
+                    let s1 = &self.text[sa[i - 1].to_usize()..];
+                    let s2 = &self.text[sa[i].to_usize()..];
+
+                    T::from_usize(
+                        s1.iter()
+                            .take(self.max_context.to_usize())
+                            .zip(s2)
+                            .take_while(|(a, b)| a == b)
+                            .count(),
+                    )
                 }
             })
             .collect()
@@ -323,15 +381,13 @@ impl SuffixArray {
     // --------------------------------------------------
     // TODO: Is it possible to take the sub_pivots mutably?
     // As written, I make temporary copies to use mem::swap
-    pub fn select_pivots(
-        &self,
-        mut sub_pivots: Vec<Vec<usize>>,
-    ) -> Vec<usize> {
+    pub fn select_pivots(&self, mut sub_pivots: Vec<Vec<T>>) -> Vec<T> {
         let num_partitions = sub_pivots.len();
 
         // The pivots were plucked from their sorted
         // suffixes and have no LCPs, so construct.
-        let mut sub_lcps: Vec<Vec<usize>> = sub_pivots
+        // TODO: make sure we actually need to do this
+        let mut sub_lcps: Vec<Vec<T>> = sub_pivots
             .iter()
             .map(|pivots| self.gen_lcp(pivots))
             .collect();
@@ -381,9 +437,7 @@ impl SuffixArray {
                     let mut lcp = vec![source_lcp, target_lcp];
                     let source = 0;
                     let target = 1;
-                    self.iter_merge(
-                        &mut sa, &mut lcp, source, target, from, mid, to,
-                    );
+                    self.iter_merge(&mut sa, &mut lcp, source, target, from, mid, to);
 
                     tmp_sa.push(sa[target].to_vec());
                     tmp_lcp.push(lcp[target].to_vec());
@@ -419,30 +473,24 @@ impl SuffixArray {
     }
 
     // --------------------------------------------------
-    pub fn sample_pivots(
-        &self,
-        sa: &[usize],
-        num_pivots: usize,
-    ) -> Vec<usize> {
+    pub fn sample_pivots(&self, sa: &[T], num_pivots: usize) -> Vec<T> {
         let step = sa.len() / if num_pivots > 0 { num_pivots } else { 1 };
 
         (0..num_pivots).map(|i| sa[(i + 1) * step - 1]).collect()
     }
 
     // --------------------------------------------------
-    pub fn sort_subarrays(
-        &self,
-        suggested_num_partitions: usize,
-    ) -> Vec<(Vec<usize>, Vec<usize>, Vec<usize>)> {
-        let mut suffixes: Vec<usize> = if self.ignore_start_n {
+    // TODO: return type struct
+    pub fn sort_subarrays(&self, suggested_num_partitions: usize) -> Vec<(Vec<T>, Vec<T>, Vec<T>)> {
+        let mut suffixes: Vec<T> = if self.ignore_start_n {
             // Text will already be "uppercase" (but bytes), N = 78
             self.text
                 .iter()
                 .enumerate()
-                .filter_map(|(i, &c)| (c != 78).then_some(i))
+                .filter_map(|(i, &c)| (c != 78).then_some(T::from_usize(i)))
                 .collect()
         } else {
-            (0..self.text.len()).collect()
+            (0..self.text.len()).map(T::from_usize).collect()
         };
         let num_suffixes = suffixes.len();
         let num_parts = if suggested_num_partitions < num_suffixes {
@@ -456,8 +504,7 @@ impl SuffixArray {
         let len = num_suffixes as f64;
         let mut pivots_per_part = (32.0 * len.log10()).ceil() as usize;
         if (pivots_per_part > subset_size) || (pivots_per_part < 1) {
-            pivots_per_part =
-                if subset_size == 1 { 1 } else { subset_size / 2 };
+            pivots_per_part = if subset_size == 1 { 1 } else { subset_size / 2 };
         }
 
         let num_fmt = NumberFormat::new();
@@ -483,15 +530,14 @@ impl SuffixArray {
             .collect();
         //println!("Finished making parts in {:?}", now.elapsed());
 
-        //let counter = Arc::new(Mutex::new(0));
         partitions
             .into_par_iter()
             .map(|source_sa| {
                 //let now = Instant::now();
                 let len = source_sa.len();
                 let target_sa = source_sa.clone();
-                let source_lcp = vec![0; len];
-                let target_lcp = vec![0; len];
+                let source_lcp = vec![T::default(); len];
+                let target_lcp = vec![T::default(); len];
                 let mut sa = vec![source_sa, target_sa];
                 let mut lcp = vec![source_lcp, target_lcp];
                 //println!("Finished allocs in {:?}", now.elapsed());
@@ -499,13 +545,7 @@ impl SuffixArray {
                 let source = 0;
                 let target = 1;
                 //let now = Instant::now();
-                let final_target = self.iter_merge_sort(
-                    &mut sa,
-                    &mut lcp,
-                    source,
-                    target,
-                    len - 1,
-                );
+                let final_target = self.iter_merge_sort(&mut sa, &mut lcp, source, target, len - 1);
 
                 //println!("Finished merge in {:?}", now.elapsed());
                 let sub_sa = sa[final_target].clone();
@@ -527,8 +567,8 @@ impl SuffixArray {
     // --------------------------------------------------
     fn iter_merge_sort(
         &self,
-        sa: &mut [Vec<usize>],
-        lcp: &mut [Vec<usize>],
+        sa: &mut [Vec<T>],
+        lcp: &mut [Vec<T>],
         mut source: usize,
         mut target: usize,
         high: usize,
@@ -566,16 +606,16 @@ impl SuffixArray {
     // --------------------------------------------------
     fn iter_merge(
         &self,
-        sa: &mut [Vec<usize>],
-        lcp: &mut [Vec<usize>],
-        source: usize,
-        target: usize,
+        sa: &mut [Vec<T>],
+        lcp: &mut [Vec<T>],
+        source_idx: usize,
+        target_idx: usize,
         from: usize,
         mid: usize,
         to: usize,
     ) {
         //println!("\n>>> MERGE FROM {from} MID {mid} TO {to} source");
-        let mut m = 0; // Last LCP from left side (x)
+        let mut m = T::from_usize(0); // Last LCP from left side (x)
         let mut idx_x = from; // Index into x
         let mut idx_y = mid; // Index into y
         let mut k = from; // Index into target
@@ -595,7 +635,7 @@ impl SuffixArray {
         //);
 
         while take_x > 0 && take_y > 0 {
-            let l_x = lcp[source][idx_x];
+            let l_x = lcp[source_idx][idx_x];
 
             //println!("k {k} end_x {end_x} end_y {end_y} l_x {l_x} m {m}");
             //println!(
@@ -610,26 +650,25 @@ impl SuffixArray {
             //);
             match l_x.cmp(&m) {
                 Ordering::Greater => {
-                    sa[target][k] = sa[source][idx_x];
-                    lcp[target][k] = l_x;
+                    sa[target_idx][k] = sa[source_idx][idx_x];
+                    lcp[target_idx][k] = l_x;
                 }
                 Ordering::Less => {
-                    sa[target][k] = sa[source][idx_y];
-                    lcp[target][k] = m;
+                    sa[target_idx][k] = sa[source_idx][idx_y];
+                    lcp[target_idx][k] = m;
                     m = l_x;
                 }
                 Ordering::Equal => {
                     // Find the length of shorter suffix
-                    let max_n =
-                        self.len - max(sa[source][idx_x], sa[source][idx_y]);
+                    let max_n = self.len - max(sa[source_idx][idx_x], sa[source_idx][idx_y]);
 
                     // Prefix-context length for the suffixes
                     let context = min(self.max_context, max_n);
 
                     // LCP(X_i, Y_j)
-                    let len_lcp = m + find_lcp(
-                        &self.text[(sa[source][idx_x] + m)..],
-                        &self.text[(sa[source][idx_y] + m)..],
+                    let len_lcp = m + Self::find_lcp(
+                        &self.text[(sa[source_idx][idx_x] + m).to_usize()..],
+                        &self.text[(sa[source_idx][idx_y] + m).to_usize()..],
                         context - m,
                     );
 
@@ -638,32 +677,31 @@ impl SuffixArray {
                     // If the len of the LCP is the entire shorter
                     // sequence, take that (the one with the higher SA value)
                     if len_lcp == max_n {
-                        sa[target][k] =
-                            max(sa[source][idx_x], sa[source][idx_y]);
+                        sa[target_idx][k] = max(sa[source_idx][idx_x], sa[source_idx][idx_y]);
                     }
                     // Else, look at the next char after the LCP
                     // to determine order.
-                    else if self.text[sa[source][idx_x] + len_lcp]
-                        < self.text[sa[source][idx_y] + len_lcp]
+                    else if self.text[(sa[source_idx][idx_x] + len_lcp).to_usize()]
+                        < self.text[(sa[source_idx][idx_y] + len_lcp).to_usize()]
                     {
-                        sa[target][k] = sa[source][idx_x];
+                        sa[target_idx][k] = sa[source_idx][idx_x];
                     }
                     // Else take from the right
                     else {
-                        sa[target][k] = sa[source][idx_y];
+                        sa[target_idx][k] = sa[source_idx][idx_y];
                     }
 
                     // If we took from the right...
-                    if sa[target][k] == sa[source][idx_x] {
-                        lcp[target][k] = l_x;
+                    if sa[target_idx][k] == sa[source_idx][idx_x] {
+                        lcp[target_idx][k] = l_x;
                     } else {
-                        lcp[target][k] = m
+                        lcp[target_idx][k] = m
                     }
                     m = len_lcp;
                 }
             }
 
-            if sa[target][k] == sa[source][idx_x] {
+            if sa[target_idx][k] == sa[source_idx][idx_x] {
                 idx_x += 1;
                 take_x -= 1;
             } else {
@@ -683,8 +721,8 @@ impl SuffixArray {
 
         // Copy rest of the data from X to Z.
         while take_x > 0 {
-            sa[target][k] = sa[source][idx_x];
-            lcp[target][k] = lcp[source][idx_x];
+            sa[target_idx][k] = sa[source_idx][idx_x];
+            lcp[target_idx][k] = lcp[source_idx][idx_x];
             idx_x += 1;
             take_x -= 1;
             k += 1;
@@ -692,57 +730,21 @@ impl SuffixArray {
 
         // Copy rest of the data from Y to Z.
         if take_y > 0 {
-            sa[target][k] = sa[source][idx_y];
-            lcp[target][k] = m;
+            sa[target_idx][k] = sa[source_idx][idx_y];
+            lcp[target_idx][k] = m;
             idx_y += 1;
             take_y -= 1;
             k += 1;
 
             while take_y > 0 {
-                sa[target][k] = sa[source][idx_y];
-                lcp[target][k] = lcp[source][idx_y];
+                sa[target_idx][k] = sa[source_idx][idx_y];
+                lcp[target_idx][k] = lcp[source_idx][idx_y];
                 idx_y += 1;
                 take_y -= 1;
                 k += 1;
             }
         }
     }
-}
-
-// --------------------------------------------------
-fn convert_slices_to_vecs(vec_of_slices: Vec<&[usize]>) -> Vec<Vec<usize>> {
-    vec_of_slices
-        .into_iter() // Convert Vec<&[usize]> into an iterator
-        .map(|slice| slice.to_vec()) // Convert each slice into a Vec<usize>
-        .collect() // Collect into a Vec<Vec<usize>>
-}
-
-// --------------------------------------------------
-fn transpose(matrix: Vec<Vec<Option<&[usize]>>>) -> Vec<Vec<&[usize]>> {
-    // Determine the number of columns (max length of rows)
-    let num_cols = matrix.iter().map(|row| row.len()).max().unwrap_or(0);
-
-    // Collect transposed rows, unpack the Options to remove None values
-    (0..num_cols)
-        .map(|col| {
-            matrix
-                .iter()
-                .filter_map(|row| row.get(col))
-                .cloned()
-                .flatten()
-                .filter(|v| !v.is_empty())
-                .collect()
-        })
-        .collect()
-}
-
-// --------------------------------------------------
-fn find_lcp(s1: &[u8], s2: &[u8], len: usize) -> usize {
-    s1.iter()
-        .take(len)
-        .zip(s2.iter().take(len))
-        .take_while(|(a, b)| a == b)
-        .count()
 }
 
 // --------------------------------------------------
@@ -918,8 +920,7 @@ mod tests {
         assert_eq!(subs.len(), 2);
 
         for (sa, _lcp, _) in subs {
-            let suffixes: Vec<String> =
-                sa.iter().map(|&p| suf_arr._string_at(p)).collect();
+            let suffixes: Vec<String> = sa.iter().map(|&p| suf_arr._string_at(p)).collect();
 
             // Check that suffixes are correctly ordered
             for pair in suffixes.windows(2) {
@@ -951,47 +952,27 @@ mod tests {
     #[test]
     fn test_find_lcp() -> Result<()> {
         assert_eq!(
-            find_lcp(
-                "A".to_string().as_bytes(),
-                "C".to_string().as_bytes(),
-                1
-            ),
+            find_lcp("A".to_string().as_bytes(), "C".to_string().as_bytes(), 1),
             0
         );
 
         assert_eq!(
-            find_lcp(
-                "A".to_string().as_bytes(),
-                "A".to_string().as_bytes(),
-                1
-            ),
+            find_lcp("A".to_string().as_bytes(), "A".to_string().as_bytes(), 1),
             1
         );
 
         assert_eq!(
-            find_lcp(
-                "A".to_string().as_bytes(),
-                "AA".to_string().as_bytes(),
-                1
-            ),
+            find_lcp("A".to_string().as_bytes(), "AA".to_string().as_bytes(), 1),
             1
         );
 
         assert_eq!(
-            find_lcp(
-                "AA".to_string().as_bytes(),
-                "AAC".to_string().as_bytes(),
-                3
-            ),
+            find_lcp("AA".to_string().as_bytes(), "AAC".to_string().as_bytes(), 3),
             2
         );
 
         assert_eq!(
-            find_lcp(
-                "AC".to_string().as_bytes(),
-                "ACA".to_string().as_bytes(),
-                2
-            ),
+            find_lcp("AC".to_string().as_bytes(), "ACA".to_string().as_bytes(), 2),
             2
         );
 
