@@ -17,6 +17,7 @@ use std::{
 };
 use substring::Substring;
 use suffix_array::{FromUsize, Int, SuffixArray};
+//use u4::{u4, AsNibbles, U4};
 
 // --------------------------------------------------
 #[derive(Parser, Debug)]
@@ -213,17 +214,89 @@ pub fn read_input(input: impl BufRead) -> Vec<u8> {
 }
 
 // --------------------------------------------------
+//pub fn read_input_u4(input: impl BufRead) -> Vec<u8> {
+//    //text.push(b'$');
+//    let mut text: Vec<u8> = input
+//        .bytes()
+//        .map_while(Result::ok)
+//        .filter(|&b| (0b1000001..=0b1011010).contains(&b)) // A-Z
+//        .map(|b| b & 0b1011111) // Uppercase (mask w/32)
+//        .collect();
+//    text.push(b'$');
+//    if text.len() % 2 == 1 {
+//        text.push(b'$');
+//    }
+//    let mut packed: Vec<u8> = vec![0u8; text.len() / 2];
+//    let u4s: Vec<_> = text.iter().filter_map(byte_to_u4).collect();
+//    AsNibbles(&mut packed).pack_from_slice(&u4s);
+//    packed
+//}
+
+//fn byte_to_u4(byte: &u8) -> Option<U4> {
+//    match byte {
+//        36 => Some(u4!(0)),  // $
+//        65 => Some(u4!(1)),  // A
+//        67 => Some(u4!(2)),  // C
+//        71 => Some(u4!(3)),  // G
+//        84 => Some(u4!(4)),  // T
+//        82 => Some(u4!(5)),  // R
+//        89 => Some(u4!(6)),  // Y
+//        83 => Some(u4!(7)),  // S
+//        87 => Some(u4!(8)),  // W
+//        75 => Some(u4!(9)),  // K
+//        77 => Some(u4!(10)), // M
+//        66 => Some(u4!(11)), // B
+//        68 => Some(u4!(12)), // D
+//        72 => Some(u4!(13)), // H
+//        86 => Some(u4!(14)), // V
+//        78 => Some(u4!(15)), // N
+//        _ => None,           // Anything else
+//    }
+//}
+
+//fn u4_to_char(val: U4) -> u8 {
+//    match val {
+//        U4::Dec00 => 36,
+//        U4::Dec01 => 65,
+//        U4::Dec02 => 67,
+//        U4::Dec03 => 71,
+//        U4::Dec04 => 84,
+//        U4::Dec05 => 82,
+//        U4::Dec06 => 89,
+//        U4::Dec07 => 83,
+//        U4::Dec08 => 87,
+//        U4::Dec09 => 75,
+//        U4::Dec10 => 77,
+//        U4::Dec11 => 66,
+//        U4::Dec12 => 68,
+//        U4::Dec13 => 72,
+//        U4::Dec14 => 86,
+//        U4::Dec15 => 78,
+//    }
+//}
+
+// --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
     let text = read_input(&mut BufReader::new(File::open(&args.input)?));
+    //let u4s = read_input_u4(&mut BufReader::new(File::open(&args.input)?));
     let len = text.len() as u64;
-    // let max_context = args.max_context;
     let ignore_start_n = args.ignore_start_n;
 
     if len < u32::MAX as u64 {
-        let sa: SuffixArray<u32> = SuffixArray::new(text, len as u32, None, ignore_start_n);
+        let sa: SuffixArray<u32> = SuffixArray::new(
+            text,
+            len as u32,
+            args.max_context.map(|val| val as u32),
+            ignore_start_n,
+        );
         _create(sa, args)?;
     } else {
-        let sa: SuffixArray<u64> = SuffixArray::new(text, len, None, ignore_start_n);
+        let sa: SuffixArray<u64> = SuffixArray::new(
+            text,
+            len,
+            args.max_context.map(|val| val as u64),
+            ignore_start_n,
+        );
         _create(sa, args)?;
     }
 
@@ -242,9 +315,9 @@ where
         })
         .target(match args.log_file {
             // Optional log file, default to STDOUT
-            Some(ref filename) => {
-                env_logger::Target::Pipe(Box::new(BufWriter::new(File::create(filename)?)))
-            }
+            Some(ref filename) => env_logger::Target::Pipe(Box::new(
+                BufWriter::new(File::create(filename)?),
+            )),
             _ => env_logger::Target::Stdout,
         })
         .init();
@@ -259,7 +332,6 @@ where
 
     let total_start = Instant::now();
     let start = Instant::now();
-
     let num_fmt = NumberFormat::new();
     info!(
         "Read input of len {} in {:?}",
@@ -280,10 +352,6 @@ where
     let sub_pivots: Vec<_> = sufs.iter().map(|t| t.2.clone()).collect();
     mem::drop(sufs);
 
-    sub_lcps.iter().for_each(|lcp| {
-        println!("{}", lcp.iter().map(|i| i.to_usize()).sum::<usize>());
-    });
-
     // Determine the pivot suffixes
     let start = Instant::now();
     let pivots = sa.select_pivots(sub_pivots);
@@ -298,7 +366,8 @@ where
 
     // Use the pivot locations to partition the SA/LCP subs
     let start = Instant::now();
-    let (part_sas, part_lcps) = sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
+    let (part_sas, part_lcps) =
+        sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
     info!("Partitioned subarrays in {:?}", start.elapsed());
     debug!("{part_sas:#?}");
 
@@ -458,7 +527,12 @@ pub fn read(args: &ReadArgs) -> Result<()> {
             };
 
             if args.number {
-                writeln!(output, "{:3}: {}", start + 1, seq.substring(pos, end))?;
+                writeln!(
+                    output,
+                    "{:3}: {}",
+                    start + 1,
+                    seq.substring(pos, end)
+                )?;
             } else {
                 writeln!(output, "{}", seq.substring(pos, end))?;
             }
@@ -505,7 +579,8 @@ pub fn read(args: &ReadArgs) -> Result<()> {
 
 // --------------------------------------------------
 fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
-    let mut sa_file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+    let mut sa_file =
+        File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
     // The first 64-bits of the file contain the size of the SA
     let mut buffer = [0; 8];
@@ -532,8 +607,9 @@ fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
     //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
     //};
 
-    let suffix_array: &[usize] =
-        unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len) };
+    let suffix_array: &[usize] = unsafe {
+        std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
+    };
 
     Ok(suffix_array.to_vec())
 }

@@ -24,7 +24,9 @@ impl FromUsize<u64> for u64 {
     }
 }
 
-pub trait Int: Add<Output = Self> + Sub<Output = Self> + Copy + Default + Display + Ord {
+pub trait Int:
+    Add<Output = Self> + Sub<Output = Self> + Copy + Default + Display + Ord
+{
     fn to_usize(&self) -> usize;
 }
 
@@ -214,8 +216,10 @@ where
                         let found = self.upper_bound(pivot, sub_sa);
                         match found {
                             Some(i) => {
-                                sub_locs
-                                    .push(Some(prev_end.map_or(0, |p| p.to_usize())..i.to_usize()));
+                                sub_locs.push(Some(
+                                    prev_end.map_or(0, |p| p.to_usize())
+                                        ..i.to_usize(),
+                                ));
 
                                 // Check if sub SA is exhausted
                                 exhausted = i == T::from_usize(sub_sa.len());
@@ -241,7 +245,11 @@ where
     // --------------------------------------------------
     // TODO: Take SA/LCPs as mutable
     #[allow(unused_assignments)]
-    pub fn merge_part_subs(&self, part_sas: &[Vec<&[T]>], part_lcps: &[Vec<&[T]>]) -> Vec<T> {
+    pub fn merge_part_subs(
+        &self,
+        part_sas: &[Vec<&[T]>],
+        part_lcps: &[Vec<&[T]>],
+    ) -> Vec<T> {
         //let pairs: Vec<_> = part_sas.iter().zip(part_lcps).collect();
         //let merged_subs: Vec<_> = pairs
         let merged_subs: Vec<_> = (0..part_sas.len())
@@ -255,8 +263,10 @@ where
                 //let tmp: Vec<usize> = *part_sas[i].iter().concat();
                 //dbg!(tmp);
 
-                let mut target_sa = Self::convert_slices_to_vecs(part_sas[i].to_vec());
-                let mut target_lcp = Self::convert_slices_to_vecs(part_lcps[i].to_vec());
+                let mut target_sa =
+                    Self::convert_slices_to_vecs(part_sas[i].to_vec());
+                let mut target_lcp =
+                    Self::convert_slices_to_vecs(part_lcps[i].to_vec());
 
                 // Iteratively merge in pairs
                 while target_sa.len() > 1 {
@@ -294,7 +304,10 @@ where
                             let source = 0;
                             let target = 1;
                             let from = 0;
-                            self.iter_merge(&mut sa, &mut lcp, source, target, from, mid, to);
+                            self.iter_merge(
+                                &mut sa, &mut lcp, source, target, from, mid,
+                                to,
+                            );
                             tmp_sa.push(sa[target].to_vec());
                             tmp_lcp.push(lcp[target].to_vec());
                         }
@@ -424,42 +437,21 @@ where
                     // Create working copies for merge
                     let target_sa = source_sa.clone();
                     let target_lcp = source_lcp.clone();
-
-                    //self._merge(
-                    //    &mut sa, mid, &mut lcp_w, &mut sa_w, &mut lcp,
-                    //);
-
                     let from = 0;
                     let to = source_sa.len() - 1;
                     let mut sa = vec![source_sa, target_sa];
                     let mut lcp = vec![source_lcp, target_lcp];
                     let source = 0;
                     let target = 1;
-                    self.iter_merge(&mut sa, &mut lcp, source, target, from, mid, to);
+                    self.iter_merge(
+                        &mut sa, &mut lcp, source, target, from, mid, to,
+                    );
 
                     tmp_sa.push(sa[target].to_vec());
                     tmp_lcp.push(lcp[target].to_vec());
-
-                    //let from = 0;
-                    //let to = source_sa.len() - 1;
-                    //self.iter_merge(
-                    //    &mut source_sa,
-                    //    &mut target_sa,
-                    //    &mut source_lcp,
-                    //    &mut target_lcp,
-                    //    from,
-                    //    mid,
-                    //    to,
-                    //);
-
-                    //tmp_sa.push(target_sa);
-                    //tmp_lcp.push(target_lcp);
                 }
                 i += 1;
             }
-            // Doesn't seem better
-            //(sub_pivots, sub_lcps, tmp_sa, tmp_lcp) =
-            //    (tmp_sa, tmp_lcp, sub_pivots, sub_lcps);
             mem::swap(&mut sub_pivots, &mut tmp_sa);
             mem::swap(&mut sub_lcps, &mut tmp_lcp);
         }
@@ -479,7 +471,10 @@ where
 
     // --------------------------------------------------
     // TODO: return type struct
-    pub fn sort_subarrays(&self, suggested_num_partitions: usize) -> Vec<(Vec<T>, Vec<T>, Vec<T>)> {
+    pub fn sort_subarrays(
+        &self,
+        suggested_num_partitions: usize,
+    ) -> Vec<(Vec<T>, Vec<T>, Vec<T>)> {
         let mut suffixes: Vec<T> = if self.ignore_start_n {
             // Text will already be "uppercase" (but bytes), N = 78
             self.text
@@ -502,7 +497,8 @@ where
         let len = num_suffixes as f64;
         let mut pivots_per_part = (32.0 * len.log10()).ceil() as usize;
         if (pivots_per_part > subset_size) || (pivots_per_part < 1) {
-            pivots_per_part = if subset_size == 1 { 1 } else { subset_size / 2 };
+            pivots_per_part =
+                if subset_size == 1 { 1 } else { subset_size / 2 };
         }
 
         let num_fmt = NumberFormat::new();
@@ -543,7 +539,13 @@ where
                 let source = 0;
                 let target = 1;
                 //let now = Instant::now();
-                let final_target = self.iter_merge_sort(&mut sa, &mut lcp, source, target, len - 1);
+                let final_target = self.iter_merge_sort(
+                    &mut sa,
+                    &mut lcp,
+                    source,
+                    target,
+                    len - 1,
+                );
 
                 //println!("Finished merge in {:?}", now.elapsed());
                 let sub_sa = sa[final_target].clone();
@@ -658,7 +660,8 @@ where
                 }
                 Ordering::Equal => {
                     // Find the length of shorter suffix
-                    let max_n = self.len - max(sa[source_idx][idx_x], sa[source_idx][idx_y]);
+                    let max_n = self.len
+                        - max(sa[source_idx][idx_x], sa[source_idx][idx_y]);
 
                     // Prefix-context length for the suffixes
                     let context = min(self.max_context, max_n);
@@ -673,12 +676,15 @@ where
                     // If the len of the LCP is the entire shorter
                     // sequence, take that (the one with the higher SA value)
                     if len_lcp == max_n {
-                        sa[target_idx][k] = max(sa[source_idx][idx_x], sa[source_idx][idx_y]);
+                        sa[target_idx][k] =
+                            max(sa[source_idx][idx_x], sa[source_idx][idx_y]);
                     }
                     // Else, look at the next char after the LCP
                     // to determine order.
-                    else if self.text[(sa[source_idx][idx_x] + len_lcp).to_usize()]
-                        < self.text[(sa[source_idx][idx_y] + len_lcp).to_usize()]
+                    else if self.text
+                        [(sa[source_idx][idx_x] + len_lcp).to_usize()]
+                        < self.text
+                            [(sa[source_idx][idx_y] + len_lcp).to_usize()]
                     {
                         sa[target_idx][k] = sa[source_idx][idx_x];
                     }
@@ -916,7 +922,8 @@ mod tests {
         assert_eq!(subs.len(), 2);
 
         for (sa, _lcp, _) in subs {
-            let suffixes: Vec<String> = sa.iter().map(|&p| suf_arr._string_at(p)).collect();
+            let suffixes: Vec<String> =
+                sa.iter().map(|&p| suf_arr._string_at(p)).collect();
 
             // Check that suffixes are correctly ordered
             for pair in suffixes.windows(2) {
@@ -948,27 +955,47 @@ mod tests {
     #[test]
     fn test_find_lcp() -> Result<()> {
         assert_eq!(
-            find_lcp("A".to_string().as_bytes(), "C".to_string().as_bytes(), 1),
+            find_lcp(
+                "A".to_string().as_bytes(),
+                "C".to_string().as_bytes(),
+                1
+            ),
             0
         );
 
         assert_eq!(
-            find_lcp("A".to_string().as_bytes(), "A".to_string().as_bytes(), 1),
+            find_lcp(
+                "A".to_string().as_bytes(),
+                "A".to_string().as_bytes(),
+                1
+            ),
             1
         );
 
         assert_eq!(
-            find_lcp("A".to_string().as_bytes(), "AA".to_string().as_bytes(), 1),
+            find_lcp(
+                "A".to_string().as_bytes(),
+                "AA".to_string().as_bytes(),
+                1
+            ),
             1
         );
 
         assert_eq!(
-            find_lcp("AA".to_string().as_bytes(), "AAC".to_string().as_bytes(), 3),
+            find_lcp(
+                "AA".to_string().as_bytes(),
+                "AAC".to_string().as_bytes(),
+                3
+            ),
             2
         );
 
         assert_eq!(
-            find_lcp("AC".to_string().as_bytes(), "ACA".to_string().as_bytes(), 2),
+            find_lcp(
+                "AC".to_string().as_bytes(),
+                "ACA".to_string().as_bytes(),
+                2
+            ),
             2
         );
 

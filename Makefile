@@ -1,14 +1,14 @@
 CHR1 = ../data/t2t-chr1.txt
 #CHR1 = /xdisk/twheeler/data/genomes/human/t2t/chr1.txt
 
-CHECK  = cargo run -- read
-CREATE = cargo run -- create --log info
-READ   = cargo run -- check
+#CHECK  = cargo run -- read
+#CREATE = cargo run -- create --log info
+#READ   = cargo run -- check
 
-#SUFR   = ./target/release/sufr
-#CHECK  = $(SUFR) read
-#CREATE = $(SUFR) create --log info
-#READ   = $(SUFR) check
+SUFR   = ./target/release/sufr
+CHECK  = $(SUFR) read
+CREATE = $(SUFR) create --log info
+READ   = $(SUFR) check
 
 perf:
 	perf record --call-graph dwarf $(SUFR) create -t 16 --log info $(CHR1)
