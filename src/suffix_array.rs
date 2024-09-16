@@ -65,15 +65,11 @@ where
 {
     // --------------------------------------------------
     pub fn new(
-        // input: impl BufRead,
         text: Vec<u8>,
         len: T,
         max_context: Option<T>,
         ignore_start_n: bool,
     ) -> SuffixArray<T> {
-        // let text = SuffixArray::read_input(input);
-        // let len = text.len();
-
         SuffixArray {
             text,
             len,
@@ -107,14 +103,6 @@ where
         }
 
         len
-
-        // T::from_usize(
-        //     s1.iter()
-        //         .take(len.to_usize())
-        //         .zip(s2.iter().take(len.to_usize()))
-        //         .take_while(|(a, b)| a == b)
-        //         .count(),
-        // )
     }
     // --------------------------------------------------
     fn convert_slices_to_vecs(vec_of_slices: Vec<&[T]>) -> Vec<Vec<T>> {
