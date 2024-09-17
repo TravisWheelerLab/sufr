@@ -17,7 +17,7 @@ use std::{
 };
 use substring::Substring;
 use suffix_array::{FromUsize, Int, SuffixArray};
-//use u4::{u4, AsNibbles, U4};
+//use u4::{AsNibbles, U4x2, U4};
 
 // --------------------------------------------------
 #[derive(Parser, Debug)]
@@ -144,6 +144,78 @@ impl ValueEnum for LogLevel {
 
 type PositionList = Vec<Range<usize>>;
 
+//#[derive(Debug)]
+//pub struct PackedSeq {
+//    data: Vec<u8>,
+//}
+
+//impl PackedSeq {
+//    pub fn new(text: Vec<u8>) -> Self {
+//        let u4s: Vec<_> = text.iter().filter_map(Self::byte_to_u4).collect();
+//        let mut data: Vec<u8> = vec![0u8; text.len() / 2];
+//        AsNibbles(&mut data).pack_from_slice(&u4s);
+//        Self { data }
+//    }
+
+//    pub fn values(&self) -> AsNibbles<&Vec<u8>> {
+//        AsNibbles(&self.data)
+//    }
+
+//    pub fn get(&self, index: usize) -> U4 {
+//        let idx = index / 2;
+//        let rem = index % 2;
+//        let val = U4x2::from_byte(self.data[idx]);
+//        if rem == 0 {
+//            val.left()
+//        } else {
+//            val.right()
+//        }
+//    }
+
+//    fn byte_to_u4(byte: &u8) -> Option<U4> {
+//        match byte {
+//            36 => Some(U4::Dec00), // $
+//            65 => Some(U4::Dec01), // A
+//            66 => Some(U4::Dec02), // B
+//            67 => Some(U4::Dec03), // C
+//            68 => Some(U4::Dec04), // D
+//            71 => Some(U4::Dec05), // G
+//            72 => Some(U4::Dec06), // H
+//            75 => Some(U4::Dec07), // K
+//            77 => Some(U4::Dec08), // M
+//            78 => Some(U4::Dec09), // N
+//            82 => Some(U4::Dec10), // R
+//            83 => Some(U4::Dec11), // S
+//            84 => Some(U4::Dec12), // T
+//            86 => Some(U4::Dec13), // V
+//            87 => Some(U4::Dec14), // W
+//            89 => Some(U4::Dec15), // Y
+//            _ => None,             // Anything else
+//        }
+//    }
+
+//    fn u4_to_byte(val: U4) -> u8 {
+//        match val {
+//            U4::Dec00 => 36,
+//            U4::Dec01 => 65,
+//            U4::Dec02 => 66,
+//            U4::Dec03 => 67,
+//            U4::Dec04 => 68,
+//            U4::Dec05 => 71,
+//            U4::Dec06 => 72,
+//            U4::Dec07 => 75,
+//            U4::Dec08 => 77,
+//            U4::Dec09 => 78,
+//            U4::Dec10 => 82,
+//            U4::Dec11 => 83,
+//            U4::Dec12 => 84,
+//            U4::Dec13 => 86,
+//            U4::Dec14 => 87,
+//            U4::Dec15 => 89,
+//        }
+//    }
+//}
+
 // --------------------------------------------------
 pub fn check(args: &CheckArgs) -> Result<()> {
     let sa = read_suffix_array(&args.array)?;
@@ -213,8 +285,8 @@ pub fn read_input(input: impl BufRead) -> Vec<u8> {
     text
 }
 
-// --------------------------------------------------
-//pub fn read_input_u4(input: impl BufRead) -> Vec<u8> {
+//// --------------------------------------------------
+//pub fn read_input_u4(input: impl BufRead) -> PackedSeq {
 //    //text.push(b'$');
 //    let mut text: Vec<u8> = input
 //        .bytes()
@@ -223,62 +295,26 @@ pub fn read_input(input: impl BufRead) -> Vec<u8> {
 //        .map(|b| b & 0b1011111) // Uppercase (mask w/32)
 //        .collect();
 //    text.push(b'$');
+
+//    // The len of text must be even b/c we pack 2 u4's into each each u8
 //    if text.len() % 2 == 1 {
 //        text.push(b'$');
 //    }
-//    let mut packed: Vec<u8> = vec![0u8; text.len() / 2];
-//    let u4s: Vec<_> = text.iter().filter_map(byte_to_u4).collect();
-//    AsNibbles(&mut packed).pack_from_slice(&u4s);
-//    packed
-//}
-
-//fn byte_to_u4(byte: &u8) -> Option<U4> {
-//    match byte {
-//        36 => Some(u4!(0)),  // $
-//        65 => Some(u4!(1)),  // A
-//        67 => Some(u4!(2)),  // C
-//        71 => Some(u4!(3)),  // G
-//        84 => Some(u4!(4)),  // T
-//        82 => Some(u4!(5)),  // R
-//        89 => Some(u4!(6)),  // Y
-//        83 => Some(u4!(7)),  // S
-//        87 => Some(u4!(8)),  // W
-//        75 => Some(u4!(9)),  // K
-//        77 => Some(u4!(10)), // M
-//        66 => Some(u4!(11)), // B
-//        68 => Some(u4!(12)), // D
-//        72 => Some(u4!(13)), // H
-//        86 => Some(u4!(14)), // V
-//        78 => Some(u4!(15)), // N
-//        _ => None,           // Anything else
-//    }
-//}
-
-//fn u4_to_char(val: U4) -> u8 {
-//    match val {
-//        U4::Dec00 => 36,
-//        U4::Dec01 => 65,
-//        U4::Dec02 => 67,
-//        U4::Dec03 => 71,
-//        U4::Dec04 => 84,
-//        U4::Dec05 => 82,
-//        U4::Dec06 => 89,
-//        U4::Dec07 => 83,
-//        U4::Dec08 => 87,
-//        U4::Dec09 => 75,
-//        U4::Dec10 => 77,
-//        U4::Dec11 => 66,
-//        U4::Dec12 => 68,
-//        U4::Dec13 => 72,
-//        U4::Dec14 => 86,
-//        U4::Dec15 => 78,
-//    }
+//    PackedSeq::new(text)
 //}
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
     let text = read_input(&mut BufReader::new(File::open(&args.input)?));
-    //let u4s = read_input_u4(&mut BufReader::new(File::open(&args.input)?));
+    //let packed = read_input_u4(&mut BufReader::new(File::open(&args.input)?));
+    //println!("Input as U4 {:?}", &packed);
+    //for (i, val) in packed.values().iter().enumerate() {
+    //    println!(
+    //        "{i}: {val:04b} => {} => {}",
+    //        PackedSeq::u4_to_byte(val),
+    //        packed.get(i),
+    //    );
+    //}
     let len = text.len() as u64;
     let ignore_start_n = args.ignore_start_n;
 
