@@ -1,11 +1,15 @@
 use format_num::NumberFormat;
 use log::info;
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::{
     cmp::{max, min, Ordering},
+    fmt::Debug,
     fmt::Display,
     mem,
     ops::{Add, Range, Sub},
+    //sync::{Arc, Mutex},
+    time::Instant,
 };
 
 pub trait FromUsize<T> {
@@ -25,7 +29,13 @@ impl FromUsize<u64> for u64 {
 }
 
 pub trait Int:
-    Add<Output = Self> + Sub<Output = Self> + Copy + Default + Display + Ord
+    Debug
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Copy
+    + Default
+    + Display
+    + Ord
 {
     fn to_usize(&self) -> usize;
 }
@@ -295,7 +305,7 @@ where
                                 *v = T::from_usize(0);
                             }
 
-                            // Create working copies for merge
+                            // Iterative merge sort
                             let target_sa = source_sa.clone();
                             let target_lcp = source_lcp.clone();
                             let to = source_sa.len() - 1;
@@ -310,14 +320,24 @@ where
                             );
                             tmp_sa.push(sa[target].to_vec());
                             tmp_lcp.push(lcp[target].to_vec());
+
+                            //// Recursive merge sort
+                            //let mut sa_w = source_sa.clone();
+                            //let mut lcp_w = source_lcp.clone();
+                            //self.recursive_merge_sort(
+                            //    &mut sa_w,
+                            //    &mut source_sa,
+                            //    mid,
+                            //    &mut source_lcp,
+                            //    &mut lcp_w,
+                            //);
+                            //tmp_sa.push(source_sa);
+                            //tmp_lcp.push(source_lcp);
                         }
                         i += 1;
                     }
-                    //(target_sa, target_lcp, tmp_sa, tmp_lcp) =
-                    //    (tmp_sa, tmp_lcp, target_sa, target_lcp);
                     mem::swap(&mut target_sa, &mut tmp_sa);
                     mem::swap(&mut target_lcp, &mut tmp_lcp);
-                    //target_sa = mem::take(&mut tmp_sa);
                 }
                 target_sa.first().map_or(vec![], |v| v.to_vec())
             })
@@ -470,6 +490,142 @@ where
     }
 
     // --------------------------------------------------
+    pub fn partition_by_pivot(&self, num_partitions: usize) -> Vec<T> {
+        let suffixes: Vec<T> = if self.ignore_start_n {
+            // Text will already be "uppercase" (but bytes), N = 78
+            self.text
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &c)| (c != 78).then_some(T::from_usize(i)))
+                .collect()
+        } else {
+            (0..self.text.len()).map(T::from_usize).collect()
+        };
+        //dbg!(&suffixes);
+        let mut rng = &mut rand::thread_rng();
+        let source_sa: Vec<_> = suffixes
+            .choose_multiple(&mut rng, num_partitions - 1)
+            .cloned()
+            .collect();
+
+        //dbg!(&source_sa);
+        //dbg!(source_sa
+        //    .iter()
+        //    .map(|v| self._string_at(v.to_usize()))
+        //    .collect::<Vec<_>>());
+
+        // Sort the pivots
+        let len = source_sa.len();
+        let target_sa = source_sa.clone();
+        let source_lcp = vec![T::default(); len];
+        let target_lcp = vec![T::default(); len];
+        let mut sa = vec![source_sa, target_sa];
+        let mut lcp = vec![source_lcp, target_lcp];
+        let source = 0;
+        let target = 1;
+        let final_target =
+            self.iter_merge_sort(&mut sa, &mut lcp, source, target, len - 1);
+        let sorted_sa = sa[final_target].clone();
+
+        //dbg!(&sorted_sa);
+        //dbg!(sorted_sa
+        //    .iter()
+        //    .map(|v| self._string_at(v.to_usize()))
+        //    .collect::<Vec<_>>());
+
+        //// Partition the suffixes
+        //let now = Instant::now();
+        //let mut partitions: Vec<Vec<T>> = vec![vec![]; num_partitions];
+        //for pos in suffixes {
+        //    let partition =
+        //        self.upper_bound(pos, &sorted_sa).unwrap_or(T::default());
+        //    //println!(
+        //    //    "pos {pos} '{}' partition {partition:?}",
+        //    //    self._string_at(pos.to_usize())
+        //    //);
+        //    partitions[partition.to_usize()].push(pos);
+        //}
+        //info!(
+        //    "Split into {num_partitions} partitions in {:?}",
+        //    now.elapsed()
+        //);
+
+        // Partition the suffixes
+        let now = Instant::now();
+        let parts: Vec<_> = suffixes
+            .clone()
+            .into_par_iter()
+            .map(|pos| {
+                self.upper_bound(pos, &sorted_sa).unwrap_or(T::default())
+            })
+            .collect();
+        //dbg!(&parts);
+        let mut partitions: Vec<Vec<T>> = vec![vec![]; num_partitions];
+        for (pos, part) in suffixes.iter().zip(parts) {
+            partitions[part.to_usize()].push(*pos);
+        }
+        //dbg!(&partitions);
+        info!(
+            "Split into {num_partitions} partitions in {:?}",
+            now.elapsed()
+        );
+
+        //dbg!(&partitions);
+
+        //let dist: Vec<_> = partitions.iter().map(|p| p.len()).collect();
+        //dbg!(&dist);
+
+        // Sort the partitions
+        let now = Instant::now();
+        let res: Vec<_> = partitions
+            .into_par_iter()
+            .filter(|v| !v.is_empty())
+            //.map(|part_sa| {
+            //    let len = part_sa.len();
+            //    let target_sa = part_sa.clone();
+            //    let source_lcp = vec![T::default(); len];
+            //    let target_lcp = vec![T::default(); len];
+            //    let mut sa = vec![part_sa, target_sa];
+            //    let mut lcp = vec![source_lcp, target_lcp];
+            //    let source = 0;
+            //    let target = 1;
+            //    let final_target = self.iter_merge_sort(
+            //        &mut sa,
+            //        &mut lcp,
+            //        source,
+            //        target,
+            //        len - 1,
+            //    );
+            //    sa[final_target].clone()
+            //})
+            .map(|mut part_sa| {
+                // Recursive
+                let len = part_sa.len();
+                let mut sa_w = part_sa.clone();
+                let mut lcp = vec![T::default(); len];
+                let mut lcp_w = vec![T::default(); len];
+                self.recursive_merge_sort(
+                    &mut sa_w,
+                    &mut part_sa,
+                    len,
+                    &mut lcp,
+                    &mut lcp_w,
+                );
+                part_sa
+            })
+            .flatten()
+            .collect();
+        //dbg!(&res);
+        info!("Merged partitions in {:?}", now.elapsed());
+
+        //dbg!(&res);
+        //for (i, pos) in res.iter().enumerate() {
+        //    println!("{i}: {}", self._string_at(pos.to_usize()));
+        //}
+        res
+    }
+
+    // --------------------------------------------------
     // TODO: return type struct
     pub fn sort_subarrays(
         &self,
@@ -510,7 +666,6 @@ where
             if pivots_per_part == 1 { "" } else { "s" },
         );
 
-        //let now = Instant::now();
         let partitions: Vec<_> = (0..num_parts)
             .map(|i| {
                 let len = subset_size
@@ -522,49 +677,188 @@ where
                 suffixes.drain(0..len).collect::<Vec<_>>()
             })
             .collect();
-        //println!("Finished making parts in {:?}", now.elapsed());
 
         partitions
             .into_par_iter()
-            .map(|source_sa| {
-                //let now = Instant::now();
+            //.map(|source_sa| {
+            //    let len = source_sa.len();
+            //    let target_sa = source_sa.clone();
+            //    let source_lcp = vec![T::default(); len];
+            //    let target_lcp = vec![T::default(); len];
+            //    let mut sa = vec![source_sa, target_sa];
+            //    let mut lcp = vec![source_lcp, target_lcp];
+            //    let source = 0;
+            //    let target = 1;
+            //    let final_target = self.iter_merge_sort(
+            //        &mut sa,
+            //        &mut lcp,
+            //        source,
+            //        target,
+            //        len - 1,
+            //    );
+            //    let sub_sa = sa[final_target].clone();
+            //    let sub_lcp = lcp[final_target].clone();
+            //    let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
+            //    (sub_sa, sub_lcp, pivots)
+            //})
+            .map(|mut source_sa| {
                 let len = source_sa.len();
-                let target_sa = source_sa.clone();
-                let source_lcp = vec![T::default(); len];
-                let target_lcp = vec![T::default(); len];
-                let mut sa = vec![source_sa, target_sa];
-                let mut lcp = vec![source_lcp, target_lcp];
-                //println!("Finished allocs in {:?}", now.elapsed());
-
-                let source = 0;
-                let target = 1;
-                //let now = Instant::now();
-                let final_target = self.iter_merge_sort(
-                    &mut sa,
+                let mut sa_w = source_sa.clone();
+                let mut lcp = vec![T::default(); len];
+                let mut lcp_w = vec![T::default(); len];
+                self.recursive_merge_sort(
+                    &mut sa_w,
+                    &mut source_sa,
+                    len,
                     &mut lcp,
-                    source,
-                    target,
-                    len - 1,
+                    &mut lcp_w,
                 );
-
-                //println!("Finished merge in {:?}", now.elapsed());
-                let sub_sa = sa[final_target].clone();
-                let sub_lcp = lcp[final_target].clone();
-                let pivots = self.sample_pivots(&sub_sa, pivots_per_part);
-
-                //if let Ok(mut num) = counter.lock() {
-                //    *num += 1;
-                //    if *num % 1000 == 0 {
-                //        info!("  Sorted {num} subarrays...");
-                //    }
-                //}
-
-                (sub_sa, sub_lcp, pivots)
+                let pivots = self.sample_pivots(&source_sa, pivots_per_part);
+                (source_sa, lcp, pivots)
             })
             .collect()
     }
 
     // --------------------------------------------------
+    pub fn recursive_merge_sort(
+        self: &Self,
+        x: &mut [T],
+        y: &mut [T],
+        n: usize,
+        lcp: &mut [T],
+        lcp_w: &mut [T],
+    ) {
+        if n == 1 {
+            lcp[0] = T::default();
+        } else {
+            let mid = n / 2;
+            self.recursive_merge_sort(
+                &mut y[..mid],
+                &mut x[..mid],
+                mid,
+                &mut lcp_w[..mid],
+                &mut lcp[..mid],
+            );
+
+            self.recursive_merge_sort(
+                &mut y[mid..],
+                &mut x[mid..],
+                n - mid,
+                &mut lcp_w[mid..],
+                &mut lcp[mid..],
+            );
+
+            self.recursive_merge(x, mid, lcp_w, y, lcp);
+        }
+    }
+
+    // --------------------------------------------------
+    fn recursive_merge<'a>(
+        self: &Self,
+        suffix_array: &mut [T],
+        mid: usize,
+        lcp_w: &mut [T],
+        target_sa: &mut [T],
+        target_lcp: &mut [T],
+    ) {
+        let (mut x, mut y) = suffix_array.split_at_mut(mid);
+        let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
+        let mut len_x = x.len();
+        let mut len_y = y.len();
+        let mut m = T::default(); // Last LCP from left side (x)
+        let mut idx_x = 0; // Index into x
+        let mut idx_y = 0; // Index into y
+        let mut k = 0; // Index into z
+
+        while idx_x < len_x && idx_y < len_y {
+            let l_x = lcp_x[idx_x];
+
+            if l_x > m {
+                target_sa[k] = x[idx_x];
+                target_lcp[k] = l_x;
+            } else if l_x < m {
+                target_sa[k] = y[idx_y];
+                target_lcp[k] = m;
+                m = l_x;
+            } else {
+                // Length of shorter suffix
+                let max_n = self.len - max(x[idx_x], y[idx_y]);
+
+                // Prefix-context length for the suffixes
+                let context = min(self.max_context, max_n);
+
+                // LCP(X_i, Y_j)
+                let len_lcp = m + Self::find_lcp(
+                    &self.text[(x[idx_x] + m).to_usize()..],
+                    &self.text[(y[idx_y] + m).to_usize()..],
+                    context - m,
+                );
+
+                // If the len of the LCP is the entire shorter
+                // sequence, take that.
+                if len_lcp == max_n {
+                    target_sa[k] = max(x[idx_x], y[idx_y])
+                }
+                // Else, look at the next char after the LCP
+                // to determine order.
+                else if self.text[(x[idx_x] + len_lcp).to_usize()]
+                    < self.text[(y[idx_y] + len_lcp).to_usize()]
+                {
+                    target_sa[k] = x[idx_x]
+                }
+                // Else take from the right
+                else {
+                    target_sa[k] = y[idx_y]
+                }
+
+                // If we took from the right...
+                if target_sa[k] == x[idx_x] {
+                    target_lcp[k] = l_x;
+                } else {
+                    target_lcp[k] = m
+                }
+                m = len_lcp;
+            }
+
+            if target_sa[k] == x[idx_x] {
+                idx_x += 1;
+            } else {
+                idx_y += 1;
+                mem::swap(&mut x, &mut y);
+                mem::swap(&mut len_x, &mut len_y);
+                mem::swap(&mut lcp_x, &mut lcp_y);
+                mem::swap(&mut idx_x, &mut idx_y);
+            }
+
+            k += 1;
+        }
+
+        // Copy rest of the data from X to Z.
+        while idx_x < len_x {
+            target_sa[k] = x[idx_x];
+            target_lcp[k] = lcp_x[idx_x];
+            idx_x += 1;
+            k += 1;
+        }
+
+        // Copy rest of the data from Y to Z.
+        if idx_y < len_y {
+            target_sa[k] = y[idx_y];
+            target_lcp[k] = m;
+            idx_y += 1;
+            k += 1;
+
+            while idx_y < len_y {
+                target_sa[k] = y[idx_y];
+                target_lcp[k] = lcp_y[idx_y];
+                idx_y += 1;
+                k += 1;
+            }
+        }
+    }
+
+    // --------------------------------------------------
+    #[allow(dead_code)]
     fn iter_merge_sort(
         &self,
         sa: &mut [Vec<T>],

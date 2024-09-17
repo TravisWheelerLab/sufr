@@ -218,32 +218,41 @@ type PositionList = Vec<Range<usize>>;
 
 // --------------------------------------------------
 pub fn check(args: &CheckArgs) -> Result<()> {
-    let sa = read_suffix_array(&args.array)?;
-    let sa_len = sa.len();
-    let seq = read_input(open(&args.sequence)?);
+    let len = read_suffix_array_len(&args.array)?;
+    dbg!(len);
+    //let sa = if len < u32::MAX as u64 {
+    //    let sa = read_suffix_array<u32>(&args.array)?;
+    //    sa
+    //} else {
+    //    let sa = read_suffix_array<u64>(&args.array)?;
+    //    sa
+    //};
+    //dbg!(&sa);
+    //let sa_len = sa.len();
+    //let seq = read_input(open(&args.sequence)?);
 
-    if sa_len != seq.len() {
-        bail!("SA len {sa_len} does not match sequence len {}", seq.len());
-    }
+    //if sa_len != seq.len() {
+    //    bail!("SA len {sa_len} does not match sequence len {}", seq.len());
+    //}
 
-    let start = Instant::now();
-    let mut previous: Option<usize> = None;
-    let mut num_errors = 0;
-    for (i, &cur) in sa.iter().enumerate() {
-        if let Some(p) = previous {
-            if !is_less(&seq[p..sa_len], &seq[cur..sa_len]) {
-                num_errors += 1;
-                println!("POS {}", i + 1);
-            }
-        }
-        previous = Some(cur);
-    }
+    //let start = Instant::now();
+    //let mut previous: Option<usize> = None;
+    //let mut num_errors = 0;
+    //for (i, &cur) in sa.iter().enumerate() {
+    //    if let Some(p) = previous {
+    //        if !is_less(&seq[p..sa_len], &seq[cur..sa_len]) {
+    //            num_errors += 1;
+    //            println!("POS {}", i + 1);
+    //        }
+    //    }
+    //    previous = Some(cur);
+    //}
 
-    println!(
-        "Found {num_errors} error{} in {:?}.",
-        if num_errors == 1 { "" } else { "s" },
-        start.elapsed()
-    );
+    //println!(
+    //    "Found {num_errors} error{} in {:?}.",
+    //    if num_errors == 1 { "" } else { "s" },
+    //    start.elapsed()
+    //);
 
     Ok(())
 }
@@ -370,49 +379,58 @@ where
     let start = Instant::now();
     let num_fmt = NumberFormat::new();
     info!(
-        "Read input of len {} in {:?}",
+        "Read input of len {} in {:?}s",
         num_fmt.format(",.0", sa.len.to_usize() as f64),
-        start.elapsed()
+        start.elapsed().as_secs_f64()
     );
     debug!("Raw input '{:?}'", sa.text);
 
-    let start = Instant::now();
-    let sufs = sa.sort_subarrays(args.num_partitions);
-    info!("Sorted subarrays in {:?}", start.elapsed());
-    //dbg!(&sufs);
-    debug!("sorted subarrays = {sufs:#?}");
+    //let start = Instant::now();
+    let merged_sa = sa.partition_by_pivot(args.num_partitions);
+    //debug!("merged_sa {merged_sa:?}");
+    //info!("Sorted by partitions in {}s", start.elapsed().as_secs_f64());
 
-    // Collect all the subarray SA/LCP structures
-    let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
-    let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
-    let sub_pivots: Vec<_> = sufs.iter().map(|t| t.2.clone()).collect();
-    mem::drop(sufs);
+    //let start = Instant::now();
+    //let sufs = sa.sort_subarrays(args.num_partitions);
+    //info!("Sorted subarrays in {:?}", start.elapsed());
+    ////dbg!(&sufs);
+    //debug!("sorted subarrays = {sufs:#?}");
 
-    // Determine the pivot suffixes
-    let start = Instant::now();
-    let pivots = sa.select_pivots(sub_pivots);
-    info!("Selected {} pivots in {:?}", pivots.len(), start.elapsed());
-    debug!("pivots = {pivots:#?}");
+    //// Collect all the subarray SA/LCP structures
+    //let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
+    //let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
+    //let sub_pivots: Vec<_> = sufs.iter().map(|t| t.2.clone()).collect();
+    //mem::drop(sufs);
 
-    // Find the pivots suffixes in each of the sub_suffixes
-    let start = Instant::now();
-    let pivot_locs = sa.locate_pivots(&sub_suffixes, pivots);
-    info!("Located pivot suffixes in {:?}", start.elapsed());
-    debug!("pivot_locs = {pivot_locs:#?}");
+    //// Determine the pivot suffixes
+    //let start = Instant::now();
+    //let pivots = sa.select_pivots(sub_pivots);
+    //info!("Selected {} pivots in {:?}", pivots.len(), start.elapsed());
+    //debug!("pivots = {pivots:#?}");
 
-    // Use the pivot locations to partition the SA/LCP subs
-    let start = Instant::now();
-    let (part_sas, part_lcps) =
-        sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
-    info!("Partitioned subarrays in {:?}", start.elapsed());
-    debug!("{part_sas:#?}");
+    //// Find the pivots suffixes in each of the sub_suffixes
+    //let start = Instant::now();
+    //let pivot_locs = sa.locate_pivots(&sub_suffixes, pivots);
+    //info!("Located pivot suffixes in {:?}", start.elapsed());
+    //debug!("pivot_locs = {pivot_locs:#?}");
 
-    // Merge the partitioned subs
-    let start = Instant::now();
-    let merged_sa = sa.merge_part_subs(&part_sas, &part_lcps);
-    info!("Merged subarrays in {:?}", start.elapsed());
-    debug!("{merged_sa:#?}");
-    info!("Suffix generated in {:?}", total_start.elapsed());
+    //// Use the pivot locations to partition the SA/LCP subs
+    //let start = Instant::now();
+    //let (part_sas, part_lcps) =
+    //    sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
+    //info!("Partitioned subarrays in {:?}", start.elapsed());
+    //debug!("{part_sas:#?}");
+
+    //// Merge the partitioned subs
+    //let start = Instant::now();
+    //let merged_sa = sa.merge_part_subs(&part_sas, &part_lcps);
+    //info!("Merged subarrays in {:?}", start.elapsed());
+    //debug!("{merged_sa:#?}");
+
+    info!(
+        "Suffix generated in {:?}s",
+        total_start.elapsed().as_secs_f64()
+    );
 
     // Check
     if args.check {
@@ -614,7 +632,21 @@ pub fn read(args: &ReadArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
+fn read_suffix_array_len(filename: &str) -> Result<u64> {
+    // The first 64-bits of the file contain the size of the SA
+    let mut sa_file =
+        File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+    let mut buffer = [0; 8];
+    sa_file.read_exact(&mut buffer)?;
+    Ok(u64::from_ne_bytes(buffer))
+}
+
+// --------------------------------------------------
 fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
+    //fn read_suffix_array<T>(filename: &str) -> Result<Vec<T>>
+    //where
+    //    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+    //{
     let mut sa_file =
         File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
@@ -624,18 +656,32 @@ fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
 
     // Convert the Vec<u8> to a usize
     let sa_len = usize::from_ne_bytes(buffer);
+    println!("sa_len {sa_len}");
 
     // Allocate a buffer to hold the data
-    //let size = if sa_len < u32::MAX as usize {
-    //    mem::size_of::<u32>()
+    //let suffix_array = if sa_len < u32::MAX as usize {
+    //    let mut buffer = vec![0u8; sa_len * mem::size_of::<u32>()];
+    //    sa_file.read_exact(&mut buffer)?;
+    //    let sa: &[u32] = unsafe {
+    //        std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
+    //    };
+    //    sa
     //} else {
-    //    mem::size_of::<u64>()
+    //    let mut buffer = vec![0u8; sa_len * mem::size_of::<u64>()];
+    //    sa_file.read_exact(&mut buffer)?;
+    //    let sa: &[u64] = unsafe {
+    //        std::slice::from_raw_parts(buffer.as_ptr() as *const u64, sa_len)
+    //    };
+    //    sa
     //};
-    //let mut buffer = vec![0u8; sa_len * size];
 
     // Read the bytes into the buffer
-    let mut buffer = vec![0u8; sa_len * mem::size_of::<usize>()];
-    sa_file.read_exact(&mut buffer)?;
+    //let mut buffer = vec![0u8; sa_len * mem::size_of::<usize>()];
+    //sa_file.read_exact(&mut buffer)?;
+
+    //let suffix_array: &[u32] = unsafe {
+    //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
+    //};
 
     // How can I have either 32 or 64 vectors?
     // Convert the buffer into a slice of i32 integers
@@ -643,9 +689,10 @@ fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
     //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
     //};
 
-    let suffix_array: &[usize] = unsafe {
-        std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
-    };
+    //let suffix_array: &[usize] = unsafe {
+    //    std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
+    //};
 
-    Ok(suffix_array.to_vec())
+    //Ok(suffix_array.to_vec())
+    Ok(vec![])
 }
