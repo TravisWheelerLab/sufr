@@ -10,6 +10,7 @@ clap = { version = "4.5.13", features = ["derive"] }
 env_logger = "0.11.5"
 format_num = "0.1.0"
 log = "0.4.22"
+needletail = "0.5.1"
 pretty_assertions = "1.4.0"
 rand = "0.8.5"
 rayon = "1.10.0"

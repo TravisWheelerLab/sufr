@@ -4,18 +4,21 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use log::{debug, info};
+use needletail::parse_fastx_file;
 use regex::Regex;
 use std::{
+    ffi::OsStr,
     fmt::Debug,
     fs::File,
-    io::{self, BufRead, BufReader, BufWriter, Read, Write},
+    io::{BufWriter, Read, Write},
     mem,
     num::NonZeroUsize,
     ops::Range,
+    path::PathBuf,
     slice,
     time::Instant,
 };
-use substring::Substring;
+//use substring::Substring;
 use suffix_array::{FromUsize, Int, SuffixArray};
 //use u4::{AsNibbles, U4x2, U4};
 
@@ -74,12 +77,12 @@ pub struct CreateArgs {
     pub threads: Option<usize>,
 
     /// Output file
-    #[arg(short, long, value_name = "OUTPUT", default_value = "sufr.sa")]
-    pub output: String,
+    #[arg(short, long, value_name = "OUTPUT")]
+    pub output: Option<String>,
 
-    /// Ignore sequences starting with N
-    #[arg(short, long)]
-    pub ignore_start_n: bool,
+    /// Input is DNA, ignore sequences starting with 'N'
+    #[arg(short('d'), long("dna"))]
+    pub is_dna: bool,
 
     /// Verify order
     #[arg(short, long)]
@@ -281,17 +284,29 @@ fn test_is_less() {
 }
 
 // --------------------------------------------------
-pub fn read_input(input: impl BufRead) -> Vec<u8> {
-    // TODO: Is this good and proper? Any use of the results
-    // will need to similarly filter the inputs.
-    let mut text: Vec<_> = input
-        .bytes()
-        .map_while(Result::ok)
-        .map(|b| b & 0b1011111) // Uppercase (mask w/32)
-        .filter(|&b| (0b1000001..=0b1011010).contains(&b)) // A-Z
-        .collect();
-    text.push(b'$');
-    text
+pub fn read_input(filename: &str) -> Result<(Vec<u8>, Vec<String>)> {
+    let mut reader = parse_fastx_file(&filename)?;
+    let mut seqs = vec![];
+    let mut headers = vec![];
+    let mut i = 0;
+    while let Some(rec) = reader.next() {
+        let rec = rec?;
+        if i > 0 {
+            // Sequence delimiter
+            seqs.push(b'#');
+        }
+        // Uppercase (mask w/32)
+        let mut seq: Vec<u8> =
+            rec.seq().iter().map(|b| b & 0b1011111).collect();
+        seqs.append(&mut seq);
+        i += 1;
+
+        headers.push(String::from_utf8(rec.id().to_vec())?);
+    }
+    // File delimiter
+    seqs.push(b'$');
+
+    Ok((seqs, headers))
 }
 
 //// --------------------------------------------------
@@ -314,7 +329,9 @@ pub fn read_input(input: impl BufRead) -> Vec<u8> {
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
-    let text = read_input(&mut BufReader::new(File::open(&args.input)?));
+    let (text, _headers) = read_input(&args.input)?;
+    //println!("{:?}", String::from_utf8(text.clone()));
+    //println!("{}", headers.join(", "));
     //let packed = read_input_u4(&mut BufReader::new(File::open(&args.input)?));
     //println!("Input as U4 {:?}", &packed);
     //for (i, val) in packed.values().iter().enumerate() {
@@ -325,7 +342,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     //    );
     //}
     let len = text.len() as u64;
-    let ignore_start_n = args.ignore_start_n;
+    let ignore_start_n = args.is_dna;
 
     if len < u32::MAX as u64 {
         let sa: SuffixArray<u32> = SuffixArray::new(
@@ -391,6 +408,7 @@ where
         "Suffix generated in {:?}s",
         total_start.elapsed().as_secs_f64()
     );
+    debug!("Sorted = {:?}", &sorted_sa);
 
     // Check
     if args.check {
@@ -416,8 +434,16 @@ where
         );
     }
 
+    // Write out suffix array length
     let start = Instant::now();
-    let mut out = File::create(&args.output)?;
+    let outfile = &args.output.clone().unwrap_or(format!(
+        "{}.sufr",
+        PathBuf::from(&args.input)
+            .file_stem()
+            .unwrap_or(OsStr::new("out"))
+            .to_string_lossy()
+    ));
+    let mut out = File::create(outfile)?;
 
     // Write out suffix array length
     let _ = out.write(&usize_to_bytes(sorted_sa.len()))?;
@@ -432,7 +458,7 @@ where
     out.write_all(slice_u8)?;
     info!("Wrote output file in {:?}", start.elapsed());
 
-    println!("See output file '{}'", args.output);
+    println!("See output file '{outfile}'");
 
     Ok(())
 }
@@ -454,21 +480,12 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 }
 
 // --------------------------------------------------
-fn open(filename: &str) -> Result<Box<dyn BufRead>> {
-    match filename {
-        "-" => Ok(Box::new(BufReader::new(io::stdin()))),
-        _ => Ok(Box::new(BufReader::new(
-            File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
-        ))),
-    }
-}
-
-// --------------------------------------------------
 // Parse an index from a string representation of an integer.
 // Ensures the number is non-zero.
 // Ensures the number does not start with '+'.
 // Returns an index, which is a non-negative integer that is
 // one less than the number represented by the original input.
+#[allow(dead_code)]
 fn parse_index(input: &str) -> Result<usize> {
     let value_error = || anyhow!(r#"illegal list value: "{input}""#);
     input
@@ -483,6 +500,7 @@ fn parse_index(input: &str) -> Result<usize> {
 }
 
 // --------------------------------------------------
+#[allow(dead_code)]
 fn parse_pos(range: &str) -> Result<PositionList> {
     let range_re = Regex::new(r"^(\d+)-(\d+)$").unwrap();
     range
@@ -515,43 +533,43 @@ pub fn read(args: &ReadArgs) -> Result<()> {
     let sa_len = sa.len();
     info!("Read SA in {:?}", start.elapsed());
 
-    let seq = String::from_utf8(read_input(open(&args.sequence)?))?;
+    let (seq, _headers) = read_input(&args.sequence)?;
 
     if seq.len() != sa_len {
         bail!("SA len {sa_len} does not match sequence len {}", seq.len());
     }
 
-    let positions: Vec<_> = parse_pos(&args.extract)?
-        .into_iter()
-        .flat_map(|r| r.collect::<Vec<_>>())
-        .collect();
+    //let positions: Vec<_> = parse_pos(&args.extract)?
+    //    .into_iter()
+    //    .flat_map(|r| r.collect::<Vec<_>>())
+    //    .collect();
 
-    let mut output: Box<dyn Write> = match &args.output {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
-    };
+    //let mut output: Box<dyn Write> = match &args.output {
+    //    Some(out_name) => Box::new(File::create(out_name)?),
+    //    _ => Box::new(io::stdout()),
+    //};
 
-    for start in positions {
-        if let Some(&pos) = sa.get(start) {
-            //let pos = pos as usize;
-            let end = if args.max_len > 0 {
-                pos + args.max_len
-            } else {
-                sa_len
-            };
+    //for start in positions {
+    //    if let Some(&pos) = sa.get(start) {
+    //        //let pos = pos as usize;
+    //        let end = if args.max_len > 0 {
+    //            pos + args.max_len
+    //        } else {
+    //            sa_len
+    //        };
 
-            if args.number {
-                writeln!(
-                    output,
-                    "{:3}: {}",
-                    start + 1,
-                    seq.substring(pos, end)
-                )?;
-            } else {
-                writeln!(output, "{}", seq.substring(pos, end))?;
-            }
-        }
-    }
+    //        if args.number {
+    //            writeln!(
+    //                output,
+    //                "{:3}: {}",
+    //                start + 1,
+    //                seq.substring(pos, end)
+    //            )?;
+    //        } else {
+    //            writeln!(output, "{}", seq.substring(pos, end))?;
+    //        }
+    //    }
+    //}
 
     // Read the rest of the file into memory
     //let mut contents: Vec<u8> = vec![];

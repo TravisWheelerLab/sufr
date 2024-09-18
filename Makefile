@@ -1,45 +1,38 @@
 CHR1 = ../data/t2t-chr1.txt
 #CHR1 = /xdisk/twheeler/data/genomes/human/t2t/chr1.txt
-SEQ1 = tests/inputs/seq1.txt
-
-#CHECK  = cargo run -- read
-#CREATE = cargo run -- create --log info
-#CREATE_DEBUG = cargo run -- create --log debug
-#READ   = cargo run -- check
-
+SEQ1 = tests/inputs/1.fa
+SEQ2 = tests/inputs/2.fa
+SEQ3 = tests/inputs/2.fa
 SUFR   = ./target/release/sufr
-CREATE = $(SUFR) create --log info
+
+CREATE_DEBUG = cargo run -- create --log debug
+
+CREATE = cargo run -- create --log info
+#CREATE = $(SUFR) create --log info
+
+#READ   = cargo run -- check
+#CHECK  = cargo run -- read
+
 #CHECK  = $(SUFR) read
 #READ   = $(SUFR) check
 
 perf:
 	perf record --call-graph dwarf $(SUFR) create -t 16 --log info $(CHR1)
 
-s1: create-s1 # check-s1
+s1:
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --check
 
-create-s1:
-	$(CREATE_DEBUG) $(SEQ1) -o seq1.sa -n 2
+s2:
+	$(CREATE_DEBUG) $(SEQ2) --check
 
-check-s1:
-	$(READ) -s $(SEQ1) -a seq1.sa
-
-read-s1:
-	$(READ) -s tests/inputs/seq1.txt -a seq1.sa -e 1-100
-
-create-s2:
-	$(CREATE) tests/inputs/seq2.txt -o seq2.sa
-
-check-s2:
-	$(READ) -s tests/inputs/seq2.txt -a seq2.sa
-
-read-s2:
-	$(READ) -s tests/inputs/seq2.txt -a seq2.sa -e 1-100
+s3:
+	$(CREATE_DEBUG) $(SEQ3) --check
 
 ecoli:
-	$(CREATE) ../data/ecoli.txt -o ecoli.sa --check
+	$(CREATE) ../data/ecoli.fa -o ecoli.sa --check
 
 chr1:
-	$(CREATE) ../data/t2t-chr1.txt -o t2t-chr1.sa -n 64
+	$(CREATE) ../data/t2t-chr1.fa -n 64
 
 check-t2t-chr1:
 	$(READ) -s ../data/t2t-chr1.txt -a t2t-chr1.sa
@@ -49,8 +42,6 @@ create-chr1:
 
 check-chr1:
 	$(READ) -s ../data/chr1.txt -a t2t-chr1.sa
-
-s2: create-s2 check-s2
 
 valcache:
 	valgrind --tool=cachegrind ./target/release/sufr create ../data/chr1.fa --ignore-start-n -o chr1.sa --log info
