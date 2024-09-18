@@ -491,6 +491,8 @@ where
 
     // --------------------------------------------------
     pub fn partition_by_pivot(&self, num_partitions: usize) -> Vec<T> {
+        // Read the input
+        let now = Instant::now();
         let suffixes: Vec<T> = if self.ignore_start_n {
             // Text will already be "uppercase" (but bytes), N = 78
             self.text
@@ -502,78 +504,40 @@ where
             (0..self.text.len()).map(T::from_usize).collect()
         };
         //dbg!(&suffixes);
-        let mut rng = &mut rand::thread_rng();
-        let source_sa: Vec<_> = suffixes
-            .choose_multiple(&mut rng, num_partitions - 1)
-            .cloned()
-            .collect();
+        info!("Read input in {:?}", now.elapsed());
 
-        //dbg!(&source_sa);
-        //dbg!(source_sa
-        //    .iter()
-        //    .map(|v| self._string_at(v.to_usize()))
-        //    .collect::<Vec<_>>());
-
-        // Sort the pivots
-        let len = source_sa.len();
-        let target_sa = source_sa.clone();
-        let source_lcp = vec![T::default(); len];
-        let target_lcp = vec![T::default(); len];
-        let mut sa = vec![source_sa, target_sa];
-        let mut lcp = vec![source_lcp, target_lcp];
-        let source = 0;
-        let target = 1;
-        let final_target =
-            self.iter_merge_sort(&mut sa, &mut lcp, source, target, len - 1);
-        let sorted_sa = sa[final_target].clone();
-
-        //dbg!(&sorted_sa);
-        //dbg!(sorted_sa
-        //    .iter()
-        //    .map(|v| self._string_at(v.to_usize()))
-        //    .collect::<Vec<_>>());
-
-        //// Partition the suffixes
-        //let now = Instant::now();
-        //let mut partitions: Vec<Vec<T>> = vec![vec![]; num_partitions];
-        //for pos in suffixes {
-        //    let partition =
-        //        self.upper_bound(pos, &sorted_sa).unwrap_or(T::default());
-        //    //println!(
-        //    //    "pos {pos} '{}' partition {partition:?}",
-        //    //    self._string_at(pos.to_usize())
-        //    //);
-        //    partitions[partition.to_usize()].push(pos);
-        //}
-        //info!(
-        //    "Split into {num_partitions} partitions in {:?}",
-        //    now.elapsed()
-        //);
-
-        // Partition the suffixes
+        // Select random pivots
         let now = Instant::now();
-        let parts: Vec<_> = suffixes
-            .clone()
-            .into_par_iter()
-            .map(|pos| {
-                self.upper_bound(pos, &sorted_sa).unwrap_or(T::default())
-            })
-            .collect();
-        //dbg!(&parts);
-        let mut partitions: Vec<Vec<T>> = vec![vec![]; num_partitions];
-        for (pos, part) in suffixes.iter().zip(parts) {
-            partitions[part.to_usize()].push(*pos);
-        }
+        let pivot_sa =
+            self.select_random_pivots(&suffixes, num_partitions - 1);
+        info!(
+            "Selected/sorted {} pivots in {:?}",
+            pivot_sa.len(),
+            now.elapsed()
+        );
+
+        // Partition the suffixes using the pivots
+        let now = Instant::now();
+        let partitions = self.partition_by_pivots(suffixes, pivot_sa);
+        //let parts: Vec<_> = suffixes
+        //    .clone()
+        //    .into_par_iter()
+        //    .map(|pos| {
+        //        self.upper_bound(pos, &pivot_sa).unwrap_or(T::default())
+        //    })
+        //    .collect();
+        //let mut partitions: Vec<Vec<T>> = vec![vec![]; num_partitions];
+        //for (pos, part) in suffixes.iter().zip(&parts) {
+        //    partitions[part.to_usize()].push(*pos);
+        //}
+        //mem::drop(parts);
+        //mem::drop(suffixes);
+        //mem::drop(pivot_sa);
         //dbg!(&partitions);
         info!(
             "Split into {num_partitions} partitions in {:?}",
             now.elapsed()
         );
-
-        //dbg!(&partitions);
-
-        //let dist: Vec<_> = partitions.iter().map(|p| p.len()).collect();
-        //dbg!(&dist);
 
         // Sort the partitions
         let now = Instant::now();
@@ -581,6 +545,7 @@ where
             .into_par_iter()
             .filter(|v| !v.is_empty())
             //.map(|part_sa| {
+            //    // Iterative
             //    let len = part_sa.len();
             //    let target_sa = part_sa.clone();
             //    let source_lcp = vec![T::default(); len];
@@ -616,13 +581,75 @@ where
             .flatten()
             .collect();
         //dbg!(&res);
-        info!("Merged partitions in {:?}", now.elapsed());
+        info!("Sorted/merged partitions in {:?}", now.elapsed());
 
         //dbg!(&res);
         //for (i, pos) in res.iter().enumerate() {
         //    println!("{i}: {}", self._string_at(pos.to_usize()));
         //}
         res
+    }
+
+    // --------------------------------------------------
+    #[inline(always)]
+    fn select_random_pivots(
+        &self,
+        suffixes: &[T],
+        num_pivots: usize,
+    ) -> Vec<T> {
+        let mut rng = &mut rand::thread_rng();
+        let mut pivot_sa: Vec<_> = suffixes
+            .choose_multiple(&mut rng, num_pivots)
+            .cloned()
+            .collect();
+
+        // Iterative
+        //let len = pivot_sa.len();
+        //let target_sa = pivot_sa.clone();
+        //let source_lcp = vec![T::default(); len];
+        //let target_lcp = vec![T::default(); len];
+        //let mut sa = vec![pivot_sa, target_sa];
+        //let mut lcp = vec![source_lcp, target_lcp];
+        //let source = 0;
+        //let target = 1;
+        //let final_target =
+        //self.iter_merge_sort(&mut sa, &mut lcp, source, target, len - 1);
+        //sa[final_target].clone()
+
+        // Recursive
+        let len = pivot_sa.len();
+        let mut sa_w = pivot_sa.clone();
+        let mut lcp = vec![T::default(); len];
+        let mut lcp_w = vec![T::default(); len];
+        self.recursive_merge_sort(
+            &mut sa_w,
+            &mut pivot_sa,
+            len,
+            &mut lcp,
+            &mut lcp_w,
+        );
+        pivot_sa
+    }
+
+    // --------------------------------------------------
+    #[inline(always)]
+    fn partition_by_pivots(
+        &self,
+        suffixes: Vec<T>,
+        pivot_sa: Vec<T>,
+    ) -> Vec<Vec<T>> {
+        let parts: Vec<_> = suffixes
+            .par_iter()
+            .map(|pos| {
+                self.upper_bound(*pos, &pivot_sa).unwrap_or(T::default())
+            })
+            .collect();
+
+        let mut partitions: Vec<Vec<T>> = vec![vec![]; pivot_sa.len() + 1];
+        for (pos, part) in suffixes.iter().zip(&parts) {
+            partitions[part.to_usize()].push(*pos);
+        }
+        partitions
     }
 
     // --------------------------------------------------
