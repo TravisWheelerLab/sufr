@@ -8,9 +8,9 @@ SEQ1 = tests/inputs/seq1.txt
 #READ   = cargo run -- check
 
 SUFR   = ./target/release/sufr
-CHECK  = $(SUFR) read
 CREATE = $(SUFR) create --log info
-READ   = $(SUFR) check
+#CHECK  = $(SUFR) read
+#READ   = $(SUFR) check
 
 perf:
 	perf record --call-graph dwarf $(SUFR) create -t 16 --log info $(CHR1)
@@ -35,15 +35,9 @@ check-s2:
 read-s2:
 	$(READ) -s tests/inputs/seq2.txt -a seq2.sa -e 1-100
 
-create-ecoli:
-	$(CREATE) ../data/ecoli.txt -o ecoli.sa
+ecoli:
+	$(CREATE) ../data/ecoli.txt -o ecoli.sa --check
 
-check-ecoli:
-	$(READ) -s ../data/ecoli.txt -a ecoli.sa
-
-#chr1: create-t2t-chr1 check-t2t-chr1
-
-#create-t2t-chr1:
 chr1:
 	$(CREATE) ../data/t2t-chr1.txt -o t2t-chr1.sa -n 64
 
@@ -57,9 +51,6 @@ check-chr1:
 	$(READ) -s ../data/chr1.txt -a t2t-chr1.sa
 
 s2: create-s2 check-s2
-
-ecoli: create-ecoli check-ecoli
-
 
 valcache:
 	valgrind --tool=cachegrind ./target/release/sufr create ../data/chr1.fa --ignore-start-n -o chr1.sa --log info

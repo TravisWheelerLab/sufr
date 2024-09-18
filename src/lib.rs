@@ -348,6 +348,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     Ok(())
 }
 
+// --------------------------------------------------
 pub fn _create<T>(sa: SuffixArray<T>, args: &CreateArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
@@ -385,48 +386,7 @@ where
     );
     debug!("Raw input '{:?}'", sa.text);
 
-    //let start = Instant::now();
-    let merged_sa = sa.partition_by_pivot(args.num_partitions);
-    //debug!("merged_sa {merged_sa:?}");
-    //info!("Sorted by partitions in {}s", start.elapsed().as_secs_f64());
-
-    //let start = Instant::now();
-    //let sufs = sa.sort_subarrays(args.num_partitions);
-    //info!("Sorted subarrays in {:?}", start.elapsed());
-    ////dbg!(&sufs);
-    //debug!("sorted subarrays = {sufs:#?}");
-
-    //// Collect all the subarray SA/LCP structures
-    //let sub_suffixes: Vec<_> = sufs.iter().map(|t| t.0.clone()).collect();
-    //let sub_lcps: Vec<_> = sufs.iter().map(|t| t.1.clone()).collect();
-    //let sub_pivots: Vec<_> = sufs.iter().map(|t| t.2.clone()).collect();
-    //mem::drop(sufs);
-
-    //// Determine the pivot suffixes
-    //let start = Instant::now();
-    //let pivots = sa.select_pivots(sub_pivots);
-    //info!("Selected {} pivots in {:?}", pivots.len(), start.elapsed());
-    //debug!("pivots = {pivots:#?}");
-
-    //// Find the pivots suffixes in each of the sub_suffixes
-    //let start = Instant::now();
-    //let pivot_locs = sa.locate_pivots(&sub_suffixes, pivots);
-    //info!("Located pivot suffixes in {:?}", start.elapsed());
-    //debug!("pivot_locs = {pivot_locs:#?}");
-
-    //// Use the pivot locations to partition the SA/LCP subs
-    //let start = Instant::now();
-    //let (part_sas, part_lcps) =
-    //    sa.partition_subarrays(&sub_suffixes, &sub_lcps, pivot_locs);
-    //info!("Partitioned subarrays in {:?}", start.elapsed());
-    //debug!("{part_sas:#?}");
-
-    //// Merge the partitioned subs
-    //let start = Instant::now();
-    //let merged_sa = sa.merge_part_subs(&part_sas, &part_lcps);
-    //info!("Merged subarrays in {:?}", start.elapsed());
-    //debug!("{merged_sa:#?}");
-
+    let sorted_sa = sa.partition_by_pivot(args.num_partitions);
     info!(
         "Suffix generated in {:?}s",
         total_start.elapsed().as_secs_f64()
@@ -437,7 +397,7 @@ where
         let start = Instant::now();
         let mut previous: Option<usize> = None;
         let mut num_errors = 0;
-        for &cur in &merged_sa {
+        for &cur in &sorted_sa {
             if let Some(p) = previous {
                 if !is_less(
                     &sa.text[p..sa.len.to_usize()],
@@ -460,13 +420,13 @@ where
     let mut out = File::create(&args.output)?;
 
     // Write out suffix array length
-    let _ = out.write(&usize_to_bytes(merged_sa.len()))?;
+    let _ = out.write(&usize_to_bytes(sorted_sa.len()))?;
 
     // Write out suffix array as raw bytes
     let slice_u8: &[u8] = unsafe {
         slice::from_raw_parts(
-            merged_sa.as_ptr() as *const _,
-            merged_sa.len() * mem::size_of::<T>(),
+            sorted_sa.as_ptr() as *const _,
+            sorted_sa.len() * mem::size_of::<T>(),
         )
     };
     out.write_all(slice_u8)?;
