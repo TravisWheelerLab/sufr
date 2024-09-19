@@ -472,28 +472,28 @@ where
         );
 
         // Header: version/is_dna
-        //let is_dna: u8 = if self.is_dna { 1 } else { 0 };
-        //let _ = out.write(&[OUTFILE_VERSION, is_dna]);
+        let is_dna: u8 = if self.is_dna { 1 } else { 0 };
+        let _ = out.write(&[OUTFILE_VERSION, is_dna]);
 
         // Suffix array length
         let _ = out.write(&usize_to_bytes(sa.len()))?;
 
         // Write out suffix array/LCP as raw bytes
-        let slice_u8: &[u8] = unsafe {
+        let slice_sa: &[u8] = unsafe {
             slice::from_raw_parts(
                 sa.as_ptr() as *const _,
-                sa.len() * mem::size_of_val(sa),
+                sa.len() * mem::size_of::<T>(),
             )
         };
-        out.write_all(slice_u8)?;
+        out.write_all(slice_sa)?;
 
-        let slice_u8: &[u8] = unsafe {
+        let slice_lcp: &[u8] = unsafe {
             slice::from_raw_parts(
                 lcp.as_ptr() as *const _,
-                lcp.len() * mem::size_of_val(sa),
+                lcp.len() * mem::size_of::<T>(),
             )
         };
-        out.write_all(slice_u8)?;
+        out.write_all(slice_lcp)?;
 
         Ok(())
     }

@@ -587,12 +587,10 @@ fn _read(filename: &str) -> Result<SuffixArray> {
     let mut file =
         File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
-    let version = 1u8;
-    let is_dna = 1u8;
-    //let mut buffer = [0; 2];
-    //file.read_exact(&mut buffer)?;
-    //let version = buffer[0];
-    //let is_dna = buffer[1];
+    let mut buffer = [0; 2];
+    file.read_exact(&mut buffer)?;
+    let version = buffer[0];
+    let is_dna = buffer[1];
 
     // The next 64-bits of the file contain the size of the SA
     let mut buffer = [0; 8];
