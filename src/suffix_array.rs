@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use log::info;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
@@ -5,10 +6,15 @@ use std::{
     cmp::{max, min, Ordering},
     fmt::Debug,
     fmt::Display,
+    fs::File,
+    io::{BufWriter, Write},
     mem,
     ops::{Add, Sub},
+    slice,
     time::Instant,
 };
+
+const OUTFILE_VERSION: u8 = 1;
 
 pub trait FromUsize<T> {
     fn from_usize(val: usize) -> T;
@@ -52,7 +58,7 @@ impl Int for u64 {
 
 // --------------------------------------------------
 #[derive(Clone, Debug)]
-pub struct SuffixArray<T>
+pub struct SuffixArrayBuilder<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
@@ -66,10 +72,10 @@ where
     pub max_context: T,
 
     // Whether or not to skip suffixes that start with N
-    pub ignore_start_n: bool,
+    pub is_dna: bool,
 }
 
-impl<T> SuffixArray<T>
+impl<T> SuffixArrayBuilder<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
@@ -78,28 +84,40 @@ where
         text: Vec<u8>,
         len: T,
         max_context: Option<T>,
-        ignore_start_n: bool,
-    ) -> SuffixArray<T> {
-        SuffixArray {
+        is_dna: bool,
+    ) -> SuffixArrayBuilder<T> {
+        SuffixArrayBuilder {
             text,
             len,
             max_context: max_context.unwrap_or(len),
-            ignore_start_n,
+            is_dna,
         }
     }
 
     // --------------------------------------------------
-    //pub fn check_order(&self, sa: &[T]) -> Vec<T> {
-    //    let mut errors = vec![];
-    //    for window in sa.windows(2) {
-    //        if let [prev, cur] = window {
-    //            if !self.is_less(*prev, *cur) {
-    //                errors.push(*prev);
-    //            }
-    //        }
-    //    }
-    //    errors
-    //}
+    pub fn check_order(&self, sa: &[T]) -> Vec<T> {
+        let mut errors = vec![];
+        for window in sa.windows(2) {
+            if let [prev, cur] = window {
+                if !self.is_less(*prev, *cur) {
+                    errors.push(*prev);
+                }
+            }
+        }
+        errors
+    }
+
+    // --------------------------------------------------
+    pub fn check_lcp(&self, sa: &[T], lcp: &[T]) -> Vec<T> {
+        let mut errors = vec![];
+        for i in 1..sa.len() {
+            let len_lcp = self.find_lcp(sa[i], sa[i - 1], self.max_context);
+            if len_lcp != lcp[i] {
+                errors.push(T::from_usize(i));
+            }
+        }
+        errors
+    }
 
     // --------------------------------------------------
     // Assumes pos is always found -- danger
@@ -111,18 +129,18 @@ where
     }
 
     // --------------------------------------------------
-    #[inline(always)]
-    pub fn find_lcp_unchecked(s1: &[u8], s2: &[u8], len: T) -> T {
-        for i in 0..len.to_usize() {
-            unsafe {
-                if s1.get_unchecked(i) != s2.get_unchecked(i) {
-                    return T::from_usize(i);
-                }
-            }
-        }
+    //#[inline(always)]
+    //pub fn find_lcp_unchecked(s1: &[u8], s2: &[u8], len: T) -> T {
+    //    for i in 0..len.to_usize() {
+    //        unsafe {
+    //            if s1.get_unchecked(i) != s2.get_unchecked(i) {
+    //                return T::from_usize(i);
+    //            }
+    //        }
+    //    }
 
-        len
-    }
+    //    len
+    //}
 
     #[inline(always)]
     pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
@@ -131,12 +149,6 @@ where
         let len = len.to_usize();
         let end1 = min(start1 + len, self.len.to_usize());
         let end2 = min(start2 + len, self.len.to_usize());
-        //T::from_usize(
-        //    (start1..end1)
-        //        .zip(start2..end2)
-        //        .take_while(|(a, b)| self.text[*a] == self.text[*b])
-        //        .count(),
-        //)
         unsafe {
             return T::from_usize(
                 (start1..end1)
@@ -190,25 +202,29 @@ where
     }
 
     // --------------------------------------------------
-    pub fn partition_by_pivot(&self, num_partitions: usize) -> Vec<T> {
-        // Read the input
+    pub fn sort(&self, num_partitions: usize) -> (Vec<T>, Vec<T>) {
         let now = Instant::now();
-        let suffixes: Vec<T> = if self.ignore_start_n {
-            // Text will already be "uppercase" (but bytes), N = 78
+        let suffixes: Vec<T> = if self.is_dna {
+            // Text will already be "uppercase" (but bytes)
             self.text
                 .iter()
                 .enumerate()
-                .filter_map(|(i, &c)| (c != 78).then_some(T::from_usize(i)))
+                .filter_map(|(i, c)| {
+                    b"ACGT".contains(c).then_some(T::from_usize(i))
+                })
                 .collect()
         } else {
             (0..self.text.len()).map(T::from_usize).collect()
         };
-        info!("Read input in {:?}", now.elapsed());
+        info!(
+            "Constructed unsorted suffix array of len {} in {:?}",
+            suffixes.len(),
+            now.elapsed()
+        );
 
         // Select random pivots
         let now = Instant::now();
-        let pivot_sa =
-            self.select_random_pivots(&suffixes, num_partitions - 1);
+        let pivot_sa = self.select_pivots(&suffixes, num_partitions - 1);
         info!(
             "Selected/sorted {} pivots in {:?}",
             pivot_sa.len(),
@@ -217,7 +233,7 @@ where
 
         // Partition the suffixes using the pivots
         let now = Instant::now();
-        let partitions = self.partition_by_pivots(suffixes, pivot_sa);
+        let partitions = self.partition(suffixes, pivot_sa);
         let sizes: Vec<_> = partitions.iter().map(|p| p.len()).collect();
         info!(
             "Split into {num_partitions} partitions (avg {}) in {:?}",
@@ -225,118 +241,91 @@ where
             now.elapsed()
         );
 
-        // Sort the partitions
+        // Sort partitions
         let now = Instant::now();
-        let res: Vec<_> = partitions
+        let sorted: Vec<_> = partitions
             .into_par_iter()
             .filter(|v| !v.is_empty())
-            //.map(|part_sa| {
-            //    // Iterative
-            //    let len = part_sa.len();
-            //    let target_sa = part_sa.clone();
-            //    let source_lcp = vec![T::default(); len];
-            //    let target_lcp = vec![T::default(); len];
-            //    let mut sa = vec![part_sa, target_sa];
-            //    let mut lcp = vec![source_lcp, target_lcp];
-            //    let source = 0;
-            //    let target = 1;
-            //    let final_target = self.iter_merge_sort(
-            //        &mut sa,
-            //        &mut lcp,
-            //        source,
-            //        target,
-            //        len - 1,
-            //    );
-            //    sa[final_target].clone()
-            //})
             .map(|mut part_sa| {
-                // Recursive
                 let len = part_sa.len();
                 let mut sa_w = part_sa.clone();
                 let mut lcp = vec![T::default(); len];
                 let mut lcp_w = vec![T::default(); len];
-                self.recursive_merge_sort(
+                self.merge_sort(
                     &mut sa_w,
                     &mut part_sa,
                     len,
                     &mut lcp,
                     &mut lcp_w,
                 );
-                part_sa
+                (part_sa, lcp)
             })
-            .flatten()
             .collect();
+        info!("Sorted partitions in {:?}", now.elapsed());
 
-        info!("Sorted/merged partitions in {:?}", now.elapsed());
+        // Concatenate the partitioned SA/LCP vectors
+        let now = Instant::now();
+        let sa: Vec<_> = sorted.iter().flat_map(|t| t.0.clone()).collect();
+        let mut lcp: Vec<_> =
+            sorted.into_iter().flat_map(|t| t.1.clone()).collect();
+        info!("Concatenated partitions in {:?}", now.elapsed());
 
-        res
+        // Fix the LCP boundaries
+        let now = Instant::now();
+        let mut pos = 0;
+        for size in sizes.into_iter().filter(|&v| v > 0) {
+            pos += size;
+
+            if pos >= sa.len() {
+                break;
+            }
+            if lcp[pos] == T::default() {
+                lcp[pos] =
+                    self.find_lcp(sa[pos - 1], sa[pos], self.max_context);
+            }
+        }
+        info!("Fixed LCP boundaries in {:?}", now.elapsed());
+
+        (sa, lcp)
     }
 
     // --------------------------------------------------
     #[inline(always)]
-    fn select_random_pivots(
-        &self,
-        suffixes: &[T],
-        num_pivots: usize,
-    ) -> Vec<T> {
+    fn select_pivots(&self, suffixes: &[T], num_pivots: usize) -> Vec<T> {
         let mut rng = &mut rand::thread_rng();
         let mut pivot_sa: Vec<_> = suffixes
             .choose_multiple(&mut rng, num_pivots)
             .cloned()
             .collect();
-
-        // Iterative
-        //let len = pivot_sa.len();
-        //let target_sa = pivot_sa.clone();
-        //let source_lcp = vec![T::default(); len];
-        //let target_lcp = vec![T::default(); len];
-        //let mut sa = vec![pivot_sa, target_sa];
-        //let mut lcp = vec![source_lcp, target_lcp];
-        //let source = 0;
-        //let target = 1;
-        //let final_target =
-        //self.iter_merge_sort(&mut sa, &mut lcp, source, target, len - 1);
-        //sa[final_target].clone()
-
-        // Recursive
-        let len = pivot_sa.len();
         let mut sa_w = pivot_sa.clone();
+        let len = pivot_sa.len();
         let mut lcp = vec![T::default(); len];
         let mut lcp_w = vec![T::default(); len];
-        self.recursive_merge_sort(
-            &mut sa_w,
-            &mut pivot_sa,
-            len,
-            &mut lcp,
-            &mut lcp_w,
-        );
+        self.merge_sort(&mut sa_w, &mut pivot_sa, len, &mut lcp, &mut lcp_w);
         pivot_sa
     }
 
     // --------------------------------------------------
     #[inline(always)]
-    fn partition_by_pivots(
-        &self,
-        suffixes: Vec<T>,
-        pivot_sa: Vec<T>,
-    ) -> Vec<Vec<T>> {
+    fn partition(&self, suffixes: Vec<T>, pivot_sa: Vec<T>) -> Vec<Vec<T>> {
+        // Find the highest partition for each suffix
         let parts: Vec<_> = suffixes
             .par_iter()
-            .map(|pos| {
-                self.upper_bound(*pos, &pivot_sa).unwrap_or(T::default())
-            })
+            .map(|pos| self.upper_bound(*pos, &pivot_sa).unwrap_or_default())
             .collect();
 
+        // Copy the suffixes into the correct partition
         let mut partitions: Vec<Vec<T>> = vec![vec![]; pivot_sa.len() + 1];
-        for (pos, part) in suffixes.iter().zip(&parts) {
-            partitions[part.to_usize()].push(*pos);
+        for (suffix, part) in suffixes.iter().zip(&parts) {
+            partitions[part.to_usize()].push(*suffix);
         }
+
         partitions
     }
 
     // --------------------------------------------------
-    pub fn recursive_merge_sort(
-        self: &Self,
+    pub fn merge_sort(
+        &self,
         x: &mut [T],
         y: &mut [T],
         n: usize,
@@ -347,7 +336,7 @@ where
             lcp[0] = T::default();
         } else {
             let mid = n / 2;
-            self.recursive_merge_sort(
+            self.merge_sort(
                 &mut y[..mid],
                 &mut x[..mid],
                 mid,
@@ -355,7 +344,7 @@ where
                 &mut lcp[..mid],
             );
 
-            self.recursive_merge_sort(
+            self.merge_sort(
                 &mut y[mid..],
                 &mut x[mid..],
                 n - mid,
@@ -363,13 +352,13 @@ where
                 &mut lcp[mid..],
             );
 
-            self.recursive_merge(x, mid, lcp_w, y, lcp);
+            self.merge(x, mid, lcp_w, y, lcp);
         }
     }
 
     // --------------------------------------------------
-    fn recursive_merge<'a>(
-        self: &Self,
+    fn merge(
+        &self,
         suffix_array: &mut [T],
         mid: usize,
         lcp_w: &mut [T],
@@ -381,66 +370,65 @@ where
         let mut len_x = x.len();
         let mut len_y = y.len();
         let mut m = T::default(); // Last LCP from left side (x)
-        let mut idx_x = 0; // Index into x
-        let mut idx_y = 0; // Index into y
-        let mut k = 0; // Index into z
+        let mut idx_x = 0; // Index into x (left side)
+        let mut idx_y = 0; // Index into y (right side)
+        let mut idx_target = 0; // Index into target
 
         while idx_x < len_x && idx_y < len_y {
             let l_x = lcp_x[idx_x];
 
-            if l_x > m {
-                target_sa[k] = x[idx_x];
-                target_lcp[k] = l_x;
-            } else if l_x < m {
-                target_sa[k] = y[idx_y];
-                target_lcp[k] = m;
-                m = l_x;
-            } else {
-                // Length of shorter suffix
-                let max_n = self.len - max(x[idx_x], y[idx_y]);
-
-                // Prefix-context length for the suffixes
-                let context = min(self.max_context, max_n);
-
-                // LCP(X_i, Y_j)
-                //let len_lcp = m + Self::find_lcp(
-                //    &self.text[(x[idx_x] + m).to_usize()..],
-                //    &self.text[(y[idx_y] + m).to_usize()..],
-                //    context - m,
-                //);
-                let len_lcp = m + self.find_lcp(
-                    x[idx_x] + m,
-                    y[idx_y] + m,
-                    context - m,
-                );
-
-                // If the len of the LCP is the entire shorter
-                // sequence, take that.
-                if len_lcp == max_n {
-                    target_sa[k] = max(x[idx_x], y[idx_y])
+            match l_x.cmp(&m) {
+                Ordering::Greater => {
+                    target_sa[idx_target] = x[idx_x];
+                    target_lcp[idx_target] = l_x;
                 }
-                // Else, look at the next char after the LCP
-                // to determine order.
-                else if self.text[(x[idx_x] + len_lcp).to_usize()]
-                    < self.text[(y[idx_y] + len_lcp).to_usize()]
-                {
-                    target_sa[k] = x[idx_x]
+                Ordering::Less => {
+                    target_sa[idx_target] = y[idx_y];
+                    target_lcp[idx_target] = m;
+                    m = l_x;
                 }
-                // Else take from the right
-                else {
-                    target_sa[k] = y[idx_y]
-                }
+                Ordering::Equal => {
+                    // Length of shorter suffix
+                    let max_n = self.len - max(x[idx_x], y[idx_y]);
 
-                // If we took from the right...
-                if target_sa[k] == x[idx_x] {
-                    target_lcp[k] = l_x;
-                } else {
-                    target_lcp[k] = m
+                    // Prefix-context length for the suffixes
+                    let context = min(self.max_context, max_n);
+
+                    // LCP(X_i, Y_j)
+                    let len_lcp = m + self.find_lcp(
+                        x[idx_x] + m,
+                        y[idx_y] + m,
+                        context - m,
+                    );
+
+                    // If the len of the LCP is the entire shorter
+                    // sequence, take that.
+                    if len_lcp == max_n {
+                        target_sa[idx_target] = max(x[idx_x], y[idx_y])
+                    }
+                    // Else, look at the next char after the LCP
+                    // to determine order.
+                    else if self.text[(x[idx_x] + len_lcp).to_usize()]
+                        < self.text[(y[idx_y] + len_lcp).to_usize()]
+                    {
+                        target_sa[idx_target] = x[idx_x]
+                    }
+                    // Else take from the right
+                    else {
+                        target_sa[idx_target] = y[idx_y]
+                    }
+
+                    // If we took from the right...
+                    if target_sa[idx_target] == x[idx_x] {
+                        target_lcp[idx_target] = l_x;
+                    } else {
+                        target_lcp[idx_target] = m
+                    }
+                    m = len_lcp;
                 }
-                m = len_lcp;
             }
 
-            if target_sa[k] == x[idx_x] {
+            if target_sa[idx_target] == x[idx_x] {
                 idx_x += 1;
             } else {
                 idx_y += 1;
@@ -450,334 +438,87 @@ where
                 mem::swap(&mut idx_x, &mut idx_y);
             }
 
-            k += 1;
+            idx_target += 1;
         }
 
         // Copy rest of the data from X to Z.
         while idx_x < len_x {
-            target_sa[k] = x[idx_x];
-            target_lcp[k] = lcp_x[idx_x];
+            target_sa[idx_target] = x[idx_x];
+            target_lcp[idx_target] = lcp_x[idx_x];
             idx_x += 1;
-            k += 1;
+            idx_target += 1;
         }
 
         // Copy rest of the data from Y to Z.
         if idx_y < len_y {
-            target_sa[k] = y[idx_y];
-            target_lcp[k] = m;
+            target_sa[idx_target] = y[idx_y];
+            target_lcp[idx_target] = m;
             idx_y += 1;
-            k += 1;
+            idx_target += 1;
 
             while idx_y < len_y {
-                target_sa[k] = y[idx_y];
-                target_lcp[k] = lcp_y[idx_y];
+                target_sa[idx_target] = y[idx_y];
+                target_lcp[idx_target] = lcp_y[idx_y];
                 idx_y += 1;
-                k += 1;
+                idx_target += 1;
             }
         }
     }
 
     // --------------------------------------------------
-    fn _iter_merge_sort(
-        &self,
-        sa: &mut [Vec<T>],
-        lcp: &mut [Vec<T>],
-        mut source: usize,
-        mut target: usize,
-        high: usize,
-    ) -> usize {
-        let mut m = 1;
+    pub fn write(&self, sa: &[T], lcp: &[T], outfile: &str) -> Result<()> {
+        let mut out = BufWriter::new(
+            File::create(outfile).map_err(|e| anyhow!("{outfile}: {e}"))?,
+        );
 
-        // divide the array into blocks of size `m`
-        while m <= high {
-            // Don't swap the first time
-            if m > 1 {
-                source = (source + 1) % 2;
-                target = (target + 1) % 2;
-            }
+        // Header: version/is_dna
+        //let is_dna: u8 = if self.is_dna { 1 } else { 0 };
+        //let _ = out.write(&[OUTFILE_VERSION, is_dna]);
 
-            for i in (0..=high).step_by(2 * m) {
-                let from = i;
-                let mut to = i + 2 * m - 1;
-                if to > high {
-                    to = high;
-                }
-                let mut mid = i + m;
-                if mid > high {
-                    mid = high;
-                }
-                self._iter_merge(sa, lcp, source, target, from, mid, to);
-            }
-            // m = [1, 2, 4, 8, 16...]
-            m *= 2;
-        }
+        // Suffix array length
+        let _ = out.write(&usize_to_bytes(sa.len()))?;
 
-        // Return the index of the final target
-        target
-    }
+        // Write out suffix array/LCP as raw bytes
+        let slice_u8: &[u8] = unsafe {
+            slice::from_raw_parts(
+                sa.as_ptr() as *const _,
+                sa.len() * mem::size_of_val(sa),
+            )
+        };
+        out.write_all(slice_u8)?;
 
-    // --------------------------------------------------
-    fn _iter_merge(
-        &self,
-        sa: &mut [Vec<T>],
-        lcp: &mut [Vec<T>],
-        source_idx: usize,
-        target_idx: usize,
-        from: usize,
-        mid: usize,
-        to: usize,
-    ) {
-        let mut m = T::from_usize(0); // Last LCP from left side (x)
-        let mut idx_x = from; // Index into x
-        let mut idx_y = mid; // Index into y
-        let mut k = from; // Index into target
-        let mut take_x = mid - from;
-        let mut take_y = to - mid + 1;
+        let slice_u8: &[u8] = unsafe {
+            slice::from_raw_parts(
+                lcp.as_ptr() as *const _,
+                lcp.len() * mem::size_of_val(sa),
+            )
+        };
+        out.write_all(slice_u8)?;
 
-        while take_x > 0 && take_y > 0 {
-            let l_x = lcp[source_idx][idx_x];
-            match l_x.cmp(&m) {
-                Ordering::Greater => {
-                    sa[target_idx][k] = sa[source_idx][idx_x];
-                    lcp[target_idx][k] = l_x;
-                }
-                Ordering::Less => {
-                    sa[target_idx][k] = sa[source_idx][idx_y];
-                    lcp[target_idx][k] = m;
-                    m = l_x;
-                }
-                Ordering::Equal => {
-                    // Find the length of shorter suffix
-                    let max_n = self.len
-                        - max(sa[source_idx][idx_x], sa[source_idx][idx_y]);
-
-                    // Prefix-context length for the suffixes
-                    let context = min(self.max_context, max_n);
-
-                    // LCP(X_i, Y_j)
-                    //let len_lcp = m + Self::find_lcp(
-                    //    &self.text[(sa[source_idx][idx_x] + m).to_usize()..],
-                    //    &self.text[(sa[source_idx][idx_y] + m).to_usize()..],
-                    //    context - m,
-                    //);
-                    let len_lcp = m + self.find_lcp(
-                        sa[source_idx][idx_x] + m,
-                        sa[source_idx][idx_y] + m,
-                        context - m,
-                    );
-
-                    // If the len of the LCP is the entire shorter
-                    // sequence, take that (the one with the higher SA value)
-                    if len_lcp == max_n {
-                        sa[target_idx][k] =
-                            max(sa[source_idx][idx_x], sa[source_idx][idx_y]);
-                    }
-                    // Else, look at the next char after the LCP
-                    // to determine order.
-                    else if self.text
-                        [(sa[source_idx][idx_x] + len_lcp).to_usize()]
-                        < self.text
-                            [(sa[source_idx][idx_y] + len_lcp).to_usize()]
-                    {
-                        sa[target_idx][k] = sa[source_idx][idx_x];
-                    }
-                    // Else take from the right
-                    else {
-                        sa[target_idx][k] = sa[source_idx][idx_y];
-                    }
-
-                    // If we took from the right...
-                    if sa[target_idx][k] == sa[source_idx][idx_x] {
-                        lcp[target_idx][k] = l_x;
-                    } else {
-                        lcp[target_idx][k] = m
-                    }
-                    m = len_lcp;
-                }
-            }
-
-            if sa[target_idx][k] == sa[source_idx][idx_x] {
-                idx_x += 1;
-                take_x -= 1;
-            } else {
-                idx_y += 1;
-                take_y -= 1;
-                // Swap X/Y
-                (idx_x, idx_y) = (idx_y, idx_x);
-                (take_x, take_y) = (take_y, take_x);
-            }
-
-            k += 1;
-        }
-
-        // Copy rest of the data from X to Z.
-        while take_x > 0 {
-            sa[target_idx][k] = sa[source_idx][idx_x];
-            lcp[target_idx][k] = lcp[source_idx][idx_x];
-            idx_x += 1;
-            take_x -= 1;
-            k += 1;
-        }
-
-        // Copy rest of the data from Y to Z.
-        if take_y > 0 {
-            sa[target_idx][k] = sa[source_idx][idx_y];
-            lcp[target_idx][k] = m;
-            idx_y += 1;
-            take_y -= 1;
-            k += 1;
-
-            while take_y > 0 {
-                sa[target_idx][k] = sa[source_idx][idx_y];
-                lcp[target_idx][k] = lcp[source_idx][idx_y];
-                idx_y += 1;
-                take_y -= 1;
-                k += 1;
-            }
-        }
+        Ok(())
     }
 }
 
 // --------------------------------------------------
-//#[inline]
-//fn byte_to_base(byte: &u8) -> Option<u8> {
-//    match byte {
-//        65 | 97 => Some(0),  // A
-//        67 | 99 => Some(1),  // C
-//        71 | 103 => Some(3), // G
-//        84 | 116 => Some(2), // T
-//        _ => None,
-//    }
-//}
+fn usize_to_bytes(value: usize) -> Vec<u8> {
+    // Determine the size of usize in bytes
+    let size = std::mem::size_of::<usize>();
 
-// --------------------------------------------------
-/// Reads input file into an array of 2-bit encoded values
-/// E.g., A = 0, C = 1, G = 2, T = 3
-//fn _read_input(mut input: impl BufRead) -> Result<Vec<u8>> {
-//    let mut ret = vec![];
-//    let start = Instant::now();
-//    let buffer_size = 1024 * 128;
+    // Create a vector to hold the bytes
+    let mut bytes = Vec::with_capacity(size);
 
-//    // Mask with 32 to uppercase ASCII values
-//    let ret: Vec<_> = input
-//        .bytes()
-//        .map_while(Result::ok)
-//        .map(|b| b & 0b1011111)
-//        .collect();
+    // Convert usize to bytes
+    for i in 0..size {
+        bytes.push((value >> (i * 8)) as u8);
+    }
 
-// 1.05537875s
-//let mut buffer = vec![0; buffer_size];
-//loop {
-//    let bytes_read = input.read(&mut buffer)?;
-//    if bytes_read == 0 {
-//        break;
-//    }
-//    ret.extend(
-//        buffer[..bytes_read].iter().filter_map(|b| byte_to_base(b)),
-//    );
-//}
-
-// 1.699109792s in debug, 1.031828417s in release
-//let mut buffer = vec![0; buffer_size];
-//loop {
-//    let bytes_read = input.read(&mut buffer)?;
-//    if bytes_read == 0 {
-//        break;
-//    }
-//    for byte in buffer[..bytes_read].iter() {
-//        if let Some(checked) = match byte {
-//            65 | 97 => Some(0),
-//            67 | 99 => Some(1),
-//            71 | 103 => Some(3),
-//            84 | 116 => Some(2),
-//            _ => None,
-//        } {
-//            ret.push(checked);
-//        }
-//    }
-//}
-
-// 53.436009s in debug, 1.731694375s in release
-//let lookup = HashMap::<u8, u8>::from([
-//    (65, 0),  // A
-//    (97, 0),  // a
-//    (67, 1),  // C
-//    (99, 1),  // c
-//    (71, 3),  // G
-//    (103, 3), // g
-//    (84, 2),  // T
-//    (116, 2), // t
-//]);
-//let ret: Vec<u8> = input
-//    .bytes()
-//    .filter_map(|b| b.ok())
-//    .filter_map(|b| lookup.get(&b))
-//    .cloned()
-//    .collect();
-
-// 35.509148416s in debug, 1.198498916s in release
-//let lookup = HashMap::from([
-//    (65, 0),  // A
-//    (97, 0),  // a
-//    (67, 1),  // C
-//    (99, 1),  // c
-//    (71, 3),  // G
-//    (103, 3), // g
-//    (84, 2),  // T
-//    (116, 2), // t
-//]);
-
-//let mut buffer = vec![0; 65536];
-//loop {
-//    let bytes_read = input.read(&mut buffer)?;
-//    if bytes_read == 0 {
-//        break;
-//    }
-//    for byte in buffer[..bytes_read].iter() {
-//        if let Some(val) = lookup.get(byte) {
-//            ret.push(*val);
-//        }
-//    }
-//}
-
-// 10.935326709s in debug, 1.262571875s in release
-//for byte in input.bytes() {
-//    if let Some(val) = match byte.unwrap() {
-//        65 | 97 => Some(0),
-//        67 | 99 => Some(1),
-//        71 | 103 => Some(3),
-//        84 | 116 => Some(2),
-//        _ => None,
-//    } {
-//        ret.push(val);
-//    }
-//}
-
-// 10.899836542s in debug, 675.702666ms in release
-//for byte in input.bytes() {
-//    let base = BASE_LOOKUP[byte.unwrap() as usize];
-//    if base != 255 {
-//        ret.push(base);
-//    }
-//}
-
-// 18.955611916s in debug, 857.590666ms in release
-//let ret: Vec<u8> = input
-//    .bytes()
-//    .filter_map(|b| b.ok())
-//    .map(|b| BASE_LOOKUP[b as usize])
-//    .filter(|&b| b < 255)
-//    .collect();
-
-//debug!("Read input in {:?}", start.elapsed());
-
-//Ok(ret)
-//}
+    bytes
+}
 
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::SuffixArray;
+    use super::SuffixArrayBuilder;
     use anyhow::Result;
 
     #[test]
@@ -786,9 +527,9 @@ mod tests {
         let text = "TTTAGC".as_bytes().to_vec();
         let len = text.len();
         let max_context: Option<u32> = None;
-        let ignore_start_n = false;
-        let sa: SuffixArray<u32> =
-            SuffixArray::new(text, len as u32, max_context, ignore_start_n);
+        let is_dna = false;
+        let sa: SuffixArrayBuilder<u32> =
+            SuffixArrayBuilder::new(text, len as u32, max_context, is_dna);
 
         // The suffix "AGC$" is found before "GC$" and "C$
         assert_eq!(sa.upper_bound(3, &[5, 4]), None);
@@ -834,9 +575,9 @@ mod tests {
         let text = "TTTAGC".as_bytes().to_vec();
         let len = text.len();
         let max_context: Option<u32> = None;
-        let ignore_start_n = false;
-        let sa: SuffixArray<u32> =
-            SuffixArray::new(text, len as u32, max_context, ignore_start_n);
+        let is_dna = true;
+        let sa: SuffixArrayBuilder<u32> =
+            SuffixArrayBuilder::new(text, len as u32, max_context, is_dna);
 
         assert_eq!(sa.find_lcp(0 as u32, 1 as u32, 1 as u32), 1);
         assert_eq!(sa.find_lcp(0 as u32, 1 as u32, 10 as u32), 2);

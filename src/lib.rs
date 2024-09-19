@@ -10,16 +10,15 @@ use std::{
     ffi::OsStr,
     fmt::Debug,
     fs::File,
-    io::{BufWriter, Read, Write},
+    io::{BufWriter, Read},
     mem,
     num::NonZeroUsize,
     ops::Range,
     path::PathBuf,
-    slice,
     time::Instant,
 };
 //use substring::Substring;
-use suffix_array::{FromUsize, Int, SuffixArray};
+use suffix_array::{FromUsize, Int, SuffixArrayBuilder};
 //use u4::{AsNibbles, U4x2, U4};
 
 // --------------------------------------------------
@@ -101,13 +100,9 @@ pub struct CreateArgs {
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub struct ReadArgs {
-    /// Suffix array file
-    #[arg(short, long, value_name = "SA")]
-    pub array: String,
-
-    /// Sequence file
-    #[arg(short, long, value_name = "SEQ")]
-    pub sequence: String,
+    /// Sufr file
+    #[arg(value_name = "FILE")]
+    pub filename: String,
 
     /// Maximum length of sequence
     #[arg(short, long, value_name = "MAX", default_value = "0")]
@@ -146,6 +141,15 @@ impl ValueEnum for LogLevel {
 }
 
 type PositionList = Vec<Range<usize>>;
+
+#[derive(Debug)]
+struct SuffixArray {
+    version: u8,
+    is_dna: u8,
+    len: usize,
+    suffix_array: Vec<u32>,
+    lcp: Vec<u32>,
+}
 
 //#[derive(Debug)]
 //pub struct PackedSeq {
@@ -261,31 +265,8 @@ pub fn check(args: &CheckArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-fn is_less(s1: &[u8], s2: &[u8]) -> bool {
-    let lcp = s1.iter().zip(s2).take_while(|(a, b)| a == b).count();
-    match (s1.get(lcp), s2.get(lcp)) {
-        (Some(a), Some(b)) => a < b,
-        (None, Some(_)) => true,
-        _ => false,
-    }
-}
-
-#[test]
-fn test_is_less() {
-    assert!(is_less("$".as_bytes(), "A".as_bytes()));
-    assert!(is_less("A".as_bytes(), "C".as_bytes()));
-    assert!(!is_less("C".as_bytes(), "A".as_bytes()));
-    assert!(is_less("A".as_bytes(), "AA".as_bytes()));
-    assert!(!is_less("AA".as_bytes(), "A".as_bytes()));
-    assert!(is_less("AA".as_bytes(), "AC".as_bytes()));
-    assert!(!is_less("AC".as_bytes(), "AA".as_bytes()));
-    assert!(is_less("AA".as_bytes(), "AAC".as_bytes()));
-    assert!(!is_less("CA".as_bytes(), "AAC".as_bytes()));
-}
-
-// --------------------------------------------------
-pub fn read_input(filename: &str) -> Result<(Vec<u8>, Vec<String>)> {
-    let mut reader = parse_fastx_file(&filename)?;
+pub fn read_sequence_input(filename: &str) -> Result<(Vec<u8>, Vec<String>)> {
+    let mut reader = parse_fastx_file(filename)?;
     let mut seqs = vec![];
     let mut headers = vec![];
     let mut i = 0;
@@ -293,7 +274,7 @@ pub fn read_input(filename: &str) -> Result<(Vec<u8>, Vec<String>)> {
         let rec = rec?;
         if i > 0 {
             // Sequence delimiter
-            seqs.push(b'#');
+            seqs.push(b'?');
         }
         // Uppercase (mask w/32)
         let mut seq: Vec<u8> =
@@ -303,13 +284,14 @@ pub fn read_input(filename: &str) -> Result<(Vec<u8>, Vec<String>)> {
 
         headers.push(String::from_utf8(rec.id().to_vec())?);
     }
+
     // File delimiter
-    seqs.push(b'$');
+    seqs.push(b'#');
 
     Ok((seqs, headers))
 }
 
-//// --------------------------------------------------
+// --------------------------------------------------
 //pub fn read_input_u4(input: impl BufRead) -> PackedSeq {
 //    //text.push(b'$');
 //    let mut text: Vec<u8> = input
@@ -329,7 +311,18 @@ pub fn read_input(filename: &str) -> Result<(Vec<u8>, Vec<String>)> {
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
-    let (text, _headers) = read_input(&args.input)?;
+    // Read sequence input
+    let now = Instant::now();
+    let (text, _headers) = read_sequence_input(&args.input)?;
+    let len = text.len() as u64;
+    let num_fmt = NumberFormat::new();
+    info!(
+        "Read raw input of len {} in {:?}",
+        num_fmt.format(",.0", len as f64),
+        now.elapsed()
+    );
+    debug!("Raw input '{:?}'", text);
+
     //println!("{:?}", String::from_utf8(text.clone()));
     //println!("{}", headers.join(", "));
     //let packed = read_input_u4(&mut BufReader::new(File::open(&args.input)?));
@@ -341,23 +334,21 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     //        packed.get(i),
     //    );
     //}
-    let len = text.len() as u64;
-    let ignore_start_n = args.is_dna;
 
     if len < u32::MAX as u64 {
-        let sa: SuffixArray<u32> = SuffixArray::new(
+        let sa: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
             text,
             len as u32,
             args.max_context.map(|val| val as u32),
-            ignore_start_n,
+            args.is_dna,
         );
         _create(sa, args)?;
     } else {
-        let sa: SuffixArray<u64> = SuffixArray::new(
+        let sa: SuffixArrayBuilder<u64> = SuffixArrayBuilder::new(
             text,
             len,
             args.max_context.map(|val| val as u64),
-            ignore_start_n,
+            args.is_dna,
         );
         _create(sa, args)?;
     }
@@ -366,7 +357,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _create<T>(sa: SuffixArray<T>, args: &CreateArgs) -> Result<()>
+pub fn _create<T>(sa: SuffixArrayBuilder<T>, args: &CreateArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -394,48 +385,43 @@ where
     }
 
     let total_start = Instant::now();
-    let start = Instant::now();
-    let num_fmt = NumberFormat::new();
-    info!(
-        "Read input of len {} in {:?}s",
-        num_fmt.format(",.0", sa.len.to_usize() as f64),
-        start.elapsed().as_secs_f64()
-    );
-    debug!("Raw input '{:?}'", sa.text);
 
-    let sorted_sa = sa.partition_by_pivot(args.num_partitions);
-    info!(
-        "Suffix generated in {:?}s",
-        total_start.elapsed().as_secs_f64()
-    );
-    debug!("Sorted = {:?}", &sorted_sa);
+    // Sort
+    let (sorted_sa, lcp) = sa.sort(args.num_partitions);
+    info!("Suffix generated in {:?}s", total_start.elapsed());
 
     // Check
     if args.check {
-        let start = Instant::now();
-        let mut previous: Option<usize> = None;
-        let mut num_errors = 0;
-        for &cur in &sorted_sa {
-            if let Some(p) = previous {
-                if !is_less(
-                    &sa.text[p..sa.len.to_usize()],
-                    &sa.text[cur.to_usize()..sa.len.to_usize()],
-                ) {
-                    num_errors += 1;
-                }
-            }
-            previous = Some(cur.to_usize());
-        }
-
+        debug!("Sorted = {:?}", &sorted_sa);
+        debug!(
+            "Suffixes = {:#?}",
+            sorted_sa
+                .iter()
+                .map(|v| sa.string_at(v.to_usize()))
+                .collect::<Vec<_>>()
+        );
+        debug!("LCP = {lcp:#?}");
+        let now = Instant::now();
+        let num_errors = sa.check_order(&sorted_sa).len();
         info!(
             "Checked order, found {num_errors} error{} in {:?}",
             if num_errors == 1 { "" } else { "s" },
-            start.elapsed()
+            now.elapsed()
         );
+        let lcp_errors = sa.check_lcp(&sorted_sa, &lcp);
+        let num_errors = lcp_errors.len();
+        info!(
+            "Checked LCP, found {num_errors} error{} in {:?}",
+            if num_errors == 1 { "" } else { "s" },
+            now.elapsed()
+        );
+        if num_errors > 0 {
+            debug!("{lcp_errors:?}");
+        }
     }
 
     // Write out suffix array length
-    let start = Instant::now();
+    let now = Instant::now();
     let outfile = &args.output.clone().unwrap_or(format!(
         "{}.sufr",
         PathBuf::from(&args.input)
@@ -443,40 +429,10 @@ where
             .unwrap_or(OsStr::new("out"))
             .to_string_lossy()
     ));
-    let mut out = File::create(outfile)?;
-
-    // Write out suffix array length
-    let _ = out.write(&usize_to_bytes(sorted_sa.len()))?;
-
-    // Write out suffix array as raw bytes
-    let slice_u8: &[u8] = unsafe {
-        slice::from_raw_parts(
-            sorted_sa.as_ptr() as *const _,
-            sorted_sa.len() * mem::size_of::<T>(),
-        )
-    };
-    out.write_all(slice_u8)?;
-    info!("Wrote output file in {:?}", start.elapsed());
-
-    println!("See output file '{outfile}'");
+    sa.write(&sorted_sa, &lcp, outfile)?;
+    info!("Wrote output file '{outfile}' in {:?}", now.elapsed());
 
     Ok(())
-}
-
-// --------------------------------------------------
-fn usize_to_bytes(value: usize) -> Vec<u8> {
-    // Determine the size of usize in bytes
-    let size = std::mem::size_of::<usize>();
-
-    // Create a vector to hold the bytes
-    let mut bytes = Vec::with_capacity(size);
-
-    // Convert usize to bytes
-    for i in 0..size {
-        bytes.push((value >> (i * 8)) as u8);
-    }
-
-    bytes
 }
 
 // --------------------------------------------------
@@ -528,16 +484,19 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 
 // --------------------------------------------------
 pub fn read(args: &ReadArgs) -> Result<()> {
-    let start = Instant::now();
-    let sa = read_suffix_array(&args.array)?;
-    let sa_len = sa.len();
-    info!("Read SA in {:?}", start.elapsed());
+    let now = Instant::now();
+    let sufr_file = _read(&args.filename)?;
+    dbg!(sufr_file);
 
-    let (seq, _headers) = read_input(&args.sequence)?;
+    //let sa = read_suffix_array(&args.array)?;
+    //let sa_len = sa.len();
+    //info!("Read SA in {:?}", start.elapsed());
 
-    if seq.len() != sa_len {
-        bail!("SA len {sa_len} does not match sequence len {}", seq.len());
-    }
+    //let (seq, _headers) = read_input(&args.sequence)?;
+
+    //if seq.len() != sa_len {
+    //    bail!("SA len {sa_len} does not match sequence len {}", seq.len());
+    //}
 
     //let positions: Vec<_> = parse_pos(&args.extract)?
     //    .into_iter()
@@ -620,21 +579,27 @@ fn read_suffix_array_len(filename: &str) -> Result<u64> {
 }
 
 // --------------------------------------------------
-fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
+fn _read(filename: &str) -> Result<SuffixArray> {
     //fn read_suffix_array<T>(filename: &str) -> Result<Vec<T>>
     //where
     //    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
     //{
-    let mut sa_file =
+    let mut file =
         File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
-    // The first 64-bits of the file contain the size of the SA
+    let version = 1u8;
+    let is_dna = 1u8;
+    //let mut buffer = [0; 2];
+    //file.read_exact(&mut buffer)?;
+    //let version = buffer[0];
+    //let is_dna = buffer[1];
+
+    // The next 64-bits of the file contain the size of the SA
     let mut buffer = [0; 8];
-    sa_file.read_exact(&mut buffer)?;
+    file.read_exact(&mut buffer)?;
 
     // Convert the Vec<u8> to a usize
-    let sa_len = usize::from_ne_bytes(buffer);
-    println!("sa_len {sa_len}");
+    let len = usize::from_ne_bytes(buffer);
 
     // Allocate a buffer to hold the data
     //let suffix_array = if sa_len < u32::MAX as usize {
@@ -654,12 +619,19 @@ fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
     //};
 
     // Read the bytes into the buffer
-    //let mut buffer = vec![0u8; sa_len * mem::size_of::<usize>()];
-    //sa_file.read_exact(&mut buffer)?;
+    let mut buffer = vec![0u8; len * mem::size_of::<u32>()];
+    file.read_exact(&mut buffer)?;
+    let suffix_array: Vec<u32> = unsafe {
+        std::slice::from_raw_parts(buffer.as_ptr() as *const u32, len)
+            .to_vec()
+    };
 
-    //let suffix_array: &[u32] = unsafe {
-    //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
-    //};
+    let mut buffer = vec![0u8; len * mem::size_of::<u32>()];
+    file.read_exact(&mut buffer)?;
+    let lcp: Vec<u32> = unsafe {
+        std::slice::from_raw_parts(buffer.as_ptr() as *const u32, len)
+            .to_vec()
+    };
 
     // How can I have either 32 or 64 vectors?
     // Convert the buffer into a slice of i32 integers
@@ -671,6 +643,11 @@ fn read_suffix_array(filename: &str) -> Result<Vec<usize>> {
     //    std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
     //};
 
-    //Ok(suffix_array.to_vec())
-    Ok(vec![])
+    Ok(SuffixArray {
+        version,
+        is_dna,
+        len,
+        suffix_array,
+        lcp,
+    })
 }
