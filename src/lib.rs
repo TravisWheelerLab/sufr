@@ -72,7 +72,7 @@ pub struct CreateArgs {
     pub max_context: Option<usize>,
 
     /// Number of threads
-    #[arg(short, long, value_name = "THREADS", default_value = "16")]
+    #[arg(short, long, value_name = "THREADS")]
     pub threads: Option<usize>,
 
     /// Output file
@@ -376,13 +376,15 @@ where
         })
         .init();
 
-    if let Some(num) = args.threads {
-        info!("Using {num} thread{}", if num == 1 { "" } else { "s" });
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(num)
-            .build_global()
-            .unwrap();
-    }
+    let num_threads = args.threads.unwrap_or(num_cpus::get());
+    info!(
+        "Using {num_threads} thread{}",
+        if num_threads == 1 { "" } else { "s" }
+    );
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .unwrap();
 
     let total_start = Instant::now();
 
@@ -484,7 +486,6 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 
 // --------------------------------------------------
 pub fn read(args: &ReadArgs) -> Result<()> {
-    let now = Instant::now();
     let sufr_file = _read(&args.filename)?;
     dbg!(sufr_file);
 
