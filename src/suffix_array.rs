@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use bincode;
 use log::info;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
@@ -7,7 +8,7 @@ use std::{
     fmt::Debug,
     fmt::Display,
     fs::File,
-    io::{BufWriter, Write},
+    io::{BufWriter, Read, Write},
     mem,
     ops::{Add, Sub},
     slice,
@@ -57,6 +58,149 @@ impl Int for u64 {
 }
 
 // --------------------------------------------------
+#[derive(Debug)]
+//pub struct SuffixArray<T>
+//where
+//    T: Int + FromUsize<T> + Sized + Send + Sync,
+//{
+pub struct SuffixArray {
+    version: u8,
+    is_dna: u8,
+    len: usize,
+    num_sequences: usize,
+    sequence_starts: Vec<u32>,
+    headers: Vec<String>,
+    suffix_array: Vec<u32>,
+    lcp: Vec<u32>,
+    text: Vec<u8>,
+}
+
+//impl<T> SuffixArray<T>
+//where
+//    T: Int + FromUsize<T> + Sized + Send + Sync,
+//{
+impl SuffixArray {
+    pub fn read_length(filename: &str) -> Result<usize> {
+        let mut file =
+            File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+
+        // Meta (version, is_dna)
+        let mut buffer = [0; 2];
+        file.read_exact(&mut buffer)?;
+
+        // Length of SA
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        Ok(usize::from_ne_bytes(buffer))
+    }
+
+    pub fn read(filename: &str) -> Result<SuffixArray> {
+        //pub fn read(filename: &str) -> Result<SuffixArray<T>> {
+        //fn read_suffix_array<T>(filename: &str) -> Result<Vec<T>>
+        //where
+        //    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+        //{
+        let mut file =
+            File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+
+        // Meta (version, is_dna)
+        let mut buffer = [0; 2];
+        file.read_exact(&mut buffer)?;
+        let version = buffer[0];
+        let is_dna = buffer[1];
+
+        // Length of SA
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let len = usize::from_ne_bytes(buffer);
+
+        // Number of sequences
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let num_sequences = usize::from_ne_bytes(buffer);
+
+        // Allocate a buffer to hold the data
+        //let suffix_array = if sa_len < u32::MAX as usize {
+        //    let mut buffer = vec![0u8; sa_len * mem::size_of::<u32>()];
+        //    sa_file.read_exact(&mut buffer)?;
+        //    let sa: &[u32] = unsafe {
+        //        std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
+        //    };
+        //    sa
+        //} else {
+        //    let mut buffer = vec![0u8; sa_len * mem::size_of::<u64>()];
+        //    sa_file.read_exact(&mut buffer)?;
+        //    let sa: &[u64] = unsafe {
+        //        std::slice::from_raw_parts(buffer.as_ptr() as *const u64, sa_len)
+        //    };
+        //    sa
+        //};
+
+        // Sequence starts
+        let mut buffer = vec![0u8; num_sequences * mem::size_of::<u32>()];
+        file.read_exact(&mut buffer)?;
+        let sequence_starts: Vec<u32> = unsafe {
+            std::slice::from_raw_parts(
+                buffer.as_ptr() as *const u32,
+                num_sequences,
+            )
+            .to_vec()
+        };
+
+        // Suffix Array
+        let mut buffer = vec![0u8; len * mem::size_of::<u32>()];
+        file.read_exact(&mut buffer)?;
+        let suffix_array: Vec<u32> = unsafe {
+            std::slice::from_raw_parts(buffer.as_ptr() as *const u32, len)
+                .to_vec()
+        };
+
+        // LCP Array
+        let mut buffer = vec![0u8; len * mem::size_of::<u32>()];
+        file.read_exact(&mut buffer)?;
+        let lcp: Vec<u32> = unsafe {
+            std::slice::from_raw_parts(buffer.as_ptr() as *const u32, len)
+                .to_vec()
+        };
+
+        // Sequence -- add 2 for final "#" character delimiting text
+        let mut buffer = vec![0u8; (len + 2) * mem::size_of::<u8>()];
+        file.read_exact(&mut buffer)?;
+        let text: Vec<u8> = unsafe {
+            std::slice::from_raw_parts(buffer.as_ptr() as *const u8, len + 2)
+                .to_vec()
+        };
+
+        // How can I have either 32 or 64 vectors?
+        // Convert the buffer into a slice of i32 integers
+        //let suffix_array: &[u32] = unsafe {
+        //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
+        //};
+
+        //let suffix_array: &[usize] = unsafe {
+        //    std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
+        //};
+
+        // Headers are variable in length so they are at the end
+        let mut buffer = vec![];
+        file.read_to_end(&mut buffer)?;
+        let headers: Vec<String> = bincode::deserialize(&buffer)?;
+
+        Ok(SuffixArray {
+            version,
+            is_dna,
+            len,
+            num_sequences,
+            sequence_starts,
+            headers,
+            suffix_array,
+            lcp,
+            text,
+        })
+    }
+}
+
+// --------------------------------------------------
 #[derive(Clone, Debug)]
 pub struct SuffixArrayBuilder<T>
 where
@@ -73,6 +217,12 @@ where
 
     // Whether or not to skip suffixes that start with N
     pub is_dna: bool,
+
+    // Positions where sub-sequences start
+    pub sequence_starts: Vec<T>,
+
+    // Sequence headers
+    pub headers: Vec<String>,
 }
 
 impl<T> SuffixArrayBuilder<T>
@@ -85,12 +235,16 @@ where
         len: T,
         max_context: Option<T>,
         is_dna: bool,
+        sequence_starts: Vec<T>,
+        headers: Vec<String>,
     ) -> SuffixArrayBuilder<T> {
         SuffixArrayBuilder {
             text,
             len,
             max_context: max_context.unwrap_or(len),
             is_dna,
+            sequence_starts,
+            headers,
         }
     }
 
@@ -138,7 +292,6 @@ where
     //            }
     //        }
     //    }
-
     //    len
     //}
 
@@ -466,36 +619,57 @@ where
     }
 
     // --------------------------------------------------
-    pub fn write(&self, sa: &[T], lcp: &[T], outfile: &str) -> Result<()> {
+    pub fn write(&self, sa: &[T], lcp: &[T], outfile: &str) -> Result<usize> {
         let mut out = BufWriter::new(
             File::create(outfile).map_err(|e| anyhow!("{outfile}: {e}"))?,
         );
+        let mut bytes_out = 0;
 
         // Header: version/is_dna
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
-        let _ = out.write(&[OUTFILE_VERSION, is_dna]);
+        bytes_out += out.write(&[OUTFILE_VERSION, is_dna])?;
 
         // Suffix array length
-        let _ = out.write(&usize_to_bytes(sa.len()))?;
+        bytes_out += out.write(&usize_to_bytes(sa.len()))?;
 
-        // Write out suffix array/LCP as raw bytes
+        // Number of sequences
+        bytes_out +=
+            out.write(&usize_to_bytes(self.sequence_starts.len()))?;
+
+        // Sequence starts
+        let slice_starts: &[u8] = unsafe {
+            slice::from_raw_parts(
+                self.sequence_starts.as_ptr() as *const _,
+                self.sequence_starts.len() * mem::size_of::<T>(),
+            )
+        };
+        bytes_out += out.write(slice_starts)?;
+
+        // Suffix array
         let slice_sa: &[u8] = unsafe {
             slice::from_raw_parts(
                 sa.as_ptr() as *const _,
                 sa.len() * mem::size_of::<T>(),
             )
         };
-        out.write_all(slice_sa)?;
+        bytes_out += out.write(slice_sa)?;
 
+        // LCP array
         let slice_lcp: &[u8] = unsafe {
             slice::from_raw_parts(
                 lcp.as_ptr() as *const _,
                 lcp.len() * mem::size_of::<T>(),
             )
         };
-        out.write_all(slice_lcp)?;
+        bytes_out += out.write(slice_lcp)?;
 
-        Ok(())
+        // Sequence
+        bytes_out += out.write(&self.text)?;
+
+        // Headers are variable in length so they are at the end
+        bytes_out += out.write(&bincode::serialize(&self.headers)?)?;
+
+        Ok(bytes_out)
     }
 }
 
@@ -528,8 +702,16 @@ mod tests {
         let len = text.len();
         let max_context: Option<u32> = None;
         let is_dna = false;
-        let sa: SuffixArrayBuilder<u32> =
-            SuffixArrayBuilder::new(text, len as u32, max_context, is_dna);
+        let sequence_starts = vec![0];
+        let headers = vec!["1".to_string()];
+        let sa: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
+            text,
+            len as u32,
+            max_context,
+            is_dna,
+            sequence_starts,
+            headers,
+        );
 
         // The suffix "AGC$" is found before "GC$" and "C$
         assert_eq!(sa.upper_bound(3, &[5, 4]), None);
@@ -576,8 +758,16 @@ mod tests {
         let len = text.len();
         let max_context: Option<u32> = None;
         let is_dna = true;
-        let sa: SuffixArrayBuilder<u32> =
-            SuffixArrayBuilder::new(text, len as u32, max_context, is_dna);
+        let sequence_starts = vec![0];
+        let headers = vec!["1".to_string()];
+        let sa: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
+            text,
+            len as u32,
+            max_context,
+            is_dna,
+            sequence_starts,
+            headers,
+        );
 
         assert_eq!(sa.find_lcp(0 as u32, 1 as u32, 1 as u32), 1);
         assert_eq!(sa.find_lcp(0 as u32, 1 as u32, 10 as u32), 2);
