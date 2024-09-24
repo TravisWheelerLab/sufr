@@ -21,8 +21,8 @@ fn run(args: Cli) -> Result<()> {
             sufr::create(args)?;
             Ok(())
         }
-        Some(Command::Read(args)) => {
-            sufr::read(args)?;
+        Some(Command::Extract(args)) => {
+            sufr::extract(args)?;
             Ok(())
         }
         _ => unreachable!(),

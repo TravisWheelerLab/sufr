@@ -1,6 +1,7 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use bincode;
 use log::info;
+use needletail::parse_fastx_file;
 use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::{
@@ -16,6 +17,13 @@ use std::{
 };
 
 const OUTFILE_VERSION: u8 = 1;
+
+#[derive(Debug)]
+pub struct SequenceFileData {
+    pub seq: Vec<u8>,
+    pub start_positions: Vec<usize>,
+    pub headers: Vec<String>,
+}
 
 pub trait FromUsize<T> {
     fn from_usize(val: usize) -> T;
@@ -59,42 +67,26 @@ impl Int for u64 {
 
 // --------------------------------------------------
 #[derive(Debug)]
-//pub struct SuffixArray<T>
-//where
-//    T: Int + FromUsize<T> + Sized + Send + Sync,
-//{
-pub struct SuffixArray {
-    version: u8,
-    is_dna: u8,
-    len: usize,
-    num_sequences: usize,
-    sequence_starts: Vec<u32>,
-    headers: Vec<String>,
-    suffix_array: Vec<u32>,
-    lcp: Vec<u32>,
-    text: Vec<u8>,
+pub struct SuffixArray<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync,
+{
+    pub version: u8,
+    pub is_dna: bool,
+    pub len: T,
+    pub num_sequences: T,
+    pub sequence_starts: Vec<T>,
+    pub headers: Vec<String>,
+    pub suffix_array: Vec<T>,
+    pub lcp: Vec<T>,
+    pub text: Vec<u8>,
 }
 
-//impl<T> SuffixArray<T>
-//where
-//    T: Int + FromUsize<T> + Sized + Send + Sync,
-//{
-impl SuffixArray {
-    pub fn read_length(filename: &str) -> Result<usize> {
-        let mut file =
-            File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
-
-        // Meta (version, is_dna)
-        let mut buffer = [0; 2];
-        file.read_exact(&mut buffer)?;
-
-        // Length of SA
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        Ok(usize::from_ne_bytes(buffer))
-    }
-
-    pub fn read(filename: &str) -> Result<SuffixArray> {
+impl<T> SuffixArray<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync,
+{
+    pub fn read(filename: &str) -> Result<SuffixArray<T>> {
         //pub fn read(filename: &str) -> Result<SuffixArray<T>> {
         //fn read_suffix_array<T>(filename: &str) -> Result<Vec<T>>
         //where
@@ -107,7 +99,7 @@ impl SuffixArray {
         let mut buffer = [0; 2];
         file.read_exact(&mut buffer)?;
         let version = buffer[0];
-        let is_dna = buffer[1];
+        let is_dna = buffer[1] == 1;
 
         // Length of SA
         let mut buffer = [0; 8];
@@ -117,49 +109,33 @@ impl SuffixArray {
         // Number of sequences
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let num_sequences = usize::from_ne_bytes(buffer);
-
-        // Allocate a buffer to hold the data
-        //let suffix_array = if sa_len < u32::MAX as usize {
-        //    let mut buffer = vec![0u8; sa_len * mem::size_of::<u32>()];
-        //    sa_file.read_exact(&mut buffer)?;
-        //    let sa: &[u32] = unsafe {
-        //        std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
-        //    };
-        //    sa
-        //} else {
-        //    let mut buffer = vec![0u8; sa_len * mem::size_of::<u64>()];
-        //    sa_file.read_exact(&mut buffer)?;
-        //    let sa: &[u64] = unsafe {
-        //        std::slice::from_raw_parts(buffer.as_ptr() as *const u64, sa_len)
-        //    };
-        //    sa
-        //};
+        let num_sequences = T::from_usize(usize::from_ne_bytes(buffer));
 
         // Sequence starts
-        let mut buffer = vec![0u8; num_sequences * mem::size_of::<u32>()];
+        let mut buffer =
+            vec![0u8; num_sequences.to_usize() * mem::size_of::<T>()];
         file.read_exact(&mut buffer)?;
-        let sequence_starts: Vec<u32> = unsafe {
+        let sequence_starts: Vec<T> = unsafe {
             std::slice::from_raw_parts(
-                buffer.as_ptr() as *const u32,
-                num_sequences,
+                buffer.as_ptr() as *const _,
+                num_sequences.to_usize(),
             )
             .to_vec()
         };
 
         // Suffix Array
-        let mut buffer = vec![0u8; len * mem::size_of::<u32>()];
+        let mut buffer = vec![0u8; len * mem::size_of::<T>()];
         file.read_exact(&mut buffer)?;
-        let suffix_array: Vec<u32> = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const u32, len)
+        let suffix_array: Vec<T> = unsafe {
+            std::slice::from_raw_parts(buffer.as_ptr() as *const _, len)
                 .to_vec()
         };
 
         // LCP Array
-        let mut buffer = vec![0u8; len * mem::size_of::<u32>()];
+        let mut buffer = vec![0u8; len * mem::size_of::<T>()];
         file.read_exact(&mut buffer)?;
-        let lcp: Vec<u32> = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const u32, len)
+        let lcp: Vec<T> = unsafe {
+            std::slice::from_raw_parts(buffer.as_ptr() as *const _, len)
                 .to_vec()
         };
 
@@ -171,16 +147,6 @@ impl SuffixArray {
                 .to_vec()
         };
 
-        // How can I have either 32 or 64 vectors?
-        // Convert the buffer into a slice of i32 integers
-        //let suffix_array: &[u32] = unsafe {
-        //    std::slice::from_raw_parts(buffer.as_ptr() as *const u32, sa_len)
-        //};
-
-        //let suffix_array: &[usize] = unsafe {
-        //    std::slice::from_raw_parts(buffer.as_ptr() as *const usize, sa_len)
-        //};
-
         // Headers are variable in length so they are at the end
         let mut buffer = vec![];
         file.read_to_end(&mut buffer)?;
@@ -189,7 +155,7 @@ impl SuffixArray {
         Ok(SuffixArray {
             version,
             is_dna,
-            len,
+            len: T::from_usize(len),
             num_sequences,
             sequence_starts,
             headers,
@@ -674,6 +640,67 @@ where
 }
 
 // --------------------------------------------------
+// Utility function to find suffix array length to
+// determine whether to build u32 or u64
+pub fn read_suffix_length(filename: &str) -> Result<usize> {
+    let mut file =
+        File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+
+    // Meta (version, is_dna)
+    let mut buffer = [0; 2];
+    file.read_exact(&mut buffer)?;
+
+    let outfile_version = buffer[0];
+    if outfile_version == 1 {
+        // Length of SA is the next usize
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        Ok(usize::from_ne_bytes(buffer))
+    } else {
+        bail!("Unknown sufr version {outfile_version}");
+    }
+}
+
+// --------------------------------------------------
+// Utility function to read FASTA/Q file for sequence
+// data needed by SuffixArrayBuilder
+pub fn read_sequence_file(filename: &str) -> Result<SequenceFileData> {
+    let mut reader = parse_fastx_file(filename)?;
+    let mut seq = vec![];
+    let mut headers = vec![];
+    let mut start_positions = vec![];
+    let mut i = 0;
+    while let Some(rec) = reader.next() {
+        let rec = rec?;
+        if i > 0 {
+            // Sequence delimiter
+            seq.push(b'$');
+        }
+
+        // Record current length as start position
+        start_positions.push(seq.len());
+
+        // Uppercase (mask w/32)
+        let mut current: Vec<u8> =
+            rec.seq().iter().map(|b| b & 0b1011111).collect();
+        seq.append(&mut current);
+        i += 1;
+
+        headers.push(String::from_utf8(rec.id().to_vec())?);
+    }
+
+    // File delimiter
+    seq.push(b'#');
+
+    Ok(SequenceFileData {
+        seq,
+        start_positions,
+        headers,
+    })
+}
+
+// --------------------------------------------------
+// Utility function used by SuffixArrayBuilder
 fn usize_to_bytes(value: usize) -> Vec<u8> {
     // Determine the size of usize in bytes
     let size = std::mem::size_of::<usize>();
@@ -692,8 +719,143 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::SuffixArrayBuilder;
+    use super::{
+        read_sequence_file, read_suffix_length, usize_to_bytes, SuffixArray,
+        SuffixArrayBuilder,
+    };
     use anyhow::Result;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_usize_to_bytes() -> Result<()> {
+        assert_eq!(usize_to_bytes(usize::MIN), [0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(usize_to_bytes(1), [1, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(usize_to_bytes(10), [10, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(usize_to_bytes(100), [100, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(usize_to_bytes(1000), [232, 3, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(usize_to_bytes(10000), [16, 39, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(usize_to_bytes(100000), [160, 134, 1, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            usize_to_bytes(usize::MAX),
+            [255, 255, 255, 255, 255, 255, 255, 255]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_sequence_file() -> Result<()> {
+        let file = "tests/inputs/2.fa";
+        let res = read_sequence_file(file);
+        assert!(res.is_ok());
+        let data = res.unwrap();
+        assert_eq!(data.seq, b"ACGTACGT$ACGTACGT#");
+        assert_eq!(data.start_positions, [0, 9]);
+        assert_eq!(data.headers, ["ABC", "DEF"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_suffix_length() -> Result<()> {
+        let sufr_file = "tests/inputs/2.sufr";
+        let res = read_suffix_length(sufr_file);
+        assert!(res.is_ok());
+        let len = res.unwrap();
+        assert_eq!(len, 16);
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_read_suffix_file_32() -> Result<()> {
+        let seq_file = "tests/inputs/2.fa";
+        let seq_data = read_sequence_file(seq_file)?;
+        let max_context: Option<u32> = None;
+        let is_dna = true;
+        let start_positions: Vec<_> =
+            seq_data.start_positions.iter().map(|&v| v as u32).collect();
+        let len = seq_data.seq.len() as u32;
+        let builder: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
+            seq_data.seq,
+            len,
+            max_context,
+            is_dna,
+            start_positions,
+            seq_data.headers,
+        );
+
+        let sorted_sa =
+            [13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
+        let lcp = [0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
+        let outfile = NamedTempFile::new()?;
+        let outpath = &outfile.path().to_str().unwrap();
+        let res = builder.write(&sorted_sa, &lcp, outpath);
+        assert!(res.is_ok());
+        assert!(outfile.path().exists());
+
+        let res: Result<SuffixArray<u32>> = SuffixArray::read(outpath);
+        assert!(res.is_ok());
+
+        let sa = res.unwrap();
+        assert_eq!(sa.version, 1);
+        assert_eq!(sa.is_dna, true);
+        assert_eq!(sa.len, 16);
+        assert_eq!(sa.num_sequences, 2);
+        assert_eq!(sa.sequence_starts, [0, 9]);
+        assert_eq!(sa.headers, ["ABC", "DEF"]);
+        assert_eq!(sa.suffix_array, sorted_sa);
+        assert_eq!(sa.lcp, lcp);
+        assert_eq!(sa.text, b"ACGTACGT$ACGTACGT#");
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_read_suffix_file_64() -> Result<()> {
+        let seq_file = "tests/inputs/2.fa";
+        let seq_data = read_sequence_file(seq_file)?;
+        let max_context: Option<u64> = None;
+        let is_dna = true;
+        let start_positions: Vec<_> =
+            seq_data.start_positions.iter().map(|&v| v as u64).collect();
+        let len = seq_data.seq.len() as u64;
+        let builder: SuffixArrayBuilder<u64> = SuffixArrayBuilder::new(
+            seq_data.seq,
+            len,
+            max_context,
+            is_dna,
+            start_positions,
+            seq_data.headers,
+        );
+
+        let sorted_sa: Vec<u64> =
+            vec![13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3]
+                .iter()
+                .map(|&v| v as u64)
+                .collect();
+        let lcp: Vec<u64> =
+            vec![0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5]
+                .iter()
+                .map(|&v| v as u64)
+                .collect();
+        let outfile = NamedTempFile::new()?;
+        let outpath = &outfile.path().to_str().unwrap();
+        let res = builder.write(&sorted_sa, &lcp, outpath);
+        assert!(res.is_ok());
+        assert!(outfile.path().exists());
+
+        let res: Result<SuffixArray<u64>> = SuffixArray::read(outpath);
+        assert!(res.is_ok());
+
+        let sa = res.unwrap();
+        assert_eq!(sa.version, 1);
+        assert_eq!(sa.is_dna, true);
+        assert_eq!(sa.len, 16);
+        assert_eq!(sa.num_sequences, 2);
+        assert_eq!(sa.sequence_starts, [0, 9]);
+        assert_eq!(sa.headers, ["ABC", "DEF"]);
+        assert_eq!(sa.suffix_array, sorted_sa);
+        assert_eq!(sa.lcp, lcp);
+        assert_eq!(sa.text, b"ACGTACGT$ACGTACGT#");
+        Ok(())
+    }
 
     #[test]
     fn test_upper_bound() -> Result<()> {

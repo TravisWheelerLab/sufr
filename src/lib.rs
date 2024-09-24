@@ -4,20 +4,22 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use log::{debug, info};
-use needletail::parse_fastx_file;
 use regex::Regex;
 use std::{
     ffi::OsStr,
     fmt::Debug,
     fs::File,
-    io::{BufWriter, Read},
+    io::{self, BufWriter, Write},
     num::NonZeroUsize,
     ops::Range,
     path::PathBuf,
     time::Instant,
 };
 //use substring::Substring;
-use suffix_array::{FromUsize, Int, SuffixArray, SuffixArrayBuilder};
+use suffix_array::{
+    read_sequence_file, read_suffix_length, FromUsize, Int, SuffixArray,
+    SuffixArrayBuilder,
+};
 //use u4::{AsNibbles, U4x2, U4};
 
 // --------------------------------------------------
@@ -31,28 +33,28 @@ pub struct Cli {
 #[derive(Parser, Debug)]
 pub enum Command {
     /// Create suffix array
-    #[clap(alias = "ch")]
-    Check(CheckArgs),
-
-    /// Create suffix array
     #[clap(alias = "cr")]
     Create(CreateArgs),
 
+    /// Check correctness of suffix array/LCP
+    #[clap(alias = "ch")]
+    Check(CheckArgs),
+
     /// Read suffix array and extract sequences
     #[clap(alias = "re")]
-    Read(ReadArgs),
+    Extract(ExtractArgs),
 }
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub struct CheckArgs {
-    /// Suffix array file
-    #[arg(short, long, value_name = "SA")]
-    pub array: String,
+    /// Sufr file
+    #[arg(value_name = "SUFR")]
+    pub filename: String,
 
-    /// Sequence file
-    #[arg(short, long, value_name = "SEQ")]
-    pub sequence: String,
+    /// List errors
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -95,17 +97,17 @@ pub struct CreateArgs {
     pub log_file: Option<String>,
 }
 
-/// Read suffix array
+/// Extract suffixes from sufr file
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
-pub struct ReadArgs {
+pub struct ExtractArgs {
     /// Sufr file
-    #[arg(value_name = "FILE")]
+    #[arg(value_name = "SUFR")]
     pub filename: String,
 
     /// Maximum length of sequence
-    #[arg(short, long, value_name = "MAX", default_value = "0")]
-    pub max_len: usize,
+    #[arg(short, long, value_name = "MAX")]
+    pub max_len: Option<usize>,
 
     /// Extract positions
     #[arg(short, long, value_name = "EXTRACT", default_value = "1")]
@@ -140,13 +142,6 @@ impl ValueEnum for LogLevel {
 }
 
 type PositionList = Vec<Range<usize>>;
-
-#[derive(Debug)]
-pub struct SequenceData {
-    seq: Vec<u8>,
-    start_positions: Vec<usize>,
-    headers: Vec<String>,
-}
 
 //#[derive(Debug)]
 //pub struct PackedSeq {
@@ -222,79 +217,64 @@ pub struct SequenceData {
 
 // --------------------------------------------------
 pub fn check(args: &CheckArgs) -> Result<()> {
-    let len = read_suffix_array_len(&args.array)?;
-    dbg!(len);
-    //let sa = if len < u32::MAX as u64 {
-    //    let sa = read_suffix_array<u32>(&args.array)?;
-    //    sa
-    //} else {
-    //    let sa = read_suffix_array<u64>(&args.array)?;
-    //    sa
-    //};
-    //dbg!(&sa);
-    //let sa_len = sa.len();
-    //let seq = read_input(open(&args.sequence)?);
-
-    //if sa_len != seq.len() {
-    //    bail!("SA len {sa_len} does not match sequence len {}", seq.len());
-    //}
-
-    //let start = Instant::now();
-    //let mut previous: Option<usize> = None;
-    //let mut num_errors = 0;
-    //for (i, &cur) in sa.iter().enumerate() {
-    //    if let Some(p) = previous {
-    //        if !is_less(&seq[p..sa_len], &seq[cur..sa_len]) {
-    //            num_errors += 1;
-    //            println!("POS {}", i + 1);
-    //        }
-    //    }
-    //    previous = Some(cur);
-    //}
-
-    //println!(
-    //    "Found {num_errors} error{} in {:?}.",
-    //    if num_errors == 1 { "" } else { "s" },
-    //    start.elapsed()
-    //);
-
-    Ok(())
+    let len = read_suffix_length(&args.filename)? as u64;
+    if len < u32::MAX as u64 {
+        let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
+        let max_context: Option<u32> = None;
+        let builder: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
+            sa.text.clone(),
+            sa.text.len() as u32,
+            max_context,
+            sa.is_dna,
+            sa.sequence_starts.clone(),
+            sa.headers.clone(),
+        );
+        _check(sa, builder, args)
+    } else {
+        let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
+        let max_context: Option<u64> = None;
+        let builder: SuffixArrayBuilder<u64> = SuffixArrayBuilder::new(
+            sa.text.clone(),
+            sa.text.len() as u64,
+            max_context,
+            sa.is_dna,
+            sa.sequence_starts.clone(),
+            sa.headers.clone(),
+        );
+        _check(sa, builder, args)
+    }
 }
 
 // --------------------------------------------------
-pub fn read_sequence_input(filename: &str) -> Result<SequenceData> {
-    let mut reader = parse_fastx_file(filename)?;
-    let mut seq = vec![];
-    let mut headers = vec![];
-    let mut start_positions = vec![];
-    let mut i = 0;
-    while let Some(rec) = reader.next() {
-        let rec = rec?;
-        if i > 0 {
-            // Sequence delimiter
-            seq.push(b'?');
+pub fn _check<T>(
+    sa: SuffixArray<T>,
+    builder: SuffixArrayBuilder<T>,
+    args: &CheckArgs,
+) -> Result<()>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+{
+    let now = Instant::now();
+    let errors = builder.check_order(&sa.suffix_array);
+    let num_errors = errors.len();
+
+    if args.verbose {
+        for (i, pos) in errors.iter().enumerate() {
+            println!(
+                "{:3}: pos {pos:5} {}",
+                i + 1,
+                builder.string_at(pos.to_usize())
+            );
         }
-
-        // Record current length as start position
-        start_positions.push(seq.len());
-
-        // Uppercase (mask w/32)
-        let mut current: Vec<u8> =
-            rec.seq().iter().map(|b| b & 0b1011111).collect();
-        seq.append(&mut current);
-        i += 1;
-
-        headers.push(String::from_utf8(rec.id().to_vec())?);
     }
 
-    // File delimiter
-    seq.push(b'#');
+    println!(
+        "Found {num_errors} error{} in {:?}.",
+        if num_errors == 1 { "" } else { "s" },
+        now.elapsed()
+    );
 
-    Ok(SequenceData {
-        seq,
-        start_positions,
-        headers,
-    })
+    Ok(())
 }
 
 // --------------------------------------------------
@@ -319,7 +299,7 @@ pub fn read_sequence_input(filename: &str) -> Result<SequenceData> {
 pub fn create(args: &CreateArgs) -> Result<()> {
     // Read sequence input
     let now = Instant::now();
-    let seq_data = read_sequence_input(&args.input)?;
+    let seq_data = read_sequence_file(&args.input)?;
     let len = seq_data.seq.len() as u64;
     let num_fmt = NumberFormat::new();
     info!(
@@ -405,8 +385,6 @@ where
 
     let total_start = Instant::now();
 
-    debug!("{builder:?}");
-
     // Sort
     let (sorted_sa, lcp) = builder.sort(args.num_partitions);
     info!("Suffix generated in {:?}s", total_start.elapsed());
@@ -468,7 +446,6 @@ where
 // Ensures the number does not start with '+'.
 // Returns an index, which is a non-negative integer that is
 // one less than the number represented by the original input.
-#[allow(dead_code)]
 fn parse_index(input: &str) -> Result<usize> {
     let value_error = || anyhow!(r#"illegal list value: "{input}""#);
     input
@@ -483,7 +460,6 @@ fn parse_index(input: &str) -> Result<usize> {
 }
 
 // --------------------------------------------------
-#[allow(dead_code)]
 fn parse_pos(range: &str) -> Result<PositionList> {
     let range_re = Regex::new(r"^(\d+)-(\d+)$").unwrap();
     range
@@ -510,105 +486,45 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 }
 
 // --------------------------------------------------
-pub fn read(args: &ReadArgs) -> Result<()> {
-    let sa = SuffixArray::read(&args.filename)?;
-    dbg!(sa);
-
-    //let len = SuffixArray::read_length(&args.filename)? as u64;
-    //if len < u32::MAX as u64 {
-    //    let sa = SuffixArray<u32>::read(&args.filename)?;
-    //    dbg!(sa);
-    //} else {
-    //    let sa = SuffixArray<u64>::read(&args.filename)?;
-    //    dbg!(sa);
-    //}
-
-    //let sa = read_suffix_array(&args.array)?;
-    //let sa_len = sa.len();
-    //info!("Read SA in {:?}", start.elapsed());
-
-    //let (seq, _headers) = read_input(&args.sequence)?;
-
-    //if seq.len() != sa_len {
-    //    bail!("SA len {sa_len} does not match sequence len {}", seq.len());
-    //}
-
-    //let positions: Vec<_> = parse_pos(&args.extract)?
-    //    .into_iter()
-    //    .flat_map(|r| r.collect::<Vec<_>>())
-    //    .collect();
-
-    //let mut output: Box<dyn Write> = match &args.output {
-    //    Some(out_name) => Box::new(File::create(out_name)?),
-    //    _ => Box::new(io::stdout()),
-    //};
-
-    //for start in positions {
-    //    if let Some(&pos) = sa.get(start) {
-    //        //let pos = pos as usize;
-    //        let end = if args.max_len > 0 {
-    //            pos + args.max_len
-    //        } else {
-    //            sa_len
-    //        };
-
-    //        if args.number {
-    //            writeln!(
-    //                output,
-    //                "{:3}: {}",
-    //                start + 1,
-    //                seq.substring(pos, end)
-    //            )?;
-    //        } else {
-    //            writeln!(output, "{}", seq.substring(pos, end))?;
-    //        }
-    //    }
-    //}
-
-    // Read the rest of the file into memory
-    //let mut contents: Vec<u8> = vec![];
-    //sa_file.read_to_end(&mut contents)?;
-    //dbg!(&contents);
-
-    // Determine how many bits to take
-    //let mult = if (n as u64) < u32::MAX as u64 { 4 } else { 8 };
-    //dbg!(&mult);
-
-    //let raw_sa: Vec<_> = contents.drain(0..(n * mult)).collect();
-    //dbg!(&raw_sa[..20]);
-
-    //let chunked: Vec<_> = raw_sa.chunks(mult).collect();
-    //dbg!(&chunked[..20]);
-
-    //let converted: Vec<_> = chunked
-    //    .iter()
-    //    .map(|&v| usize::from_ne_bytes(v.into()))
-    //    .collect();
-
-    //.chunk_by(|chunk| usize::from_ne_bytes(chunk))
-    //.collect();
-
-    ////dbg!(&seq);
-
-    //for pos in suffix_array {
-    //    let p = pos as usize;
-    //    println!("{pos} = {}", seq[p]);
-    //    break;
-    //}
-
-    //let mut lcp: Vec<u8> = vec![0; *n as usize];
-    //file.read_exact(&mut lcp)?;
-    //dbg!(&lcp);
-
-    Ok(())
+pub fn extract(args: &ExtractArgs) -> Result<()> {
+    let len = read_suffix_length(&args.filename)? as u64;
+    if len < u32::MAX as u64 {
+        let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
+        _extract(sa, args)
+    } else {
+        let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
+        _extract(sa, args)
+    }
 }
 
 // --------------------------------------------------
-fn read_suffix_array_len(filename: &str) -> Result<u64> {
-    // The first 64-bits of the file contain the size of the SA
-    let mut sa_file =
-        File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
-    let mut buffer = [0; 8];
-    sa_file.read_exact(&mut buffer)?;
-    Ok(u64::from_ne_bytes(buffer))
+pub fn _extract<T>(sa: SuffixArray<T>, args: &ExtractArgs) -> Result<()>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+{
+    let positions: Vec<_> = parse_pos(&args.extract)?
+        .into_iter()
+        .flat_map(|r| r.collect::<Vec<_>>())
+        .collect();
+
+    let mut output: Box<dyn Write> = match &args.output {
+        Some(out_name) => Box::new(File::create(out_name)?),
+        _ => Box::new(io::stdout()),
+    };
+
+    let sa_len = sa.text.len();
+    for start in positions {
+        if let Some(&pos) = sa.suffix_array.get(start) {
+            let pos = pos.to_usize();
+            let end = args.max_len.map_or(sa_len, |len| pos + len);
+            let seq = String::from_utf8(sa.text[pos..end].to_vec())?;
+            if args.number {
+                writeln!(output, "{start:3}: {seq}")?;
+            } else {
+                writeln!(output, "{seq}")?;
+            }
+        }
+    }
+
+    Ok(())
 }
