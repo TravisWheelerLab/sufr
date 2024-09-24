@@ -1,9 +1,8 @@
-CHR1 = ../data/t2t-chr1.txt
-#CHR1 = /xdisk/twheeler/data/genomes/human/t2t/chr1.txt
-SEQ1 = tests/inputs/1.fa
-SEQ2 = tests/inputs/2.fa
-SEQ3 = tests/inputs/3.fa
-SUFR   = ./target/release/sufr
+CHR1 = ../data/chr1.fa
+SEQ1 = sufr/tests/inputs/1.fa
+SEQ2 = sufr/tests/inputs/2.fa
+SEQ3 = sufr/tests/inputs/3.fa
+SUFR = ./target/release/sufr
 
 #CREATE = cargo run -- create --log info
 CREATE = $(SUFR) create --log info
@@ -30,7 +29,7 @@ ecoli:
 	$(CREATE) ../data/ecoli.fa --dna --check
 
 chr1:
-	$(CREATE) ../data/chr1.fa --dna -n 64
+	$(CREATE) --dna -n 64 $(CHR1)
 
 valcache:
 	valgrind --tool=cachegrind ./target/release/sufr create ../data/chr1.fa --ignore-start-n -o chr1.sa --log info

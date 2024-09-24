@@ -49,10 +49,10 @@ $ ./target/release/sufr -h
 Usage: sufr [COMMAND]
 
 Commands:
-  check   Create suffix array
-  create  Create suffix array
-  read    Read suffix array and extract sequences
-  help    Print this message or the help of the given subcommand(s)
+  create   Create suffix array
+  check    Check correctness of suffix array/LCP
+  extract  Read suffix array and extract sequences
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help
@@ -60,13 +60,13 @@ Options:
 
 ## Code Overview
 
-The code is organized like standard Rust programs in the _src_ directory:
+The code is organized into a Cargo workspace (https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html):
 
-* _src/main.rs_: The main entry point for the `sufr` CLI
-* _src/lib.rs_: A library that implements the CLI functions
-* _src/suffix_array.rs_: A crate for interacting with suffix arrays
+* _libsufr/src/lib.rs_: Core functionality to sort a suffix array and create LCP
+* _sufr/src/main.rs_: The main entry point for the `sufr` CLI
+* _sufr/src/lib.rs_: A library that implements the CLI functions
 
-As the CLI usage shows, `sufr` currently supports three actions:
+As the CLI usage shows, `sufr` currently supports three actions, create, check, and extract.
 
 ### Create a suffix array
 
@@ -82,287 +82,65 @@ Arguments:
   <INPUT>  Input file
 
 Options:
-  -s, --subproblem-count <SUBPROBLEMS>  Subproblem count [default: 16]
-  -m, --max-context <CONTEXT>           Max context
-  -t, --threads <THREADS>               Number of threads [default: 16]
-  -o, --output <OUTPUT>                 Output file [default: sufr.sa]
-  -i, --ignore-start-n                  Ignore sequences starting with N
-  -c, --check                           Verify order
-  -l, --log <LOG>                       Log level [possible values: info, debug]
-      --log-file <LOG_FILE>             Log file
-  -h, --help                            Print help
-  -V, --version                         Print version
+  -n, --num-partitions <NUM_PARTS>  Subproblem count [default: 16]
+  -m, --max-context <CONTEXT>       Max context
+  -t, --threads <THREADS>           Number of threads
+  -o, --output <OUTPUT>             Output file
+  -d, --dna                         Input is DNA, ignore sequences starting with 'N'
+  -c, --check                       Verify order
+  -l, --log <LOG>                   Log level [possible values: info, debug]
+      --log-file <LOG_FILE>         Log file
+  -h, --help                        Print help
+  -V, --version                     Print version
 ```
 
-The input file is a required positional argument.
-Currently, the file should be a plain text file with a single genomic sequence on one line.
-The program will likely read FASTA/Q files in the future.
-E.g.:
+The input file is a required positional argument and should be a FASTA/Q-formatted file with one or more sequences.
 
 ```
-$ cat tests/inputs/seq1.txt
-CTCACC
+$ cat sufr/tests/inputs/2.fa
+>ABC
+acgtacgt
+>DEF
+acgtacgt
 ```
 
 The algorithm works as follows.
-First, read the input file as a string of `u8` bytes (note this could therefore fail if provided UTF-8) and uppercase the characters. 
-At present, no filtering is applied, i.e., screening for a particular genomic alphabet (DNA/RNA/AA) or ambiguity codes (IUPAC), which is why the sequence should include no line breaks (at present).
-To illustrate, consider the following input:
+First, read the input sequences into a string of `u8` bytes and uppercase the characters.
+Each sequence is separated by a dollar sign (`$`), and a final hash sign (`#`) is appended to the end.
+For instance, the preceding sequence has the following bytes and suffix positions:
 
 ```
-$ cat sample.txt
-CTNNCACC
+seq:    [ A,  C,  G,  T,  A,  C,  G,  T,  $,  A,  C,  G,  T,  A,  C,  G,  T,  #]
+bytes:  [65, 67, 71, 84, 65, 67, 71, 84, 36, 65, 67, 71, 84, 65, 67, 71, 84, 35]
+suffix: [ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17]
 ```
 
-The raw input to the program looks like the following:
+NOTE: If the `--dna` flag is present, suffixes are skipped if they begin with any character other than _A_, _C_, _G_, or _T_.
+
+Next, we partition the suffixes into `N` partitions by randomly selecting `--num-partitions` - 1 pivot suffixes, sorting them, and using the pivots to place each suffix into the highest bounded partition.
+The partitions are sorted using a merge sort algorithm that also generates an LCP (longest common prefix) array.
+The sorted suffix/LCP arrays are then concatenated to produce the final output.
+
+The preceding example is sorted into the following order/LCP:
 
 ```
-[67, 84, 78, 78, 67, 65, 67, 67, 36]
-  C   A   N   N   C   A   C   C   $
-```
-
-Next, determine the start positions of the suffixes starting from the first character and going to the end, which is noted with an appended `$`.
-The unsorted suffix array for the preceding sequence is as follows:
-
-```
-[ 0, 1, 2, 3, 4, 5, 6, 7, 8 ]
-  C  A  N  N  C  A  C  C  $
-```
-
-The suffixes are as follows:
-
-```
-0 CTNNCACC$
-1 TNNCACC$
-2 NNCACC$
-3 NCACC$
-4 CACC$
-5 ACC$
-6 CC$
-7 C$
-8 $
-```
-
-If `-i|--ignore-start-n` is true, then suffixes beginning with _N_ are skipped.
-Using the same example sequence, the suffixes would be as follows:
-
-```
-0 CTNNCACC$
-1 TNNCACC$
-4 CACC$
-5 ACC$
-6 CC$
-7 C$
-8 $
-```
-
-NOTE: Sequences with long runs of _N_ (such as the run of 18 million _Ns_ in the telomeric region of Hg38 chr1) require `--ignore-start-n` to finish.
-
-Split the input sequence into `-s|--subproblem-count` arrays of equal size and sort, optionally using the `-m|--max-context` argument to limit string comparisons to a length less than the entire string.
-For example, if you are aligning very short sequences, you might care to set a context of 16 or 20 base pairs.
-This will speed up the creation of the SA with the understand that the result will be only partially sorted.
-
-The `sort_subarrays` function returns the sorted SA, the LCP, and an evenly selected sample of suffixes that will be used to find pivots later in the algorithm.
-For example the previous sequence split into 3 subproblems will produce the following:
-
-```
-[
-    (          // This is the first subproblem
-        [      // This is the sorted SA
-            0, // CTNNCACC$ sorts before
-            1, // TNNCACC$
-        ],
-        [      // This is the LCP for the sorted SA
-            0, // The first element in the LCP is always 0
-            0, // TNNCACC$ has an LCP of 0 to CTNNCACC$
-        ],
-        [      // This is a sample from the SA for candidate pivots
-            1, // The suffix "TNNCACC$" was selected
-        ],
-    ),
-    (          // This is the second subproblem
-        [      
-            5, // ACC$ sorts before
-            4, // CACC$
-        ],
-        [
-            0, // First LCP always 0
-            0, // No common prefix from CACC$ to preceding value ACC$
-        ],
-        [
-            4, // CACC$ was selected for pivot
-        ],
-    ),
-    (          // This is the third subproblem
-        [
-            8, // $ sorts before
-            7, // C$ sorts before
-            6, // CC$
-        ],
-        [
-            0, // First LCP always 0
-            0, // No LCP from C$ to $
-            1, // LCP of 1 from CC$ to C$
-        ],
-        [
-            6, // CC$ was selected for pivot
-        ],
-    ),
-]
-```
-
-Next, select pivot suffixes from the subarray pivots.
-Using the preceding example, this would happen by first constructing an LCP array for the sampled suffixes to use in merging them all into a single sorted SA:
-
-```
-[
-    4, // CACC$
-    6, // CC$
-    1, // TNNCACC$
-],
-```
-
-Then select the final global pivots:
-
-```
-[
-    4, // CACC$
-    6, // CC$
-],
-```
-
-Next, search the original subarrays for ranges of values delimited by the pivots.
-For instance:
-
-```
-[
-    [             // For the subarray [ 0, 1 ] => [ CTNNCACC$, TNNCACC$ ]
-        None,     // Values <= CACC$
-        None,     // Values <= CC$
-        Some(     // Values >  CC$
-            0..2,
-        ),
-    ],
-    [             // For the subarray [ 5, 4 ] => [ ACC$, CACC$ ]
-        Some(     // Values <= CACC$
-            0..2, 
-        ),
-        None,     // Values <= CC$
-        None,     // Values >  CC$
-    ],
-    [             // For the subarray [ 8, 7, 6 ] => [ $, C$, CC$ ]
-        Some(     // Values <= CACC$
-            0..2,
-        ),
-        Some(     // Values <= CC$
-            2..3,
-        ),
-        None,     // Values >  CC$
-    ],
-]
-```
-
-Use these ranges to partition the original subarrays:
-
-```
-[
-    [              // For the subarray [ 0, 1 ] => [ CTNNCACC$, TNNCACC$ ]
-        None,      // Values <= CACC$
-        None,      // Values <= CC$
-        Some(      // Values >  CC$
-            [
-                0, // CTNNCACC$
-                1, // TNNCACC$
-            ],
-        ),
-    ],
-    [              // For the subarray [ 5, 4 ] => [ ACC$, CACC$ ]
-        Some(      // Values <= CACC$
-            [
-                5, // ACC$
-                4, // CACC$
-            ],
-        ),
-        None,      // Values <= CC$
-        None,      // Values >  CC$
-    ],
-    [              // For the subarray [ 8, 7, 6 ] => [ $, C$, CC$ ]
-        Some(      // Values <= CACC$
-            [
-                8, // $
-                7, // C$
-            ],
-        ),
-        Some(      // Values <= CC$
-            [
-                6, // CC$
-            ],
-        ),
-        None,      // Values >  CC$
-    ],
-]
-```
-
-Transpose these values to create sub-subarrays of relatively sorted suffixes:
-
-```
-[
-    [           // Values <= CACC$
-        [
-            5,  // ACC$
-            4,  // CACC$
-        ],
-        [
-            8,  // $
-            7,  // C$
-        ],
-    ],
-    [           // Values <= CC$
-        [
-            6,  // CC$
-        ],
-    ],
-    [           // Values >  CC$
-        [
-            0,  // CTNNCACC$
-            1,  // TNNCACC$
-        ],
-    ],
-]
-```
-
-Merge the sub-subarrays:
-
-```
-[
-    [      // Values <= CACC$
-        8, // $
-        5, // ACC$
-        7, // C$
-        4, // CACC$
-    ],
-    [      // Values <= CC$
-        6, // CC$
-    ],
-    [      // Values >  CC$
-        0, // CTNNCACC$
-        1, // TNNCACC$
-    ],
-]
-```
-
-Finally, concatenate the suffixes into the final sorted SA:
-
-```
-[
-    8, // $
-    5, // ACC$
-    7, // C$
-    4, // CACC$
-    6, // CC$
-    0, // CTNNCACC$
-    1, // TNNCACC$
-]
+   Pos  LCP   Suffix
+    13    0   ACGT#
+     4    4   ACGT$ACGTACGT#
+     9    4   ACGTACGT#
+     0    8   ACGTACGT$ACGTACGT#
+    14    0   CGT#
+     5    3   CGT$ACGTACGT#
+    10    3   CGTACGT#
+     1    7   CGTACGT$ACGTACGT#
+    15    0   GT#
+     6    2   GT$ACGTACGT#
+    11    2   GTACGT#
+     2    6   GTACGT$ACGTACGT#
+    16    0   T#
+     7    1   T$ACGTACGT#
+    12    1   TACGT#
+     3    5   TACGT$ACGTACGT#
 ```
 
 ### Read a suffix array
