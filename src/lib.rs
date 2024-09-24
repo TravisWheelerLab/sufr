@@ -18,7 +18,6 @@ use std::{
 //use substring::Substring;
 use suffix_array::{
     read_sequence_file, read_suffix_length, FromUsize, Int, SuffixArray,
-    SuffixArrayBuilder,
 };
 //use u4::{AsNibbles, U4x2, U4};
 
@@ -220,42 +219,20 @@ pub fn check(args: &CheckArgs) -> Result<()> {
     let len = read_suffix_length(&args.filename)? as u64;
     if len < u32::MAX as u64 {
         let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
-        let max_context: Option<u32> = None;
-        let builder: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
-            sa.text.clone(),
-            sa.text.len() as u32,
-            max_context,
-            sa.is_dna,
-            sa.sequence_starts.clone(),
-            sa.headers.clone(),
-        );
-        _check(sa, builder, args)
+        _check(sa, args)
     } else {
         let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
-        let max_context: Option<u64> = None;
-        let builder: SuffixArrayBuilder<u64> = SuffixArrayBuilder::new(
-            sa.text.clone(),
-            sa.text.len() as u64,
-            max_context,
-            sa.is_dna,
-            sa.sequence_starts.clone(),
-            sa.headers.clone(),
-        );
-        _check(sa, builder, args)
+        _check(sa, args)
     }
 }
 
 // --------------------------------------------------
-pub fn _check<T>(
-    sa: SuffixArray<T>,
-    builder: SuffixArrayBuilder<T>,
-    args: &CheckArgs,
-) -> Result<()>
+pub fn _check<T>(sa: SuffixArray<T>, args: &CheckArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
     let now = Instant::now();
-    let errors = builder.check_order(&sa.suffix_array);
+    let errors = sa.check_order();
     let num_errors = errors.len();
 
     if args.verbose {
@@ -263,7 +240,7 @@ where
             println!(
                 "{:3}: pos {pos:5} {}",
                 i + 1,
-                builder.string_at(pos.to_usize())
+                sa.string_at(pos.to_usize())
             );
         }
     }
@@ -349,65 +326,59 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     if len < u32::MAX as u64 {
         let start_positions: Vec<u32> =
             seq_data.start_positions.iter().map(|&v| v as u32).collect();
-        let sa: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
+        let sa: SuffixArray<u32> = SuffixArray::new(
             seq_data.seq,
             len as u32,
             args.max_context.map(|val| val as u32),
             args.is_dna,
             start_positions,
             seq_data.headers,
+            args.num_partitions,
         );
         _create(sa, args)?;
     } else {
         let start_positions: Vec<u64> =
             seq_data.start_positions.iter().map(|&v| v as u64).collect();
-        let sa: SuffixArrayBuilder<u64> = SuffixArrayBuilder::new(
+        let sa: SuffixArray<u64> = SuffixArray::new(
             seq_data.seq,
             len,
             args.max_context.map(|val| val as u64),
             args.is_dna,
             start_positions,
             seq_data.headers,
+            args.num_partitions,
         );
         _create(sa, args)?;
-    }
+    };
 
     Ok(())
 }
 
 // --------------------------------------------------
-pub fn _create<T>(
-    builder: SuffixArrayBuilder<T>,
-    args: &CreateArgs,
-) -> Result<()>
+// Helper for "create" that checks/writes SA/LCP
+pub fn _create<T>(sa: SuffixArray<T>, args: &CreateArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
-    let total_start = Instant::now();
-
-    // Sort
-    let (sorted_sa, lcp) = builder.sort(args.num_partitions);
-    info!("Suffix generated in {:?}s", total_start.elapsed());
-
     // Check
     if args.check {
-        debug!("Sorted = {:?}", &sorted_sa);
+        debug!("Sorted = {:?}", &sa.suffix_array);
         debug!(
             "Suffixes = {:#?}",
-            sorted_sa
+            sa.suffix_array
                 .iter()
-                .map(|v| builder.string_at(v.to_usize()))
+                .map(|v| sa.string_at(v.to_usize()))
                 .collect::<Vec<_>>()
         );
-        debug!("LCP = {lcp:#?}");
+        debug!("LCP = {:#?}", sa.lcp);
         let now = Instant::now();
-        let num_errors = builder.check_order(&sorted_sa).len();
+        let num_errors = sa.check_order().len();
         info!(
             "Checked order, found {num_errors} error{} in {:?}",
             if num_errors == 1 { "" } else { "s" },
             now.elapsed()
         );
-        let lcp_errors = builder.check_lcp(&sorted_sa, &lcp);
+        let lcp_errors = sa.check_lcp();
         let num_errors = lcp_errors.len();
         info!(
             "Checked LCP, found {num_errors} error{} in {:?}",
@@ -419,7 +390,6 @@ where
         }
     }
 
-    // Write out suffix array length
     let now = Instant::now();
     let outfile = &args.output.clone().unwrap_or(format!(
         "{}.sufr",
@@ -428,12 +398,12 @@ where
             .unwrap_or(OsStr::new("out"))
             .to_string_lossy()
     ));
-    let bytes = builder.write(&sorted_sa, &lcp, outfile)?;
+    let bytes_written = sa.write(outfile)?;
     let num_fmt = NumberFormat::new();
     info!(
         "Wrote {} byte{} to '{outfile}' in {:?}",
-        num_fmt.format(",.0", bytes as f64),
-        if bytes == 1 { "" } else { "s" },
+        num_fmt.format(",.0", bytes_written as f64),
+        if bytes_written == 1 { "" } else { "s" },
         now.elapsed()
     );
 

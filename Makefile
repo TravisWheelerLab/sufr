@@ -5,8 +5,8 @@ SEQ2 = tests/inputs/2.fa
 SEQ3 = tests/inputs/3.fa
 SUFR   = ./target/release/sufr
 
-CREATE = cargo run -- create --log info
-#CREATE = $(SUFR) create --log info
+#CREATE = cargo run -- create --log info
+CREATE = $(SUFR) create --log info
 CREATE_DEBUG = cargo run -- create --log debug
 
 #READ   = cargo run -- check
