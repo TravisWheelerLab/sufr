@@ -247,7 +247,9 @@ For instance:
 
 ```
 $ cargo run -- check 1.sufr
-Found 0 errors in 174.042µs.
+Found 0 errors in suffix array.
+Found 0 errors in LCP
+Finished checking in 264.709µs
 ```
 
 ## Testing

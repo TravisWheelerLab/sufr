@@ -1,5 +1,4 @@
 use anyhow::{anyhow, bail, Result};
-use bincode;
 use log::info;
 use needletail::parse_fastx_file;
 use rand::seq::SliceRandom;
@@ -546,8 +545,7 @@ where
         let mut buffer = vec![0u8; text_len * mem::size_of::<u8>()];
         file.read_exact(&mut buffer)?;
         let text: Vec<u8> = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const u8, text_len)
-                .to_vec()
+            std::slice::from_raw_parts(buffer.as_ptr(), text_len).to_vec()
         };
 
         // Headers are variable in length so they are at the end
@@ -884,30 +882,4 @@ mod tests {
 
         Ok(())
     }
-
-    //#[test]
-    //fn test_find_lcp() -> Result<()> {
-    //    //          012345
-    //    let text = "TTTAGC".as_bytes().to_vec();
-    //    let len = text.len();
-    //    let max_context: Option<u32> = None;
-    //    let is_dna = true;
-    //    let sequence_starts = vec![0];
-    //    let headers = vec!["1".to_string()];
-    //    let num_partitions = 1;
-    //    let sa: SuffixArray<u32> = SuffixArray::new(
-    //        text,
-    //        len as u32,
-    //        max_context,
-    //        is_dna,
-    //        sequence_starts,
-    //        headers,
-    //        num_partitions,
-    //    );
-
-    //    assert_eq!(sa.find_lcp(0 as u32, 1 as u32, 1 as u32), 1);
-    //    assert_eq!(sa.find_lcp(0 as u32, 1 as u32, 10 as u32), 2);
-
-    //    Ok(())
-    //}
 }

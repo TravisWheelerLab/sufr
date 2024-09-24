@@ -1,6 +1,9 @@
 use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
+use libsufr::{
+    read_sequence_file, read_suffix_length, FromUsize, Int, SuffixArray,
+};
 use log::{debug, info};
 use regex::Regex;
 use std::{
@@ -12,10 +15,6 @@ use std::{
     ops::Range,
     path::PathBuf,
     time::Instant,
-};
-//use substring::Substring;
-use libsufr::{
-    read_sequence_file, read_suffix_length, FromUsize, Int, SuffixArray,
 };
 //use u4::{AsNibbles, U4x2, U4};
 
@@ -244,11 +243,24 @@ where
     }
 
     println!(
-        "Found {num_errors} error{} in {:?}.",
+        "Found {num_errors} error{} in suffix array.",
         if num_errors == 1 { "" } else { "s" },
-        now.elapsed()
     );
 
+    let lcp_errors = sa.check_lcp();
+    let num_errors = lcp_errors.len();
+    println!(
+        "Found {num_errors} error{} in LCP",
+        if num_errors == 1 { "" } else { "s" },
+    );
+
+    if args.verbose {
+        for (i, pos) in lcp_errors.iter().enumerate() {
+            println!("{:3}: pos {pos:5}", i + 1,);
+        }
+    }
+
+    println!("Finished checking in {:?}.", now.elapsed());
     Ok(())
 }
 
