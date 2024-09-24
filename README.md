@@ -1,23 +1,22 @@
 # Parallel Construction of Suffix Arrays in Rust
 
 This code is inspired by [Cache-friendly, Parallel, and Samplesort-based Constructor for Suffix Arrays and LCP Arrays](doi.org/10.4230/LIPIcs.WABI.2023.16).
-I copied many ideas from the original C++ implementation [CaPS-SA](https://github.com/jamshed/CaPS-SA.git), most notably the mergesort that constructs the longest common prefix (LCP).
+We copied many ideas from the original C++ implementation [CaPS-SA](https://github.com/jamshed/CaPS-SA.git), most notably the mergesort that constructs the longest common prefix (LCP).
 
 The basic ideas are as follow:
 
 * Read the input file as `u8` (unsigned 8-bit integer values). 
-* Select the suffixes, which are normally 0 to the length of the text but there is the option to skip suffixes starting with _N_. Note: The original C++ uses 32-bit integers if the input length is less than 2^32 and 64-bit integers, otherwise. This Rust implementation currently only uses `usize` values, which defaults to 64-bit on 64-bit architectures. Copying this idea would certainly use less disk space for the resulting SA and may result in greater performance and less memory usage.
-* Split the input into subarrays and sort, also producing arrays for the LCP and ordered candidate suffixes for global pivots.
-* Merge the candidate pivots and downsample to select suffixes for global pivots.
-* Use the global pivots to partition the original subarrays into sub-subarrays containing the suffixes that fall into given ranges. E.g., all the values less than the first/lowest pivot suffix, then all the values greater than or equal to the first pivot and less than the second, and so on.
-* The resulting sub-subarrays are sorted that are merged. Because the values fall into nonoverlapping ranges, these subarrays can be appended in order to produce the final SA.
-* Produce a binary-encoded output file of `usize` values containing the length of the SA in the first position and the sorted SA values following.
+* Select the suffixes, which are normally 0 to the length of the text but there is the option to skip suffixes that don't start with A/C/G/T if the input is DNA. Note: Following the C++ implementation, we use 32-bit integers if the input text length is less than 2^32 and 64-bit integers, otherwise.
+* Create `N` number of suffix partitions by randomly choosing `N - 1` suffixes and copying the suffixes to the highest possible partition bounded by any pivot.
+* Sort the partitions in parallel.
+* Merge the partitions. Because the values fall into nonoverlapping ranges, these subarrays can be appended in order to produce the final SA.
+* Produce a binary-encoded output file with the suffix/LCP arrays and other metadata.
 
 Some advantages to this algorithm:
 
 * The various partitioned subarrays can be processed independently by separate threads, and no thread will ever have to merge the entire input.
 * Suffix comparisons are made faster by caching LCPs.
-* Keeping the input text as an array of 8-bit integers vs `char` (UTF-8) results in lower memory usage.
+* Using `u8` for the input text and 32-bits (when possible) for SA/LCP results in lower memory usage.
 
 ## Setup
 
