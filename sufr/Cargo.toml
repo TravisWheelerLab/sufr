@@ -1,0 +1,23 @@
+[package]
+name = "sufr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+assert_cmd = "2.0.16"
+bincode = "1.3.3"
+clap = { version = "4.5.13", features = ["derive"] }
+env_logger = "0.11.5"
+format_num = "0.1.0"
+libsufr = { path = "../libsufr" }
+log = "0.4.22"
+needletail = "0.5.1"
+num_cpus = "1.16.0"
+pretty_assertions = "1.4.0"
+rand = "0.8.5"
+rayon = "1.10.0"
+regex = "1.10.6"
+substring = "1.4.5"
+tempfile = "3.12.0"
+u4 = "0.1.2"
