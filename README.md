@@ -143,18 +143,66 @@ The preceding example is sorted into the following order/LCP:
      3    5   TACGT$ACGTACGT#
 ```
 
-### Read a suffix array
+The `sufr` CLI will create an output file containing a binary-encoded representation of the sorted suffix/LCP arrays along with the original sequence data and other metadata used to generate the arrays.
+For instance, with the _1.fa_ file, the default output file will be _1.sufr_:
 
 ```
-$ cargo run -- read -h
+$ cargo run -- create --log debug sufr/tests/inputs/1.fa -n 2 --dna --check
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/debug/sufr create --log debug sufr/tests/inputs/1.fa -n 2 --dna --check`
+[2024-09-24T21:04:14Z INFO  sufr] Using 8 threads
+[2024-09-24T21:04:14Z INFO  sufr] Read raw input of len 11 in 6.081625ms
+[2024-09-24T21:04:14Z DEBUG sufr] Raw input '[65, 67, 71, 84, 78, 78, 65, 67, 71, 84, 35]'
+[2024-09-24T21:04:14Z INFO  libsufr] Created unsorted suffix array of len 8 in 25.209µs
+[2024-09-24T21:04:14Z INFO  libsufr] Selected/sorted 1 pivots in 151.708µs
+[2024-09-24T21:04:14Z INFO  libsufr] Split into 2 partitions (avg 4) in 309µs
+[2024-09-24T21:04:14Z INFO  libsufr] Sorted partitions in 162.75µs
+[2024-09-24T21:04:14Z INFO  libsufr] Concatenated partitions in 17.041µs
+[2024-09-24T21:04:14Z INFO  libsufr] Fixed LCP boundaries in 6.708µs
+[2024-09-24T21:04:14Z INFO  libsufr] Total time to create suffix array: 890.208µs
+[2024-09-24T21:04:14Z DEBUG sufr] Sorted = [6, 0, 7, 1, 8, 2, 9, 3]
+[2024-09-24T21:04:14Z DEBUG sufr] Suffixes = [
+        "ACGT#",
+        "ACGTNNACGT#",
+        "CGT#",
+        "CGTNNACGT#",
+        "GT#",
+        "GTNNACGT#",
+        "T#",
+        "TNNACGT#",
+    ]
+[2024-09-24T21:04:14Z DEBUG sufr] LCP = [
+        0,
+        4,
+        0,
+        3,
+        0,
+        2,
+        0,
+        1,
+    ]
+[2024-09-24T21:04:14Z INFO  sufr] Checked order, found 0 errors in 6.584µs
+[2024-09-24T21:04:14Z INFO  sufr] Checked LCP, found 0 errors in 25.042µs
+[2024-09-24T21:04:14Z INFO  sufr] Wrote 130 bytes to '1.sufr' in 3.253ms
+```
+
+### Extracting suffix from a sufr file
+
+You can use the `extract` action to view the sorted arrays:
+
+```
+$ cargo run -- extract -h
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/debug/sufr extract -h`
 Read suffix array and extract sequences
 
-Usage: sufr read [OPTIONS] --array <SA> --sequence <SEQ>
+Usage: sufr extract [OPTIONS] <SUFR>
+
+Arguments:
+  <SUFR>  Sufr file
 
 Options:
-  -a, --array <SA>         Suffix array file
-  -s, --sequence <SEQ>     Sequence file
-  -m, --max-len <MAX>      Maximum length of sequence [default: 0]
+  -m, --max-len <MAX>      Maximum length of sequence
   -e, --extract <EXTRACT>  Extract positions [default: 1]
   -n, --number             Number output
   -o, --output <OUTPUT>    Output
@@ -162,25 +210,52 @@ Options:
   -V, --version            Print version
 ```
 
+For example, to view the first 10 suffixes from the _1.sufr_ file:
+
+```
+$ cargo run -- extract 1.sufr -e 1-10 -n
+  0: ACGT#
+  1: ACGTNNACGT#
+  2: CGT#
+  3: CGTNNACGT#
+  4: GT#
+  5: GTNNACGT#
+  6: T#
+  7: TNNACGT#
+```
+
 ### Check a suffix array
+
+Use the `check` action to verify the order of the suffix array:
 
 ```
 $ cargo run -- check -h
-Create suffix array
+Check correctness of suffix array/LCP
 
-Usage: sufr check --array <SA> --sequence <SEQ>
+Usage: sufr check [OPTIONS] <SUFR>
+
+Arguments:
+  <SUFR>  Sufr file
 
 Options:
-  -a, --array <SA>      Suffix array file
-  -s, --sequence <SEQ>  Sequence file
-  -h, --help            Print help
-  -V, --version         Print version
+  -v, --verbose  List errors
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+For instance:
+
+```
+$ cargo run -- check 1.sufr
+Found 0 errors in 174.042µs.
 ```
 
 ## Testing
 
 Run **`cargo test`**.
 
-## Author
+## Authors
 
-Ken Youens-Clark <kyclark@arizona.edu>
+* Ken Youens-Clark <kyclark@arizona.edu>
+* Jack Roddy <jroddy@pharmacy.arizona.edu>
+* Travis Wheeler <twheeler@arizona.edu>
