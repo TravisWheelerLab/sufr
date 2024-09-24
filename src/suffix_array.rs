@@ -87,11 +87,6 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
     pub fn read(filename: &str) -> Result<SuffixArray<T>> {
-        //pub fn read(filename: &str) -> Result<SuffixArray<T>> {
-        //fn read_suffix_array<T>(filename: &str) -> Result<Vec<T>>
-        //where
-        //    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-        //{
         let mut file =
             File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
@@ -101,10 +96,15 @@ where
         let version = buffer[0];
         let is_dna = buffer[1] == 1;
 
+        // Length of text
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let text_len = usize::from_ne_bytes(buffer);
+
         // Length of SA
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let len = usize::from_ne_bytes(buffer);
+        let sa_len = usize::from_ne_bytes(buffer);
 
         // Number of sequences
         let mut buffer = [0; 8];
@@ -124,26 +124,26 @@ where
         };
 
         // Suffix Array
-        let mut buffer = vec![0u8; len * mem::size_of::<T>()];
+        let mut buffer = vec![0u8; sa_len * mem::size_of::<T>()];
         file.read_exact(&mut buffer)?;
         let suffix_array: Vec<T> = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const _, len)
+            std::slice::from_raw_parts(buffer.as_ptr() as *const _, sa_len)
                 .to_vec()
         };
 
         // LCP Array
-        let mut buffer = vec![0u8; len * mem::size_of::<T>()];
+        let mut buffer = vec![0u8; sa_len * mem::size_of::<T>()];
         file.read_exact(&mut buffer)?;
         let lcp: Vec<T> = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const _, len)
+            std::slice::from_raw_parts(buffer.as_ptr() as *const _, sa_len)
                 .to_vec()
         };
 
         // Sequence -- add 2 for final "#" character delimiting text
-        let mut buffer = vec![0u8; (len + 2) * mem::size_of::<u8>()];
+        let mut buffer = vec![0u8; text_len * mem::size_of::<u8>()];
         file.read_exact(&mut buffer)?;
         let text: Vec<u8> = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const u8, len + 2)
+            std::slice::from_raw_parts(buffer.as_ptr() as *const u8, text_len)
                 .to_vec()
         };
 
@@ -155,7 +155,7 @@ where
         Ok(SuffixArray {
             version,
             is_dna,
-            len: T::from_usize(len),
+            len: T::from_usize(text_len),
             num_sequences,
             sequence_starts,
             headers,
@@ -595,7 +595,10 @@ where
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
         bytes_out += out.write(&[OUTFILE_VERSION, is_dna])?;
 
-        // Suffix array length
+        // Text length
+        bytes_out += out.write(&usize_to_bytes(self.len.to_usize()))?;
+
+        // SA length
         bytes_out += out.write(&usize_to_bytes(sa.len()))?;
 
         // Number of sequences
@@ -797,7 +800,7 @@ mod tests {
         let sa = res.unwrap();
         assert_eq!(sa.version, 1);
         assert_eq!(sa.is_dna, true);
-        assert_eq!(sa.len, 16);
+        assert_eq!(sa.len, 18);
         assert_eq!(sa.num_sequences, 2);
         assert_eq!(sa.sequence_starts, [0, 9]);
         assert_eq!(sa.headers, ["ABC", "DEF"]);
@@ -847,7 +850,7 @@ mod tests {
         let sa = res.unwrap();
         assert_eq!(sa.version, 1);
         assert_eq!(sa.is_dna, true);
-        assert_eq!(sa.len, 16);
+        assert_eq!(sa.len, 18);
         assert_eq!(sa.num_sequences, 2);
         assert_eq!(sa.sequence_starts, [0, 9]);
         assert_eq!(sa.headers, ["ABC", "DEF"]);

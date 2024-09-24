@@ -297,6 +297,31 @@ where
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
+    env_logger::Builder::new()
+        .filter_level(match args.log {
+            Some(LogLevel::Debug) => log::LevelFilter::Debug,
+            Some(LogLevel::Info) => log::LevelFilter::Info,
+            _ => log::LevelFilter::Off,
+        })
+        .target(match args.log_file {
+            // Optional log file, default to STDOUT
+            Some(ref filename) => env_logger::Target::Pipe(Box::new(
+                BufWriter::new(File::create(filename)?),
+            )),
+            _ => env_logger::Target::Stdout,
+        })
+        .init();
+
+    let num_threads = args.threads.unwrap_or(num_cpus::get());
+    info!(
+        "Using {num_threads} thread{}",
+        if num_threads == 1 { "" } else { "s" }
+    );
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .unwrap();
+
     // Read sequence input
     let now = Instant::now();
     let seq_data = read_sequence_file(&args.input)?;
@@ -358,31 +383,6 @@ pub fn _create<T>(
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
-    env_logger::Builder::new()
-        .filter_level(match args.log {
-            Some(LogLevel::Debug) => log::LevelFilter::Debug,
-            Some(LogLevel::Info) => log::LevelFilter::Info,
-            _ => log::LevelFilter::Off,
-        })
-        .target(match args.log_file {
-            // Optional log file, default to STDOUT
-            Some(ref filename) => env_logger::Target::Pipe(Box::new(
-                BufWriter::new(File::create(filename)?),
-            )),
-            _ => env_logger::Target::Stdout,
-        })
-        .init();
-
-    let num_threads = args.threads.unwrap_or(num_cpus::get());
-    info!(
-        "Using {num_threads} thread{}",
-        if num_threads == 1 { "" } else { "s" }
-    );
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(num_threads)
-        .build_global()
-        .unwrap();
-
     let total_start = Instant::now();
 
     // Sort

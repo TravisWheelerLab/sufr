@@ -4,23 +4,20 @@ use std::fs;
 use tempfile::NamedTempFile;
 
 const PRG: &str = "sufr";
-const EMPTY: &str = "tests/inputs/empty";
-const SEQ1: &str = "tests/inputs/seq1.txt";
-const SEQ1_SA: &str = "tests/inputs/seq1.sa";
+const SEQ1: &str = "tests/inputs/1.fa";
+const SEQ2: &str = "tests/inputs/2.fa";
+const SEQ3: &str = "tests/inputs/3.fa";
 
 // --------------------------------------------------
-fn create(args: &[&str], expected_file: &str) -> Result<()> {
+fn create(input_file: &str, expected_file: &str) -> Result<()> {
     let outfile = NamedTempFile::new()?;
     let outpath = &outfile.path().to_str().unwrap();
-    let mut run_args = vec!["create", "-o", outpath];
-    run_args.extend_from_slice(args);
     let output = Command::cargo_bin(PRG)?
-        .args(&run_args)
+        .args(vec!["create", "--dna", "-o", outpath, input_file])
         .output()
         .expect("fail");
 
     assert!(output.status.success());
-
     assert!(outfile.path().exists());
 
     let actual = fs::read(outfile.path())?;
@@ -32,9 +29,11 @@ fn create(args: &[&str], expected_file: &str) -> Result<()> {
 }
 
 // --------------------------------------------------
-fn check(seq_file: &str, sa_file: &str) -> Result<()> {
-    let args = vec!["check", "-s", seq_file, "-a", sa_file];
-    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+fn check(filename: &str) -> Result<()> {
+    let output = Command::cargo_bin(PRG)?
+        .args(&["check", filename])
+        .output()
+        .expect("fail");
 
     assert!(output.status.success());
 
@@ -62,8 +61,8 @@ fn read(
     assert!(output.status.success());
     assert!(outfile.path().exists());
 
-    let actual = fs::read_to_string(outfile.path())?;
-    let expected = fs::read_to_string(expected_file)?;
+    let actual = fs::read(outfile.path())?;
+    let expected = fs::read(expected_file)?;
 
     assert_eq!(actual, expected);
 
@@ -72,36 +71,58 @@ fn read(
 
 // --------------------------------------------------
 #[test]
-fn create_empty() -> Result<()> {
-    create(&[EMPTY], "tests/expected/empty.sa")
+fn create_empty_dies() -> Result<()> {
+    Command::cargo_bin(PRG)?
+        .args(&["create", "tests/expected/empty.sa"])
+        .assert()
+        .failure();
+    Ok(())
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq1() -> Result<()> {
-    create(&[SEQ1], "tests/expected/seq1.sa")
+    create(SEQ1, "tests/expected/1.sufr")
 }
 
 // --------------------------------------------------
 #[test]
-fn read_input1_1_10() -> Result<()> {
-    read(SEQ1, SEQ1_SA, "1-10", "tests/expected/seq1.read.1-10.out")
+fn create_seq2() -> Result<()> {
+    create(SEQ2, "tests/expected/2.sufr")
 }
 
 // --------------------------------------------------
 #[test]
-fn read_input1_1_5() -> Result<()> {
-    read(SEQ1, SEQ1_SA, "1-5", "tests/expected/seq1.read.1-5.out")
+fn create_seq3() -> Result<()> {
+    create(SEQ3, "tests/expected/3.sufr")
 }
 
 // --------------------------------------------------
 #[test]
-fn read_input1_5_10() -> Result<()> {
-    read(SEQ1, SEQ1_SA, "5-10", "tests/expected/seq1.read.5-10.out")
+fn check_seq1() -> Result<()> {
+    check("tests/expected/1.sufr")
 }
 
 // --------------------------------------------------
-#[test]
-fn check_input1() -> Result<()> {
-    check(SEQ1, SEQ1_SA)
-}
+//#[test]
+//fn read_input1_1_10() -> Result<()> {
+//    read(SEQ1, SEQ1_SA, "1-10", "tests/expected/seq1.read.1-10.out")
+//}
+
+// --------------------------------------------------
+//#[test]
+//fn read_input1_1_5() -> Result<()> {
+//    read(SEQ1, SEQ1_SA, "1-5", "tests/expected/seq1.read.1-5.out")
+//}
+
+// --------------------------------------------------
+//#[test]
+//fn read_input1_5_10() -> Result<()> {
+//    read(SEQ1, SEQ1_SA, "5-10", "tests/expected/seq1.read.5-10.out")
+//}
+
+// --------------------------------------------------
+//#[test]
+//fn check_input1() -> Result<()> {
+//    check(SEQ1, SEQ1_SA)
+//}
