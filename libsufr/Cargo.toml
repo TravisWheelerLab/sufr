@@ -2,6 +2,14 @@
 name = "libsufr"
 version = "0.1.0"
 edition = "2021"
+description = "Parallel Construction of Suffix Arrays in Rust"
+license-file = "LICENSE"
+repository = "https://github.com/TravisWheelerLab/sufr"
+authors = [
+    "Ken Youens-Clark <kyclark@arizona.edu>",
+    "Jack Roddy <jroddy@pharmacy.arizona.edu>",
+    "Travis Wheeler <twheeler@arizona.edu>"
+]
 
 [dependencies]
 anyhow = "1.0.86"
