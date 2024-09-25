@@ -8,7 +8,7 @@ use std::{
     fmt::Debug,
     fmt::Display,
     fs::File,
-    io::{BufWriter, Read, Write},
+    io::{Read, Write},
     mem,
     ops::{Add, Sub},
     slice,
@@ -569,10 +569,7 @@ where
 
     // --------------------------------------------------
     // Serialize SuffixArray to a ".sufr" file
-    pub fn write(&self, outfile: &str) -> Result<usize> {
-        let mut out = BufWriter::new(
-            File::create(outfile).map_err(|e| anyhow!("{outfile}: {e}"))?,
-        );
+    pub fn write(&self, mut out: impl Write) -> Result<usize> {
         let mut bytes_out = 0;
 
         // Header: version/is_dna
@@ -713,7 +710,8 @@ mod tests {
     use super::{
         read_sequence_file, read_suffix_length, usize_to_bytes, SuffixArray,
     };
-    use anyhow::Result;
+    use anyhow::{anyhow, Result};
+    use std::{fs::File, io::BufWriter};
     use tempfile::NamedTempFile;
 
     #[test]
@@ -779,7 +777,10 @@ mod tests {
         let lcp = [0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
-        let res = suffix_array.write(outpath);
+        let out = BufWriter::new(
+            File::create(outpath).map_err(|e| anyhow!("{outpath}: {e}"))?,
+        );
+        let res = suffix_array.write(out);
         assert!(res.is_ok());
         assert!(outfile.path().exists());
 
@@ -831,7 +832,10 @@ mod tests {
                 .collect();
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
-        let res = suffix_array.write(outpath);
+        let out = BufWriter::new(
+            File::create(outpath).map_err(|e| anyhow!("{outpath}: {e}"))?,
+        );
+        let res = suffix_array.write(out);
         assert!(res.is_ok());
         assert!(outfile.path().exists());
 

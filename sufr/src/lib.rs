@@ -408,7 +408,10 @@ where
             .unwrap_or(OsStr::new("out"))
             .to_string_lossy()
     ));
-    let bytes_written = sa.write(outfile)?;
+    let out = BufWriter::new(
+        File::create(outfile).map_err(|e| anyhow!("{outfile}: {e}"))?,
+    );
+    let bytes_written = sa.write(out)?;
     let num_fmt = NumberFormat::new();
     info!(
         "Wrote {} byte{} to '{outfile}' in {:?}",
