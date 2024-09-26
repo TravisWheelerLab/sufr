@@ -3,25 +3,11 @@
 This code is inspired by [Cache-friendly, Parallel, and Samplesort-based Constructor for Suffix Arrays and LCP Arrays](doi.org/10.4230/LIPIcs.WABI.2023.16).
 We copied many ideas from the original C++ implementation [CaPS-SA](https://github.com/jamshed/CaPS-SA.git), most notably the mergesort that constructs the longest common prefix (LCP).
 
-The basic ideas are as follow:
-
-* Read the input file as `u8` (unsigned 8-bit integer values). 
-* Select the suffixes, which are normally 0 to the length of the text but there is the option to skip suffixes that don't start with A/C/G/T if the input is DNA. Note: Following the C++ implementation, we use 32-bit integers if the input text length is less than 2^32 and 64-bit integers, otherwise.
-* Create `N` number of suffix partitions by randomly choosing `N - 1` suffixes and copying the suffixes to the highest possible partition bounded by any pivot.
-* Sort the partitions in parallel.
-* Merge the partitions. Because the values fall into nonoverlapping ranges, these subarrays can be appended in order to produce the final SA.
-* Produce a binary-encoded output file with the suffix/LCP arrays and other metadata.
-
-Some advantages to this algorithm:
-
-* The various partitioned subarrays can be processed independently by separate threads, and no thread will ever have to merge the entire input.
-* Suffix comparisons are made faster by caching LCPs.
-* Using `u8` for the input text and 32-bits (when possible) for SA/LCP results in lower memory usage.
-
 ## Setup
 
 * [Install Rust](https://www.rust-lang.org/tools/install)
-* Execute `cargo run` to build a debug version of the program from source
+* Run **`cargo install sufr`** to install the CLI
+* Alternately, execute `cargo run` in the source code directory to build a debug version of the program from source
 
 ```
 $ cargo run
