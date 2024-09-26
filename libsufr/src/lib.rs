@@ -102,7 +102,7 @@ where
             text.iter()
                 .enumerate()
                 .filter_map(|(i, c)| {
-                    b"ACGT".contains(c).then_some(T::from_usize(i))
+                    b"ACGT#".contains(c).then_some(T::from_usize(i))
                 })
                 .collect()
         } else {
@@ -773,8 +773,8 @@ mod tests {
         );
 
         let sorted_sa =
-            [13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
-        let lcp = [0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
+            [17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
+        let lcp = [0, 0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
         let out = BufWriter::new(
@@ -821,12 +821,12 @@ mod tests {
         );
 
         let sorted_sa: Vec<u64> =
-            vec![13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3]
+            vec![17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3]
                 .iter()
                 .map(|&v| v as u64)
                 .collect();
         let lcp: Vec<u64> =
-            vec![0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5]
+            vec![0, 0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5]
                 .iter()
                 .map(|&v| v as u64)
                 .collect();
