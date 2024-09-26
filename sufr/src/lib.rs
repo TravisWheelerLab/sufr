@@ -29,16 +29,16 @@ pub struct Cli {
 #[derive(Parser, Debug)]
 pub enum Command {
     /// Create suffix array
-    #[clap(alias = "cr")]
     Create(CreateArgs),
 
     /// Check correctness of suffix array/LCP
-    #[clap(alias = "ch")]
     Check(CheckArgs),
 
     /// Read suffix array and extract sequences
-    #[clap(alias = "re")]
     Extract(ExtractArgs),
+
+    /// Search a suffix array
+    Search(SearchArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -116,6 +116,19 @@ pub struct ExtractArgs {
     /// Output
     #[arg(short, long)]
     pub output: Option<String>,
+}
+
+/// Search a suffix array
+#[derive(Debug, Parser)]
+#[command(author, version, about)]
+pub struct SearchArgs {
+    /// Query
+    #[arg(value_name = "QUERY")]
+    pub query: String,
+
+    /// Sufr file
+    #[arg(value_name = "SUFR")]
+    pub filename: String,
 }
 
 #[derive(Debug, Clone)]
@@ -509,5 +522,27 @@ where
         }
     }
 
+    Ok(())
+}
+
+// --------------------------------------------------
+pub fn search(args: &SearchArgs) -> Result<()> {
+    let len = read_suffix_length(&args.filename)? as u64;
+    if len < u32::MAX as u64 {
+        let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
+        _search(sa, args)
+    } else {
+        let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
+        _search(sa, args)
+    }
+}
+
+// --------------------------------------------------
+pub fn _search<T>(sa: SuffixArray<T>, args: &SearchArgs) -> Result<()>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+{
+    let res = sa.search(&args.query);
+    dbg!(res);
     Ok(())
 }

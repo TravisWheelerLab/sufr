@@ -8,6 +8,8 @@ SUFR = ./target/release/sufr
 CREATE = $(SUFR) create --log info
 CREATE_DEBUG = cargo run -- create --log debug
 
+SEARCH = cargo run -- search
+
 #READ   = cargo run -- check
 #CHECK  = cargo run -- read
 #CHECK  = $(SUFR) read
@@ -15,6 +17,9 @@ CREATE_DEBUG = cargo run -- create --log debug
 
 perf:
 	perf record --call-graph dwarf $(SUFR) create -t 16 --log info $(CHR1)
+
+r1:
+	$(SEARCH) C 1.sufr
 
 s1:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --check

@@ -102,7 +102,7 @@ where
             text.iter()
                 .enumerate()
                 .filter_map(|(i, c)| {
-                    b"ACGT".contains(c).then_some(T::from_usize(i))
+                    b"ACGT#".contains(c).then_some(T::from_usize(i))
                 })
                 .collect()
         } else {
@@ -303,22 +303,6 @@ where
 
         self.suffix_array = sa;
         self.lcp = lcp;
-    }
-
-    // --------------------------------------------------
-    #[inline(always)]
-    fn select_pivots(&self, suffixes: &[T], num_pivots: usize) -> Vec<T> {
-        let mut rng = &mut rand::thread_rng();
-        let mut pivot_sa: Vec<_> = suffixes
-            .choose_multiple(&mut rng, num_pivots)
-            .cloned()
-            .collect();
-        let mut sa_w = pivot_sa.clone();
-        let len = pivot_sa.len();
-        let mut lcp = vec![T::default(); len];
-        let mut lcp_w = vec![T::default(); len];
-        self.merge_sort(&mut sa_w, &mut pivot_sa, len, &mut lcp, &mut lcp_w);
-        pivot_sa
     }
 
     // --------------------------------------------------
@@ -565,6 +549,78 @@ where
             lcp,
             text,
         })
+    }
+
+    // --------------------------------------------------
+    // Search SuffixArray
+    pub fn search(&self, query: &str) -> Vec<T> {
+        let now = Instant::now();
+        let res = vec![];
+        let suffixes: Vec<_> = self
+            .suffix_array
+            .iter()
+            .zip(
+                self.suffix_array
+                    .iter()
+                    .map(|p| self.string_at(p.to_usize())),
+            )
+            .collect();
+        dbg!(suffixes);
+
+        let mut idx_left = 0;
+        let mut idx_right = self.suffix_array.len();
+        let mut mid = idx_right / 2;
+
+        loop {
+            let mid_sa = self.suffix_array[mid];
+            let mid_val = self.string_at(mid_sa.to_usize());
+            println!("idx_left {idx_left} idx_right {idx_right} mid {mid}");
+            println!("'{query}' {:?} '{mid_val}'", query.cmp(&mid_val));
+
+            match query.cmp(&mid_val) {
+                Ordering::Greater => {
+                    idx_left = mid + 1;
+                    mid = idx_left + ((idx_right - idx_left) / 2);
+                    println!("move idx_left {idx_left} mid {mid}");
+                }
+                Ordering::Less => {
+                    idx_right = mid - 1;
+                    mid = idx_left + ((idx_right - idx_left) / 2);
+                }
+                Ordering::Equal => {
+                    break;
+                }
+            }
+
+            if idx_left >= mid || idx_right <= mid {
+                break;
+            }
+        }
+
+        let num_found = res.len();
+        info!(
+            "Found {num_found} matche{} in {:?}",
+            if num_found == 1 { "" } else { "s" },
+            now.elapsed()
+        );
+
+        res
+    }
+
+    // --------------------------------------------------
+    #[inline(always)]
+    fn select_pivots(&self, suffixes: &[T], num_pivots: usize) -> Vec<T> {
+        let mut rng = &mut rand::thread_rng();
+        let mut pivot_sa: Vec<_> = suffixes
+            .choose_multiple(&mut rng, num_pivots)
+            .cloned()
+            .collect();
+        let mut sa_w = pivot_sa.clone();
+        let len = pivot_sa.len();
+        let mut lcp = vec![T::default(); len];
+        let mut lcp_w = vec![T::default(); len];
+        self.merge_sort(&mut sa_w, &mut pivot_sa, len, &mut lcp, &mut lcp_w);
+        pivot_sa
     }
 
     // --------------------------------------------------
