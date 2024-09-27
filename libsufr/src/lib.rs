@@ -5,12 +5,11 @@ use rand::seq::SliceRandom;
 use rayon::prelude::*;
 use std::{
     cmp::{max, min, Ordering},
-    fmt::Debug,
-    fmt::Display,
+    fmt::{Debug, Display},
     fs::File,
     io::{Read, Write},
     mem,
-    ops::{Add, Sub},
+    ops::{Add, Div, Sub},
     slice,
     time::Instant,
 };
@@ -44,6 +43,7 @@ pub trait Int:
     Debug
     + Add<Output = Self>
     + Sub<Output = Self>
+    + Div<Output = Self>
     + Copy
     + Default
     + Display
@@ -553,56 +553,112 @@ where
 
     // --------------------------------------------------
     // Search SuffixArray
-    pub fn search(&self, query: &str) -> Vec<T> {
-        let now = Instant::now();
-        let res = vec![];
-        let suffixes: Vec<_> = self
-            .suffix_array
-            .iter()
+    pub fn search(&self, query: &str) -> (Option<usize>, Option<usize>) {
+        let suffixes: Vec<_> = (0..self.suffix_array.len())
             .zip(
                 self.suffix_array
                     .iter()
                     .map(|p| self.string_at(p.to_usize())),
             )
+            .map(|(p, v)| format!("{p:2}: {v}"))
             .collect();
-        dbg!(suffixes);
+        println!("{}", suffixes.join("\n"));
+        let qry = query.as_bytes();
+        let n = self.suffix_array.len();
+        (
+            self.suffix_search_first(qry, 0, n - 1),
+            self.suffix_search_last(qry, 0, n - 1, n),
+        )
+    }
 
-        let mut idx_left = 0;
-        let mut idx_right = self.suffix_array.len();
-        let mut mid = idx_right / 2;
+    // --------------------------------------------------
+    fn suffix_search_first(
+        &self,
+        qry: &[u8],
+        low: usize,
+        high: usize,
+    ) -> Option<usize> {
+        if high >= low {
+            let mid = low + ((high - low) / 2);
+            let mid_cmp =
+                self.compare(qry, self.suffix_array[mid].to_usize());
 
-        loop {
-            let mid_sa = self.suffix_array[mid];
-            let mid_val = self.string_at(mid_sa.to_usize());
-            println!("idx_left {idx_left} idx_right {idx_right} mid {mid}");
-            println!("'{query}' {:?} '{mid_val}'", query.cmp(&mid_val));
-
-            match query.cmp(&mid_val) {
-                Ordering::Greater => {
-                    idx_left = mid + 1;
-                    mid = idx_left + ((idx_right - idx_left) / 2);
-                    println!("move idx_left {idx_left} mid {mid}");
-                }
-                Ordering::Less => {
-                    idx_right = mid - 1;
-                    mid = idx_left + ((idx_right - idx_left) / 2);
-                }
-                Ordering::Equal => {
-                    break;
-                }
+            if mid_cmp == Ordering::Equal
+                && (mid == 0
+                    || self
+                        .compare(qry, self.suffix_array[mid - 1].to_usize())
+                        == Ordering::Greater)
+            {
+                Some(mid)
+            } else if mid_cmp == Ordering::Greater {
+                self.suffix_search_first(qry, mid + 1, high)
+            } else {
+                self.suffix_search_first(qry, low, mid)
             }
-
-            if idx_left >= mid || idx_right <= mid {
-                break;
-            }
+        } else {
+            None
         }
+    }
 
-        let num_found = res.len();
-        info!(
-            "Found {num_found} matche{} in {:?}",
-            if num_found == 1 { "" } else { "s" },
-            now.elapsed()
-        );
+    // --------------------------------------------------
+    fn suffix_search_last(
+        &self,
+        qry: &[u8],
+        low: usize,
+        high: usize,
+        n: usize,
+    ) -> Option<usize> {
+        if high >= low {
+            let mid = low + ((high - low) / 2);
+            let mid_cmp =
+                self.compare(qry, self.suffix_array[mid].to_usize());
+
+            if mid_cmp == Ordering::Equal
+                && (mid == n - 1
+                    || self
+                        .compare(qry, self.suffix_array[mid + 1].to_usize())
+                        == Ordering::Less)
+            {
+                Some(mid)
+            } else if mid_cmp == Ordering::Less {
+                self.suffix_search_last(qry, low, mid - 1, n)
+            } else {
+                self.suffix_search_last(qry, mid + 1, high, n)
+            }
+        } else {
+            None
+        }
+    }
+
+    // --------------------------------------------------
+    fn compare(&self, query: &[u8], suffix_pos: usize) -> Ordering {
+        let len_lcp = query
+            .iter()
+            .zip(self.text.get(suffix_pos..).unwrap())
+            .map_while(|(a, b)| (a == b).then_some(a))
+            .count();
+
+        //println!(
+        //    ">>> '{}' => {suffix_pos} '{}' = LCP {len_lcp}",
+        //    String::from_utf8(query.to_vec()).unwrap(),
+        //    self.string_at(suffix_pos),
+        //);
+
+        let res =
+            match (query.get(len_lcp), self.text.get(suffix_pos + len_lcp)) {
+                // Entire query matched
+                (None, _) => Ordering::Equal,
+                // Compare next char
+                (Some(a), Some(b)) => a.cmp(b),
+                _ => unreachable!(),
+            };
+
+        //println!(
+        //    "cmp {:?}/{:?} = {:?}",
+        //    query.get(len_lcp).map(|v| *v as char),
+        //    self.text.get(suffix_pos + len_lcp).map(|v| *v as char),
+        //    res
+        //);
 
         res
     }
@@ -845,7 +901,7 @@ mod tests {
 
         let sa = res.unwrap();
         assert_eq!(sa.version, 1);
-        assert_eq!(sa.is_dna, true);
+        assert!(sa.is_dna);
         assert_eq!(sa.len, 18);
         assert_eq!(sa.num_sequences, 2);
         assert_eq!(sa.sequence_starts, [0, 9]);
@@ -876,16 +932,10 @@ mod tests {
             num_partitions,
         );
 
-        let sorted_sa: Vec<u64> =
-            vec![17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3]
-                .iter()
-                .map(|&v| v as u64)
-                .collect();
-        let lcp: Vec<u64> =
-            vec![0, 0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5]
-                .iter()
-                .map(|&v| v as u64)
-                .collect();
+        let sorted_sa: &[u64] =
+            &[17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
+        let lcp: &[u64] =
+            &[0, 0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
         let out = BufWriter::new(
@@ -900,7 +950,7 @@ mod tests {
 
         let sa = res.unwrap();
         assert_eq!(sa.version, 1);
-        assert_eq!(sa.is_dna, true);
+        assert!(sa.is_dna);
         assert_eq!(sa.len, 18);
         assert_eq!(sa.num_sequences, 2);
         assert_eq!(sa.sequence_starts, [0, 9]);

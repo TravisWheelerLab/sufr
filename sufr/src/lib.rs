@@ -129,6 +129,14 @@ pub struct SearchArgs {
     /// Sufr file
     #[arg(value_name = "SUFR")]
     pub filename: String,
+
+    /// Log level
+    #[arg(short, long)]
+    pub log: Option<LogLevel>,
+
+    /// Log file
+    #[arg(long)]
+    pub log_file: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -527,6 +535,20 @@ where
 
 // --------------------------------------------------
 pub fn search(args: &SearchArgs) -> Result<()> {
+    env_logger::Builder::new()
+        .filter_level(match args.log {
+            Some(LogLevel::Debug) => log::LevelFilter::Debug,
+            Some(LogLevel::Info) => log::LevelFilter::Info,
+            _ => log::LevelFilter::Off,
+        })
+        .target(match args.log_file {
+            // Optional log file, default to STDOUT
+            Some(ref filename) => env_logger::Target::Pipe(Box::new(
+                BufWriter::new(File::create(filename)?),
+            )),
+            _ => env_logger::Target::Stdout,
+        })
+        .init();
     let len = read_suffix_length(&args.filename)? as u64;
     if len < u32::MAX as u64 {
         let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
@@ -542,7 +564,8 @@ pub fn _search<T>(sa: SuffixArray<T>, args: &SearchArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
+    let now = Instant::now();
     let res = sa.search(&args.query);
-    dbg!(res);
+    info!("Found '{}' at {res:?} in {:?}", args.query, now.elapsed());
     Ok(())
 }
