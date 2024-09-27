@@ -11,7 +11,6 @@ use std::{
     fmt::Debug,
     fs::File,
     io::{self, BufWriter, Write},
-    num::NonZeroUsize,
     ops::Range,
     path::PathBuf,
     time::Instant,
@@ -446,21 +445,13 @@ where
 
 // --------------------------------------------------
 // Parse an index from a string representation of an integer.
-// Ensures the number is non-zero.
 // Ensures the number does not start with '+'.
-// Returns an index, which is a non-negative integer that is
-// one less than the number represented by the original input.
 fn parse_index(input: &str) -> Result<usize> {
     let value_error = || anyhow!(r#"illegal list value: "{input}""#);
     input
         .starts_with('+')
         .then(|| Err(value_error()))
-        .unwrap_or_else(|| {
-            input
-                .parse::<NonZeroUsize>()
-                .map(|n| usize::from(n) - 1)
-                .map_err(|_| value_error())
-        })
+        .unwrap_or_else(|| input.parse::<usize>().map_err(|_| value_error()))
 }
 
 // --------------------------------------------------
@@ -518,12 +509,14 @@ where
 
     let sa_len = sa.text.len();
     for start in positions {
-        if let Some(&pos) = sa.suffix_array.get(start) {
-            let pos = pos.to_usize();
-            let end = args.max_len.map_or(sa_len, |len| pos + len);
+        if let Some(pos) = sa.suffix_array.get(start).map(|v| v.to_usize()) {
+            let mut end = args.max_len.map_or(sa_len, |len| pos + len);
+            if end > sa_len {
+                end = sa_len
+            }
             let seq = String::from_utf8(sa.text[pos..end].to_vec())?;
             if args.number {
-                writeln!(output, "{start:3}: {seq}")?;
+                writeln!(output, "{pos:3}: {seq}")?;
             } else {
                 writeln!(output, "{seq}")?;
             }
@@ -549,6 +542,7 @@ pub fn search(args: &SearchArgs) -> Result<()> {
             _ => env_logger::Target::Stdout,
         })
         .init();
+
     let len = read_suffix_length(&args.filename)? as u64;
     if len < u32::MAX as u64 {
         let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
@@ -566,6 +560,6 @@ where
 {
     let now = Instant::now();
     let res = sa.search(&args.query);
-    info!("Found '{}' at {res:?} in {:?}", args.query, now.elapsed());
+    println!("Found '{}' at {res:?} in {:?}", args.query, now.elapsed());
     Ok(())
 }

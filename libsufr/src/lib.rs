@@ -554,15 +554,17 @@ where
     // --------------------------------------------------
     // Search SuffixArray
     pub fn search(&self, query: &str) -> (Option<usize>, Option<usize>) {
-        let suffixes: Vec<_> = (0..self.suffix_array.len())
-            .zip(
-                self.suffix_array
-                    .iter()
-                    .map(|p| self.string_at(p.to_usize())),
-            )
-            .map(|(p, v)| format!("{p:2}: {v}"))
-            .collect();
-        println!("{}", suffixes.join("\n"));
+        //let suffixes: Vec<_> = self
+        //    .suffix_array
+        //    .iter()
+        //    .zip(
+        //        self.suffix_array
+        //            .iter()
+        //            .map(|p| self.string_at(p.to_usize())),
+        //    )
+        //    .map(|(p, v)| format!("{p:2}: {v}"))
+        //    .collect();
+        //println!("{}", suffixes.join("\n"));
         let qry = query.as_bytes();
         let n = self.suffix_array.len();
         (
@@ -580,6 +582,7 @@ where
     ) -> Option<usize> {
         if high >= low {
             let mid = low + ((high - low) / 2);
+
             let mid_cmp =
                 self.compare(qry, self.suffix_array[mid].to_usize());
 
