@@ -9,12 +9,18 @@ use std::{
     fs::File,
     io::{Read, Write},
     mem,
+    ops::Range,
     ops::{Add, Div, Sub},
     slice,
     time::Instant,
 };
 
 const OUTFILE_VERSION: u8 = 1;
+#[derive(Debug)]
+pub struct Comparison {
+    cmp: Ordering,
+    lcp: usize,
+}
 
 #[derive(Debug)]
 pub struct SequenceFileData {
@@ -95,6 +101,7 @@ where
         headers: Vec<String>,
         num_partitions: usize,
     ) -> SuffixArray<T> {
+        println!("hey");
         let total_time = Instant::now();
         let now = Instant::now();
         let suffix_array: Vec<T> = if is_dna {
@@ -108,6 +115,7 @@ where
         } else {
             (0..text.len()).map(T::from_usize).collect()
         };
+        println!("{suffix_array:?}");
         let lcp = vec![T::default(); suffix_array.len()];
         info!(
             "Created unsorted suffix array of len {} in {:?}",
@@ -553,10 +561,8 @@ where
 
     // --------------------------------------------------
     // Search SuffixArray
-    pub fn search(&self, query: &str) -> (Option<usize>, Option<usize>) {
-        //let suffixes: Vec<_> = self
-        //    .suffix_array
-        //    .iter()
+    pub fn search(&self, query: &str) -> Option<Range<usize>> {
+        //let suffixes: Vec<_> = (0..self.suffix_array.len())
         //    .zip(
         //        self.suffix_array
         //            .iter()
@@ -567,10 +573,11 @@ where
         //println!("{}", suffixes.join("\n"));
         let qry = query.as_bytes();
         let n = self.suffix_array.len();
-        (
-            self.suffix_search_first(qry, 0, n - 1),
-            self.suffix_search_last(qry, 0, n - 1, n),
-        )
+        self.suffix_search_first(qry, 0, n - 1, 0, 0).map(|first| {
+            let last =
+                self.suffix_search_last(qry, 0, n - 1, n, 0, 0).unwrap();
+            first..last
+        })
     }
 
     // --------------------------------------------------
@@ -579,24 +586,40 @@ where
         qry: &[u8],
         low: usize,
         high: usize,
+        left_lcp: usize,
+        right_lcp: usize,
     ) -> Option<usize> {
         if high >= low {
             let mid = low + ((high - low) / 2);
 
-            let mid_cmp =
-                self.compare(qry, self.suffix_array[mid].to_usize());
+            let mid_cmp = self.compare(
+                qry,
+                self.suffix_array[mid].to_usize(),
+                min(left_lcp, right_lcp),
+            );
 
-            if mid_cmp == Ordering::Equal
+            if mid_cmp.cmp == Ordering::Equal
                 && (mid == 0
                     || self
-                        .compare(qry, self.suffix_array[mid - 1].to_usize())
+                        .compare(
+                            qry,
+                            self.suffix_array[mid - 1].to_usize(),
+                            0,
+                        )
+                        .cmp
                         == Ordering::Greater)
             {
                 Some(mid)
-            } else if mid_cmp == Ordering::Greater {
-                self.suffix_search_first(qry, mid + 1, high)
+            } else if mid_cmp.cmp == Ordering::Greater {
+                self.suffix_search_first(
+                    qry,
+                    mid + 1,
+                    high,
+                    mid_cmp.lcp,
+                    right_lcp,
+                )
             } else {
-                self.suffix_search_first(qry, low, mid)
+                self.suffix_search_first(qry, low, mid, left_lcp, mid_cmp.lcp)
             }
         } else {
             None
@@ -610,23 +633,47 @@ where
         low: usize,
         high: usize,
         n: usize,
+        left_lcp: usize,
+        right_lcp: usize,
     ) -> Option<usize> {
         if high >= low {
             let mid = low + ((high - low) / 2);
-            let mid_cmp =
-                self.compare(qry, self.suffix_array[mid].to_usize());
+            let mid_cmp = self.compare(
+                qry,
+                self.suffix_array[mid].to_usize(),
+                min(left_lcp, right_lcp),
+            );
 
-            if mid_cmp == Ordering::Equal
+            if mid_cmp.cmp == Ordering::Equal
                 && (mid == n - 1
                     || self
-                        .compare(qry, self.suffix_array[mid + 1].to_usize())
+                        .compare(
+                            qry,
+                            self.suffix_array[mid + 1].to_usize(),
+                            0,
+                        )
+                        .cmp
                         == Ordering::Less)
             {
                 Some(mid)
-            } else if mid_cmp == Ordering::Less {
-                self.suffix_search_last(qry, low, mid - 1, n)
+            } else if mid_cmp.cmp == Ordering::Less {
+                self.suffix_search_last(
+                    qry,
+                    low,
+                    mid - 1,
+                    n,
+                    left_lcp,
+                    mid_cmp.lcp,
+                )
             } else {
-                self.suffix_search_last(qry, mid + 1, high, n)
+                self.suffix_search_last(
+                    qry,
+                    mid + 1,
+                    high,
+                    n,
+                    mid_cmp.lcp,
+                    right_lcp,
+                )
             }
         } else {
             None
@@ -634,36 +681,37 @@ where
     }
 
     // --------------------------------------------------
-    fn compare(&self, query: &[u8], suffix_pos: usize) -> Ordering {
-        let len_lcp = query
+    pub fn compare(
+        &self,
+        query: &[u8],
+        suffix_pos: usize,
+        skip: usize,
+    ) -> Comparison {
+        let lcp = query
             .iter()
+            .skip(skip)
             .zip(self.text.get(suffix_pos..).unwrap())
+            .skip(skip)
             .map_while(|(a, b)| (a == b).then_some(a))
-            .count();
+            .count()
+            + skip;
+        dbg!(lcp);
 
-        //println!(
-        //    ">>> '{}' => {suffix_pos} '{}' = LCP {len_lcp}",
-        //    String::from_utf8(query.to_vec()).unwrap(),
-        //    self.string_at(suffix_pos),
-        //);
+        let cmp = match (query.get(lcp), self.text.get(suffix_pos + lcp)) {
+            // Entire query matched
+            (None, _) => Ordering::Equal,
+            // Compare next char
+            (Some(a), Some(b)) => a.cmp(b),
+            // Panic at the disco
+            _ => unreachable!(),
+        };
 
-        let res =
-            match (query.get(len_lcp), self.text.get(suffix_pos + len_lcp)) {
-                // Entire query matched
-                (None, _) => Ordering::Equal,
-                // Compare next char
-                (Some(a), Some(b)) => a.cmp(b),
-                _ => unreachable!(),
-            };
-
-        //println!(
-        //    "cmp {:?}/{:?} = {:?}",
-        //    query.get(len_lcp).map(|v| *v as char),
-        //    self.text.get(suffix_pos + len_lcp).map(|v| *v as char),
-        //    res
-        //);
-
-        res
+        //let q = String::from_utf8(query.to_vec()).unwrap();
+        //let s =
+        //    String::from_utf8(self.text.get(suffix_pos..).unwrap().to_vec())
+        //        .unwrap();
+        //println!("q {q} s {s} skip {skip} = {:?}", Comparison { lcp, cmp });
+        Comparison { lcp, cmp }
     }
 
     // --------------------------------------------------
@@ -826,8 +874,51 @@ mod tests {
         read_sequence_file, read_suffix_length, usize_to_bytes, SuffixArray,
     };
     use anyhow::{anyhow, Result};
-    use std::{fs::File, io::BufWriter};
+    use std::{cmp::Ordering, fs::File, io::BufWriter};
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_compare() -> Result<()> {
+        // 0: #
+        // 1: AABABABABBABAB#
+        // 2: AB#
+        // 3: ABAB#
+        // 4: ABABABABBABAB#
+        // 5: ABABABBABAB#
+        // 6: ABABBABAB#
+        // 7: ABBABAB#
+        // 8: B#
+        // 9: BAB#
+        //10: BABAB#
+        //11: BABABABBABAB#
+        //12: BABABBABAB#
+        //13: BABBABAB#
+        //14: BBABAB#
+        //let seq = b"AABABABABBABAB#";
+        let seq = b"AABABABABBABAB#";
+        let len = seq.len() as u32;
+        let max_context: Option<u32> = None;
+        let is_dna = false;
+        let sequence_starts = vec![0u32];
+        let headers = vec![];
+        let num_partitions = 1;
+        println!("seq {seq:?}");
+        let sa: SuffixArray<u32> = SuffixArray::new(
+            seq.to_vec(),
+            len,
+            max_context,
+            is_dna,
+            sequence_starts,
+            headers,
+            num_partitions,
+        );
+        dbg!(sa);
+        //let query = "ABABA".as_bytes();
+        //let res = sa.compare(query, 7, 0);
+        //assert_eq!(res.cmp, Ordering::Less);
+        //assert_eq!(res.lcp, 2);
+        Ok(())
+    }
 
     #[test]
     fn test_usize_to_bytes() -> Result<()> {
