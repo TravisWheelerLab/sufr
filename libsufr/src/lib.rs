@@ -622,7 +622,13 @@ where
                 )
             } else {
                 // Ordering::Less
-                self.suffix_search_first(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
+                self.suffix_search_first(
+                    qry,
+                    low,
+                    mid - 1,
+                    left_lcp,
+                    mid_cmp.lcp,
+                )
             }
         } else {
             None

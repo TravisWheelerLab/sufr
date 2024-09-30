@@ -23,6 +23,14 @@ use std::{
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// Log level
+    #[arg(short, long)]
+    pub log: Option<LogLevel>,
+
+    /// Log file
+    #[arg(long)]
+    pub log_file: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -82,14 +90,6 @@ pub struct CreateArgs {
     /// Verify order
     #[arg(short, long)]
     pub check: bool,
-
-    /// Log level
-    #[arg(short, long)]
-    pub log: Option<LogLevel>,
-
-    /// Log file
-    #[arg(long)]
-    pub log_file: Option<String>,
 }
 
 /// Extract suffixes from sufr file
@@ -128,14 +128,6 @@ pub struct SearchArgs {
     /// Sufr file
     #[arg(value_name = "SUFR")]
     pub filename: String,
-
-    /// Log level
-    #[arg(short, long)]
-    pub log: Option<LogLevel>,
-
-    /// Log file
-    #[arg(long)]
-    pub log_file: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -304,21 +296,6 @@ where
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
-    env_logger::Builder::new()
-        .filter_level(match args.log {
-            Some(LogLevel::Debug) => log::LevelFilter::Debug,
-            Some(LogLevel::Info) => log::LevelFilter::Info,
-            _ => log::LevelFilter::Off,
-        })
-        .target(match args.log_file {
-            // Optional log file, default to STDOUT
-            Some(ref filename) => env_logger::Target::Pipe(Box::new(
-                BufWriter::new(File::create(filename)?),
-            )),
-            _ => env_logger::Target::Stdout,
-        })
-        .init();
-
     let num_threads = args.threads.unwrap_or(num_cpus::get());
     info!(
         "Using {num_threads} thread{}",
@@ -484,10 +461,14 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 pub fn extract(args: &ExtractArgs) -> Result<()> {
     let len = read_suffix_length(&args.filename)? as u64;
     if len < u32::MAX as u64 {
+        let now = Instant::now();
         let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
+        info!("Read sufr file in {:?}", now.elapsed());
         _extract(sa, args)
     } else {
+        let now = Instant::now();
         let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
+        info!("Read sufr file in {:?}", now.elapsed());
         _extract(sa, args)
     }
 }
@@ -497,6 +478,7 @@ pub fn _extract<T>(sa: SuffixArray<T>, args: &ExtractArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
+    let now = Instant::now();
     let positions: Vec<_> = parse_pos(&args.extract)?
         .into_iter()
         .flat_map(|r| r.collect::<Vec<_>>())
@@ -522,33 +504,23 @@ where
             }
         }
     }
+    info!("Extracted suffixes in {:?}", now.elapsed());
 
     Ok(())
 }
 
 // --------------------------------------------------
 pub fn search(args: &SearchArgs) -> Result<()> {
-    env_logger::Builder::new()
-        .filter_level(match args.log {
-            Some(LogLevel::Debug) => log::LevelFilter::Debug,
-            Some(LogLevel::Info) => log::LevelFilter::Info,
-            _ => log::LevelFilter::Off,
-        })
-        .target(match args.log_file {
-            // Optional log file, default to STDOUT
-            Some(ref filename) => env_logger::Target::Pipe(Box::new(
-                BufWriter::new(File::create(filename)?),
-            )),
-            _ => env_logger::Target::Stdout,
-        })
-        .init();
-
     let len = read_suffix_length(&args.filename)? as u64;
     if len < u32::MAX as u64 {
+        let now = Instant::now();
         let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
+        info!("Read sufr file in {:?}", now.elapsed());
         _search(sa, args)
     } else {
+        let now = Instant::now();
         let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
+        info!("Read sufr file in {:?}", now.elapsed());
         _search(sa, args)
     }
 }
@@ -560,7 +532,7 @@ where
 {
     let now = Instant::now();
     let res = match sa.search(&args.query) {
-        Some(range) => format!("in {range:?}"),
+        Some(range) => format!("found in range {range:?}"),
         _ => "not found".to_string(),
     };
     println!("Query '{}' {res} in {:?}", args.query, now.elapsed());
