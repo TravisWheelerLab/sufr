@@ -101,7 +101,6 @@ where
         headers: Vec<String>,
         num_partitions: usize,
     ) -> SuffixArray<T> {
-        println!("hey");
         let total_time = Instant::now();
         let now = Instant::now();
         let suffix_array: Vec<T> = if is_dna {
@@ -115,7 +114,6 @@ where
         } else {
             (0..text.len()).map(T::from_usize).collect()
         };
-        println!("{suffix_array:?}");
         let lcp = vec![T::default(); suffix_array.len()];
         info!(
             "Created unsorted suffix array of len {} in {:?}",
@@ -246,8 +244,7 @@ where
     pub fn sort(&mut self, num_partitions: usize) {
         // Select random pivots
         let now = Instant::now();
-        let pivot_sa =
-            self.select_pivots(&self.suffix_array, num_partitions - 1);
+        let pivot_sa = self.select_pivots(&self.suffix_array, num_partitions);
         info!(
             "Selected/sorted {} pivots in {:?}",
             pivot_sa.len(),
@@ -316,19 +313,26 @@ where
     // --------------------------------------------------
     #[inline(always)]
     fn partition(&self, suffixes: &Vec<T>, pivot_sa: Vec<T>) -> Vec<Vec<T>> {
-        // Find the highest partition for each suffix
-        let parts: Vec<_> = suffixes
-            .par_iter()
-            .map(|pos| self.upper_bound(*pos, &pivot_sa).unwrap_or_default())
-            .collect();
+        if pivot_sa.is_empty() {
+            vec![suffixes.clone()]
+        } else {
+            // Find the highest partition for each suffix
+            let parts: Vec<_> = suffixes
+                .par_iter()
+                .map(|pos| {
+                    self.upper_bound(*pos, &pivot_sa).unwrap_or_default()
+                })
+                .collect();
 
-        // Copy the suffixes into the correct partition
-        let mut partitions: Vec<Vec<T>> = vec![vec![]; pivot_sa.len() + 1];
-        for (suffix, part) in suffixes.iter().zip(&parts) {
-            partitions[part.to_usize()].push(*suffix);
+            // Copy the suffixes into the correct partition
+            let mut partitions: Vec<Vec<T>> =
+                vec![vec![]; pivot_sa.len() + 1];
+            for (suffix, part) in suffixes.iter().zip(&parts) {
+                partitions[part.to_usize()].push(*suffix);
+            }
+
+            partitions
         }
-
-        partitions
     }
 
     // --------------------------------------------------
@@ -562,13 +566,11 @@ where
     // --------------------------------------------------
     // Search SuffixArray
     pub fn search(&self, query: &str) -> Option<Range<usize>> {
-        //let suffixes: Vec<_> = (0..self.suffix_array.len())
-        //    .zip(
-        //        self.suffix_array
-        //            .iter()
-        //            .map(|p| self.string_at(p.to_usize())),
-        //    )
-        //    .map(|(p, v)| format!("{p:2}: {v}"))
+        //let suffixes: Vec<_> = self
+        //    .suffix_array
+        //    .iter()
+        //    .zip(self.suffix_array.iter().map(|&p| self.string_at(p.to_usize())))
+        //    .map(|(p,s)| format!("{p:3}: {s}"))
         //    .collect();
         //println!("{}", suffixes.join("\n"));
         let qry = query.as_bytes();
@@ -619,7 +621,8 @@ where
                     right_lcp,
                 )
             } else {
-                self.suffix_search_first(qry, low, mid, left_lcp, mid_cmp.lcp)
+                // Ordering::Less
+                self.suffix_search_first(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
             }
         } else {
             None
@@ -690,12 +693,10 @@ where
         let lcp = query
             .iter()
             .skip(skip)
-            .zip(self.text.get(suffix_pos..).unwrap())
-            .skip(skip)
+            .zip(self.text.get(suffix_pos + skip..).unwrap())
             .map_while(|(a, b)| (a == b).then_some(a))
             .count()
             + skip;
-        dbg!(lcp);
 
         let cmp = match (query.get(lcp), self.text.get(suffix_pos + lcp)) {
             // Entire query matched
@@ -710,24 +711,38 @@ where
         //let s =
         //    String::from_utf8(self.text.get(suffix_pos..).unwrap().to_vec())
         //        .unwrap();
-        //println!("q {q} s {s} skip {skip} = {:?}", Comparison { lcp, cmp });
+        //println!(
+        //    "q '{q}' s at {suffix_pos} '{s}' skip {skip} = {:?}",
+        //    Comparison { lcp, cmp }
+        //);
         Comparison { lcp, cmp }
     }
 
     // --------------------------------------------------
     #[inline(always)]
-    fn select_pivots(&self, suffixes: &[T], num_pivots: usize) -> Vec<T> {
-        let mut rng = &mut rand::thread_rng();
-        let mut pivot_sa: Vec<_> = suffixes
-            .choose_multiple(&mut rng, num_pivots)
-            .cloned()
-            .collect();
-        let mut sa_w = pivot_sa.clone();
-        let len = pivot_sa.len();
-        let mut lcp = vec![T::default(); len];
-        let mut lcp_w = vec![T::default(); len];
-        self.merge_sort(&mut sa_w, &mut pivot_sa, len, &mut lcp, &mut lcp_w);
-        pivot_sa
+    fn select_pivots(&self, suffixes: &[T], num_partitions: usize) -> Vec<T> {
+        if num_partitions > 1 {
+            let num_pivots = num_partitions - 1;
+            let mut rng = &mut rand::thread_rng();
+            let mut pivot_sa: Vec<_> = suffixes
+                .choose_multiple(&mut rng, num_pivots)
+                .cloned()
+                .collect();
+            let mut sa_w = pivot_sa.clone();
+            let len = pivot_sa.len();
+            let mut lcp = vec![T::default(); len];
+            let mut lcp_w = vec![T::default(); len];
+            self.merge_sort(
+                &mut sa_w,
+                &mut pivot_sa,
+                len,
+                &mut lcp,
+                &mut lcp_w,
+            );
+            pivot_sa
+        } else {
+            vec![]
+        }
     }
 
     // --------------------------------------------------
@@ -879,44 +894,106 @@ mod tests {
 
     #[test]
     fn test_compare() -> Result<()> {
-        // 0: #
-        // 1: AABABABABBABAB#
-        // 2: AB#
-        // 3: ABAB#
-        // 4: ABABABABBABAB#
-        // 5: ABABABBABAB#
-        // 6: ABABBABAB#
-        // 7: ABBABAB#
-        // 8: B#
-        // 9: BAB#
-        //10: BABAB#
-        //11: BABABABBABAB#
-        //12: BABABBABAB#
-        //13: BABBABAB#
-        //14: BBABAB#
-        //let seq = b"AABABABABBABAB#";
-        let seq = b"AABABABABBABAB#";
-        let len = seq.len() as u32;
+        // 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14
+        // A  A  B  A  B  A  B  A  B  B  A  B  A  B  #
+        let seq_file = "tests/inputs/abba.fa";
+        let seq_data = read_sequence_file(seq_file)?;
         let max_context: Option<u32> = None;
         let is_dna = false;
-        let sequence_starts = vec![0u32];
-        let headers = vec![];
+        let start_positions: Vec<_> =
+            seq_data.start_positions.iter().map(|&v| v as u32).collect();
+        let len = seq_data.seq.len() as u32;
         let num_partitions = 1;
-        println!("seq {seq:?}");
         let sa: SuffixArray<u32> = SuffixArray::new(
-            seq.to_vec(),
+            seq_data.seq,
             len,
             max_context,
             is_dna,
-            sequence_starts,
-            headers,
+            start_positions,
+            seq_data.headers,
             num_partitions,
         );
-        dbg!(sa);
-        //let query = "ABABA".as_bytes();
-        //let res = sa.compare(query, 7, 0);
-        //assert_eq!(res.cmp, Ordering::Less);
-        //assert_eq!(res.lcp, 2);
+
+        // Compare to B to B with no skip
+        let query = "B".as_bytes();
+        let res = sa.compare(query, 13, 0);
+        assert_eq!(res.cmp, Ordering::Equal);
+        assert_eq!(res.lcp, 1);
+
+        // Compare to B to B with skip = 1
+        let query = "B".as_bytes();
+        let res = sa.compare(query, 13, 1);
+        assert_eq!(res.cmp, Ordering::Equal);
+        assert_eq!(res.lcp, 1);
+
+        // Compare to B to AB
+        let query = "B".as_bytes();
+        let res = sa.compare(query, 12, 0);
+        assert_eq!(res.cmp, Ordering::Greater);
+        assert_eq!(res.lcp, 0);
+
+        // Compare to ABABA to ABBABAB#
+        let query = "ABABA".as_bytes();
+        let res = sa.compare(query, 7, 2);
+        assert_eq!(res.cmp, Ordering::Less);
+        assert_eq!(res.lcp, 2);
+
+        // Compare to ABAB to ABABBABAB#
+        let query = "ABABA".as_bytes();
+        let res = sa.compare(query, 5, 2);
+        assert_eq!(res.cmp, Ordering::Less);
+        assert_eq!(res.lcp, 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_search() -> Result<()> {
+        // 14: #
+        //  0: AABABABABBABAB#
+        // 12: AB#
+        // 10: ABAB#
+        //  1: ABABABABBABAB#
+        //  3: ABABABBABAB#
+        //  5: ABABBABAB#
+        //  7: ABBABAB#
+        // 13: B#
+        // 11: BAB#
+        //  9: BABAB#
+        //  2: BABABABBABAB#
+        //  4: BABABBABAB#
+        //  6: BABBABAB#
+        //  8: BBABAB#
+        let seq_file = "tests/inputs/abba.fa";
+        let seq_data = read_sequence_file(seq_file)?;
+        let max_context: Option<u32> = None;
+        let is_dna = false;
+        let start_positions: Vec<_> =
+            seq_data.start_positions.iter().map(|&v| v as u32).collect();
+        let len = seq_data.seq.len() as u32;
+        let num_partitions = 1;
+        let sa: SuffixArray<u32> = SuffixArray::new(
+            seq_data.seq,
+            len,
+            max_context,
+            is_dna,
+            start_positions,
+            seq_data.headers,
+            num_partitions,
+        );
+
+        let res = sa.search("B");
+        assert_eq!(res, Some(8..14));
+
+        let res = sa.search("AB");
+        assert_eq!(res, Some(2..7));
+
+        let res = sa.search("BABAB");
+        assert_eq!(res, Some(10..12));
+
+        let res = sa.search("ABAA");
+        assert_eq!(res, None);
+
         Ok(())
     }
 

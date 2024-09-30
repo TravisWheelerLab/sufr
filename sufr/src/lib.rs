@@ -559,7 +559,10 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
     let now = Instant::now();
-    let res = sa.search(&args.query);
-    println!("Found '{}' at {res:?} in {:?}", args.query, now.elapsed());
+    let res = match sa.search(&args.query) {
+        Some(range) => format!("in {range:?}"),
+        _ => "not found".to_string(),
+    };
+    println!("Query '{}' {res} in {:?}", args.query, now.elapsed());
     Ok(())
 }
