@@ -577,7 +577,7 @@ where
         let n = self.suffix_array.len();
         self.suffix_search_first(qry, 0, n - 1, 0, 0).map(|first| {
             let last =
-                self.suffix_search_last(qry, 0, n - 1, n, 0, 0).unwrap();
+                self.suffix_search_last(qry, first, n - 1, n, 0, 0).unwrap();
             first..last
         })
     }
