@@ -1,64 +1,40 @@
-CHR1 = ../data/t2t-chr1.txt
-#CHR1 = /xdisk/twheeler/data/genomes/human/t2t/chr1.txt
+CHR1 = ../data/chr1.fa
+SEQ1 = sufr/tests/inputs/1.fa
+SEQ2 = sufr/tests/inputs/2.fa
+SEQ3 = sufr/tests/inputs/3.fa
+SUFR = ./target/release/sufr
 
-CHECK  = cargo run -- read
-CREATE = cargo run -- create --log info
-READ   = cargo run -- check
+#CREATE = cargo run -- create --log info
+CREATE = $(SUFR) create --log info
+CREATE_DEBUG = cargo run -- create --log debug
 
-#SUFR   = ./target/release/sufr
+SEARCH = cargo run -- search
+
+#READ   = cargo run -- check
+#CHECK  = cargo run -- read
 #CHECK  = $(SUFR) read
-#CREATE = $(SUFR) create --log info
 #READ   = $(SUFR) check
 
 perf:
 	perf record --call-graph dwarf $(SUFR) create -t 16 --log info $(CHR1)
 
-create-s1:
-	#$(CREATE) tests/inputs/seq1.txt -o seq1.sa
-	cargo run -- create --log debug tests/inputs/seq1.txt -o seq1.sa -n 3
+r1:
+	$(SEARCH) C 1.sufr
 
-read-s1:
-	$(READ) -s tests/inputs/seq1.txt -a seq1.sa -e 1-100
+s1:
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --check
 
-check-s1:
-	$(READ) -s tests/inputs/seq1.txt -a seq1.sa
+s2:
+	$(CREATE_DEBUG) $(SEQ2) --dna --check
 
-create-s2:
-	$(CREATE) tests/inputs/seq2.txt -o seq2.sa
+s3:
+	$(CREATE_DEBUG) $(SEQ3) --dna --check
 
-check-s2:
-	$(READ) -s tests/inputs/seq2.txt -a seq2.sa
+ecoli:
+	$(CREATE) ../data/ecoli.fa --dna --check
 
-read-s2:
-	$(READ) -s tests/inputs/seq2.txt -a seq2.sa -e 1-100
-
-create-ecoli:
-	$(CREATE) ../data/ecoli.txt -o ecoli.sa
-
-check-ecoli:
-	$(READ) -s ../data/ecoli.txt -a ecoli.sa
-
-create-t2t-chr1:
-	$(CREATE) ../data/t2t-chr1.txt -o t2t-chr1.sa -n 64
-
-check-t2t-chr1:
-	$(READ) -s ../data/t2t-chr1.txt -a t2t-chr1.sa
-
-create-chr1:
-	$(CREATE) ../data/chr1.txt -o t2t-chr1.sa --ignore-start-n
-
-check-chr1:
-	$(READ) -s ../data/chr1.txt -a t2t-chr1.sa
-
-s1: create-s1 check-s1
-
-s2: create-s2 check-s2
-
-ecoli: create-ecoli check-ecoli
-
-t2t-chr1: create-t2t-chr1 check-t2t-chr1
-
-chr1: create-chr1 check-chr1
+chr1:
+	$(CREATE) --dna -n 64 $(CHR1)
 
 valcache:
 	valgrind --tool=cachegrind ./target/release/sufr create ../data/chr1.fa --ignore-start-n -o chr1.sa --log info

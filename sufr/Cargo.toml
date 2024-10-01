@@ -1,0 +1,28 @@
+[package]
+name = "sufr"
+version = "0.1.2"
+edition = "2021"
+description = "Parallel Construction of Suffix Arrays in Rust"
+license = "BSD-3-Clause"
+repository = "https://github.com/TravisWheelerLab/sufr"
+authors = [
+    "Ken Youens-Clark <kyclark@arizona.edu>",
+    "Jack Roddy <jroddy@pharmacy.arizona.edu>",
+    "Travis Wheeler <twheeler@arizona.edu>"
+]
+
+[dependencies]
+anyhow = "1.0.86"
+clap = { version = "4.5.13", features = ["derive"] }
+env_logger = "0.11.5"
+format_num = "0.1.0"
+libsufr = { path = "../libsufr", version = "0.1.2" }
+log = "0.4.22"
+num_cpus = "1.16.0"
+rayon = "1.10.0"
+regex = "1.10.6"
+
+[dev-dependencies]
+assert_cmd = "2.0.16"
+pretty_assertions = "1.4.0"
+tempfile = "3.12.0"
