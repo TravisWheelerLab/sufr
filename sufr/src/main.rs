@@ -33,14 +33,14 @@ fn run(args: Cli) -> Result<()> {
             sufr::create(args)?;
             Ok(())
         }
-        //Some(Command::Check(args)) => {
-        //    sufr::check(args)?;
-        //    Ok(())
-        //}
-        //Some(Command::Extract(args)) => {
-        //    sufr::extract(args)?;
-        //    Ok(())
-        //}
+        Some(Command::Check(args)) => {
+            sufr::check(args)?;
+            Ok(())
+        }
+        Some(Command::Extract(args)) => {
+            sufr::extract(args)?;
+            Ok(())
+        }
         //Some(Command::Search(args)) => {
         //    sufr::search(args)?;
         //    Ok(())

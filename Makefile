@@ -6,7 +6,7 @@ SEQ3  = sufr/tests/inputs/3.fa
 SUFR  = ./target/release/sufr
 
 #CREATE = cargo run -- create --log info
-CREATE_RELEASE = $(SUFR) --log info create 
+CREATE_RELEASE = /usr/bin/time -l $(SUFR) --log info create 
 CREATE_DEBUG = cargo run -- --log debug create 
 
 SEARCH = cargo run -- search
@@ -23,7 +23,7 @@ r1:
 	$(SEARCH) C 1.sufr
 
 s1:
-	$(CREATE_DEBUG) $(SEQ1) -n 1 --dna 
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna 
 
 s2:
 	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna 

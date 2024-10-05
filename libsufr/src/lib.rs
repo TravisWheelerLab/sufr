@@ -1,12 +1,16 @@
 use anyhow::{anyhow, bail, Result};
 use log::info;
 use needletail::parse_fastx_file;
-use rand::seq::SliceRandom;
+//use rand::seq::SliceRandom;
+use rand::Rng;
 use rayon::prelude::*;
+//use seq_io::fasta::{Reader, Record};
 use std::{
     cmp::{max, min, Ordering},
+    collections::HashSet,
     fmt::{Debug, Display},
     fs::{self, File},
+    hash::Hash,
     io::{Read, Write},
     mem,
     //ops::Range,
@@ -57,6 +61,7 @@ pub trait Int:
     + Default
     + Display
     + Ord
+    + Hash
     + serde::ser::Serialize
 {
     fn to_usize(&self) -> usize;
@@ -135,19 +140,6 @@ where
     }
 
     // --------------------------------------------------
-    pub fn check_order(&self, suffix_array: &[T]) -> Vec<T> {
-        let mut errors = vec![];
-        for window in suffix_array.windows(2) {
-            if let [prev, cur] = window {
-                if !self.is_less(*prev, *cur) {
-                    errors.push(*prev);
-                }
-            }
-        }
-        errors
-    }
-
-    // --------------------------------------------------
     //pub fn check_lcp(&self) -> Vec<T> {
     //    let mut errors = vec![];
     //    for i in 1..self.suffix_array.len() {
@@ -213,10 +205,10 @@ where
     }
 
     // --------------------------------------------------
-    pub fn upper_bound(&self, target: T, sa: &[T]) -> Option<usize> {
+    pub fn upper_bound(&self, target: T, sa: &[T]) -> T {
         // See if target is less than the first element
-        if self.is_less(target, sa[0]) {
-            None
+        if sa.is_empty() || self.is_less(target, sa[0]) {
+            T::default()
         } else {
             // Find where all the values are less than target
             let i = sa.partition_point(|&p| self.is_less(p, target));
@@ -224,76 +216,68 @@ where
             // If the value at the partition is the same as the target
             if sa.get(i).map_or(false, |&v| v == target) {
                 // Then return the next value, which might be out of range
-                Some(i + 1)
+                T::from_usize(i + 1)
             } else {
                 // Else return the partition point
-                Some(i)
+                T::from_usize(i)
             }
         }
     }
 
+    //fn partition(
+    //    &mut self,
+    //    text: &[u8],
+    //    num_partitions: usize,
+    //) -> Result<()> {
+    //    Ok(())
+    //}
+
     // --------------------------------------------------
     pub fn sort(&mut self, num_partitions: usize) -> Result<()> {
+        // Randomly select some pivots
         let now = Instant::now();
-        let suffix_array: Vec<T> = if self.is_dna {
-            // Text will already be "uppercase" (but bytes)
-            self.text
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| {
-                    b"ACGT#".contains(c).then_some(T::from_usize(i))
-                })
-                .collect()
-        } else {
-            (0..self.text.len()).map(T::from_usize).collect()
-        };
-
-        self.suffix_array_len = T::from_usize(suffix_array.len());
-
+        let pivot_sa = self.select_pivots(self.text.len(), num_partitions);
+        let num_pivots = pivot_sa.len();
         info!(
-            "Created unsorted suffix array of len {} in {:?}",
-            suffix_array.len(),
+            "Selected {num_pivots} pivot{} in {:?}",
+            if num_pivots == 1 { "" } else { "s" },
             now.elapsed()
         );
 
-        // Partition the suffixes into num_partitions
+        // Closure to find suffixes belonging to a partition
+        let partitioner = |wanted: T| -> Vec<T> {
+            self.text
+                .par_iter()
+                .enumerate()
+                .flat_map(|(i, val)| {
+                    if !self.is_dna || b"ACGT#".contains(val) {
+                        let part =
+                            self.upper_bound(T::from_usize(i), &pivot_sa);
+                        (part == wanted).then_some(T::from_usize(i))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
         let now = Instant::now();
         let mut partitions: Vec<Option<Partition<T>>> =
             (0..num_partitions).map(|_| None).collect();
-        let suffix_parts: Vec<_> = if num_partitions > 1 {
-            let pivot_sa = self.select_pivots(&suffix_array, num_partitions);
-            suffix_array
-                .par_iter()
-                .map(|pos| {
-                    self.upper_bound(*pos, &pivot_sa).unwrap_or_default()
-                })
-                .collect()
-        } else {
-            vec![0; suffix_array.len()]
-        };
-        info!("Assigned partitions in {:?}", now.elapsed());
-
-        //info!("suffix_parts = {suffix_parts:?}");
-        //info!("partitions = {partitions:?}");
-
-        //let temp_dir = tempdir()?;
-        //let temp_path = temp_dir.path();
-        //let temp_path = PathBuf::from("tmp");
-        let now = Instant::now();
+        //partitions.iter_mut().enumerate().try_for_each(
         partitions.par_iter_mut().enumerate().try_for_each(
             |(partition_num, partition)| -> Result<()> {
                 //let now = Instant::now();
                 // Find the suffixes in this partition
-                let mut part_sa: Vec<_> = suffix_parts
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(pos, part)| {
-                        (*part == partition_num).then_some(suffix_array[pos])
-                    })
-                    .collect();
-
+                let mut part_sa = partitioner(T::from_usize(partition_num));
+                //info!(
+                //    "Found {} suffixes for partition {partition_num} in {:?}",
+                //    part_sa.len(),
+                //    now.elapsed()
+                //);
                 let len = part_sa.len();
                 if len > 0 {
+                    //let now = Instant::now();
                     //info!("UNSORTED partition {partition_num}: {part_sa:?}");
                     let mut sa_w = part_sa.clone();
                     let mut lcp = vec![T::default(); len];
@@ -308,21 +292,11 @@ where
                     //info!("SORTED partition {partition_num}  : {part_sa:?}");
 
                     // Write to disk
-                    //let sa_path =
-                    //    temp_path.join(format!("{partition_num:05}.sa"));
-                    //let mut sa_file = File::create(&sa_path)?;
                     let mut sa_file = NamedTempFile::new()?;
                     let _ = sa_file.write(Self::vec_to_slice_u8(&part_sa))?;
-
-                    //let lcp_path =
-                    //    temp_path.join(format!("{partition_num:05}.lcp"));
-                    //let mut lcp_file = File::create(&lcp_path)?;
                     let mut lcp_file = NamedTempFile::new()?;
                     let _ = lcp_file.write(Self::vec_to_slice_u8(&lcp))?;
-                    //info!(
-                    //    "Create partition {partition_num} in {:?}",
-                    //    now.elapsed()
-                    //);
+                    //info!("LCP partition {partition_num}: {lcp:?}");
                     let (_, sa_path) = sa_file.keep()?;
                     let (_, lcp_path) = lcp_file.keep()?;
 
@@ -335,6 +309,11 @@ where
                         lcp_path,
                     });
                 }
+                //info!(
+                //    "Sorted {} in partition {partition_num} in {:?}",
+                //    part_sa.len(),
+                //    now.elapsed()
+                //);
                 Ok(())
             },
         )?;
@@ -350,6 +329,7 @@ where
             sizes.iter().sum::<usize>() / num_partitions,
             now.elapsed()
         );
+        self.suffix_array_len = T::from_usize(sizes.iter().sum());
         self.partitions = partitions;
 
         Ok(())
@@ -496,92 +476,6 @@ where
             }
         }
     }
-
-    // --------------------------------------------------
-    // Read serialized ".sufr" file
-    //pub fn read(filename: &str) -> Result<SuffixArray<T>> {
-    //    let mut file =
-    //        File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
-    //
-    //    // Meta (version, is_dna)
-    //    let mut buffer = [0; 2];
-    //    file.read_exact(&mut buffer)?;
-    //    let version = buffer[0];
-    //    let is_dna = buffer[1] == 1;
-    //
-    //    // Length of text
-    //    let mut buffer = [0; 8];
-    //    file.read_exact(&mut buffer)?;
-    //    let text_len = usize::from_ne_bytes(buffer);
-    //
-    //    // Length of SA
-    //    let mut buffer = [0; 8];
-    //    file.read_exact(&mut buffer)?;
-    //    let sa_len = usize::from_ne_bytes(buffer);
-    //
-    //    // Max context
-    //    let mut buffer = [0; 8];
-    //    file.read_exact(&mut buffer)?;
-    //    let max_context = T::from_usize(usize::from_ne_bytes(buffer));
-    //
-    //    // Number of sequences
-    //    let mut buffer = [0; 8];
-    //    file.read_exact(&mut buffer)?;
-    //    let num_sequences = T::from_usize(usize::from_ne_bytes(buffer));
-    //
-    //    // Sequence starts
-    //    let mut buffer =
-    //        vec![0u8; num_sequences.to_usize() * mem::size_of::<T>()];
-    //    file.read_exact(&mut buffer)?;
-    //    let sequence_starts: Vec<T> = unsafe {
-    //        std::slice::from_raw_parts(
-    //            buffer.as_ptr() as *const _,
-    //            num_sequences.to_usize(),
-    //        )
-    //        .to_vec()
-    //    };
-    //
-    //    // Suffix Array
-    //    let mut buffer = vec![0u8; sa_len * mem::size_of::<T>()];
-    //    file.read_exact(&mut buffer)?;
-    //    let suffix_array: Vec<T> = unsafe {
-    //        std::slice::from_raw_parts(buffer.as_ptr() as *const _, sa_len)
-    //            .to_vec()
-    //    };
-    //
-    //    // LCP Array
-    //    let mut buffer = vec![0u8; sa_len * mem::size_of::<T>()];
-    //    file.read_exact(&mut buffer)?;
-    //    let lcp: Vec<T> = unsafe {
-    //        std::slice::from_raw_parts(buffer.as_ptr() as *const _, sa_len)
-    //            .to_vec()
-    //    };
-    //
-    //    // Sequence -- add 2 for final "#" character delimiting text
-    //    let mut buffer = vec![0u8; text_len * mem::size_of::<u8>()];
-    //    file.read_exact(&mut buffer)?;
-    //    let text: Vec<u8> = unsafe {
-    //        std::slice::from_raw_parts(buffer.as_ptr(), text_len).to_vec()
-    //    };
-    //
-    //    // Headers are variable in length so they are at the end
-    //    let mut buffer = vec![];
-    //    file.read_to_end(&mut buffer)?;
-    //    let headers: Vec<String> = bincode::deserialize(&buffer)?;
-    //
-    //    Ok(SuffixArray {
-    //        version,
-    //        is_dna,
-    //        len: T::from_usize(text_len),
-    //        max_context,
-    //        num_sequences,
-    //        sequence_starts,
-    //        headers,
-    //        suffix_array,
-    //        lcp,
-    //        text,
-    //    })
-    //}
 
     // --------------------------------------------------
     // Search SuffixArray
@@ -748,16 +642,24 @@ where
     #[inline(always)]
     fn select_pivots(
         &self,
-        suffix_array: &[T],
+        text_len: usize,
         num_partitions: usize,
     ) -> Vec<T> {
         if num_partitions > 1 {
             let num_pivots = num_partitions - 1;
-            let mut rng = &mut rand::thread_rng();
-            let mut pivot_sa: Vec<_> = suffix_array
-                .choose_multiple(&mut rng, num_pivots)
-                .cloned()
-                .collect();
+            let rng = &mut rand::thread_rng();
+            let mut pivot_sa = HashSet::<T>::new();
+            loop {
+                let pos = rng.gen_range(0..text_len);
+                if self.is_dna && !b"ACGT".contains(&self.text[pos]) {
+                    continue;
+                }
+                let _ = pivot_sa.insert(T::from_usize(pos));
+                if pivot_sa.len() == num_pivots {
+                    break;
+                }
+            }
+            let mut pivot_sa: Vec<T> = pivot_sa.iter().cloned().collect();
             let mut sa_w = pivot_sa.clone();
             let len = pivot_sa.len();
             let mut lcp = vec![T::default(); len];
@@ -831,6 +733,9 @@ where
 
         // Sequence
         bytes_out += out.write(&self.text)?;
+        //let bytes_text = out.write(&self.text)?;
+        //info!("Wrote {bytes_text} '{:?}'", self.text);
+        //bytes_out += bytes_text;
 
         // Headers are variable in length so they are at the end
         bytes_out += out.write(&bincode::serialize(&self.headers)?)?;
@@ -854,6 +759,124 @@ where
             std::slice::from_raw_parts(buffer.as_ptr() as *const _, len)
                 .to_vec()
         }
+    }
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
+pub struct SuffixArray<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    pub version: u8,
+    pub is_dna: bool,
+    pub max_context: T,
+    pub len: T,
+    pub num_sequences: T,
+    pub sequence_starts: Vec<T>,
+    pub headers: Vec<String>,
+    pub text: Vec<u8>,
+    pub suffix_array: Vec<T>,
+    pub lcp: Vec<T>,
+}
+
+impl<T> SuffixArray<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync,
+{
+    pub fn string_at(&self, pos: usize) -> String {
+        self.text
+            .get(pos..)
+            .map(|v| String::from_utf8(v.to_vec()).unwrap())
+            .unwrap()
+    }
+
+    //pub fn check_order(&self) -> Vec<T> {
+    //    let mut errors = vec![];
+    //    for window in self.suffix_array.windows(2) {
+    //        if let [prev, cur] = window {
+    //            if !self.is_less(*prev, *cur) {
+    //                errors.push(*prev);
+    //            }
+    //        }
+    //    }
+    //    errors
+    //}
+
+    // Read serialized ".sufr" file
+    pub fn read(filename: &str) -> Result<SuffixArray<T>> {
+        println!("Reading '{filename}'");
+        let mut file =
+            File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+
+        // Meta (version, is_dna)
+        let mut buffer = [0; 2];
+        file.read_exact(&mut buffer)?;
+        let version = buffer[0];
+        let is_dna = buffer[1] == 1;
+
+        // Length of text
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let text_len = usize::from_ne_bytes(buffer);
+
+        // Length of SA
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let sa_len = usize::from_ne_bytes(buffer);
+
+        // Max context
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let max_context = T::from_usize(usize::from_ne_bytes(buffer));
+
+        // Number of sequences
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let num_sequences = T::from_usize(usize::from_ne_bytes(buffer));
+
+        // Sequence starts
+        let mut buffer =
+            vec![0u8; num_sequences.to_usize() * mem::size_of::<T>()];
+        file.read_exact(&mut buffer)?;
+        let sequence_starts: Vec<T> = SuffixArrayBuilder::slice_u8_to_vec(
+            &buffer,
+            num_sequences.to_usize(),
+        );
+
+        // Suffix Array
+        let mut buffer = vec![0u8; sa_len * mem::size_of::<T>()];
+        file.read_exact(&mut buffer)?;
+        let suffix_array: Vec<T> =
+            SuffixArrayBuilder::slice_u8_to_vec(&buffer, sa_len);
+
+        // LCP Array
+        let mut buffer = vec![0u8; sa_len * mem::size_of::<T>()];
+        file.read_exact(&mut buffer)?;
+        let lcp: Vec<T> =
+            SuffixArrayBuilder::slice_u8_to_vec(&buffer, sa_len);
+
+        // Sequence/text
+        let mut text = vec![0u8; text_len];
+        file.read_exact(&mut text)?;
+
+        // Headers are variable in length so they are at the end
+        let mut buffer = vec![];
+        file.read_to_end(&mut buffer)?;
+        let headers: Vec<String> = bincode::deserialize(&buffer)?;
+
+        Ok(SuffixArray {
+            version,
+            is_dna,
+            len: T::from_usize(text_len),
+            max_context,
+            num_sequences,
+            sequence_starts,
+            headers,
+            suffix_array,
+            lcp,
+            text,
+        })
     }
 }
 
@@ -884,9 +907,10 @@ pub fn read_suffix_length(filename: &str) -> Result<usize> {
 // data needed by SuffixArrayBuilder
 pub fn read_sequence_file(filename: &str) -> Result<SequenceFileData> {
     let mut reader = parse_fastx_file(filename)?;
-    let mut seq = vec![];
-    let mut headers = vec![];
-    let mut start_positions = vec![];
+    //let mut seq : Vec<u8> = vec![];
+    let mut seq = Vec::with_capacity(u32::MAX as usize);
+    let mut headers: Vec<String> = vec![];
+    let mut start_positions: Vec<usize> = vec![];
     let mut i = 0;
     while let Some(rec) = reader.next() {
         let rec = rec?;
@@ -947,14 +971,16 @@ mod tests {
 
     #[test]
     fn test_slice_u8_to_vec() -> Result<()> {
-        let res: Vec<u32> = SuffixArrayBuilder::slice_u8_to_vec(&[0, 0, 0, 0], 1);
+        let res: Vec<u32> =
+            SuffixArrayBuilder::slice_u8_to_vec(&[0, 0, 0, 0], 1);
         assert_eq!(res, &[0u32]);
 
         let res: Vec<u64> =
             SuffixArrayBuilder::slice_u8_to_vec(&[0, 0, 0, 0, 0, 0, 0, 0], 1);
         assert_eq!(res, &[0u64]);
 
-        let res: Vec<u32> = SuffixArrayBuilder::slice_u8_to_vec(&[1, 0, 0, 0], 1);
+        let res: Vec<u32> =
+            SuffixArrayBuilder::slice_u8_to_vec(&[1, 0, 0, 0], 1);
         assert_eq!(res, &[1u32]);
 
         let res: Vec<u64> =
