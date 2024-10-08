@@ -9,7 +9,7 @@ use std::{
     cmp::{max, min, Ordering},
     collections::HashSet,
     fmt::{Debug, Display},
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     hash::Hash,
     io::{Read, Write},
     mem,
@@ -17,6 +17,7 @@ use std::{
     ops::{Add, Div, Sub},
     path::PathBuf,
     slice,
+    sync::{Arc, Mutex},
     time::Instant,
 };
 use tempfile::NamedTempFile;
@@ -90,6 +91,65 @@ where
     last_suffix: T,
     sa_path: PathBuf,
     lcp_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct PartitionBuilder<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    vals: Vec<T>,
+    capacity: usize,
+    len: usize,
+    total_len: usize,
+    path: PathBuf,
+}
+
+impl<T> PartitionBuilder<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    fn new(capacity: usize) -> Result<Self> {
+        let tmp = NamedTempFile::new()?;
+        let (_, path) = tmp.keep()?;
+
+        Ok(PartitionBuilder {
+            vals: vec![T::default(); capacity],
+            len: 0,
+            total_len: 0,
+            capacity,
+            path,
+        })
+    }
+
+    pub fn add(&mut self, val: T) -> Result<()> {
+        self.vals[self.len] = val;
+        self.len += 1;
+        if self.len == self.capacity {
+            self.write()?;
+            // Reset
+            for i in 0..self.len {
+                self.vals[i] = T::default();
+            }
+            self.len = 0;
+        }
+
+        Ok(())
+    }
+
+    pub fn write(&mut self) -> Result<()> {
+        if self.len > 0 {
+            let mut out = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?;
+            out.write_all(SuffixArrayBuilder::vec_to_slice_u8(
+                &self.vals[0..self.len],
+            ))?;
+            self.total_len += self.len;
+        }
+        Ok(())
+    }
 }
 
 // --------------------------------------------------
@@ -205,10 +265,11 @@ where
     }
 
     // --------------------------------------------------
-    pub fn upper_bound(&self, target: T, sa: &[T]) -> T {
+    pub fn upper_bound(&self, target: T, sa: &[T]) -> usize {
         // See if target is less than the first element
         if sa.is_empty() || self.is_less(target, sa[0]) {
-            T::default()
+            //T::default()
+            0
         } else {
             // Find where all the values are less than target
             let i = sa.partition_point(|&p| self.is_less(p, target));
@@ -216,24 +277,34 @@ where
             // If the value at the partition is the same as the target
             if sa.get(i).map_or(false, |&v| v == target) {
                 // Then return the next value, which might be out of range
-                T::from_usize(i + 1)
+                //T::from_usize(i + 1)
+                i + 1
             } else {
                 // Else return the partition point
-                T::from_usize(i)
+                //T::from_usize(i)
+                i
             }
         }
     }
 
-    //fn partition(
-    //    &mut self,
-    //    text: &[u8],
-    //    num_partitions: usize,
-    //) -> Result<()> {
-    //    Ok(())
-    //}
+    fn partition(
+        &mut self,
+        num_partitions: usize,
+    ) -> Result<(Vec<Arc<Mutex<PartitionBuilder<T>>>>, usize)> {
+        // Create more partitions than requested because
+        // we can't know how big they will end up being
+        let max_partitions = self.len.to_usize() / 2;
+        let num_partitions = if num_partitions * 10 < max_partitions {
+            num_partitions * 10
+        } else if num_partitions * 5 < max_partitions {
+            num_partitions * 5
+        } else if num_partitions * 2 < max_partitions {
+            num_partitions * 2
+        } else {
+            num_partitions
+        };
+        println!("Partition into {num_partitions}");
 
-    // --------------------------------------------------
-    pub fn sort(&mut self, num_partitions: usize) -> Result<()> {
         // Randomly select some pivots
         let now = Instant::now();
         let pivot_sa = self.select_pivots(self.text.len(), num_partitions);
@@ -244,40 +315,94 @@ where
             now.elapsed()
         );
 
-        // Closure to find suffixes belonging to a partition
-        let partitioner = |wanted: T| -> Vec<T> {
-            self.text
-                .par_iter()
-                .enumerate()
-                .flat_map(|(i, val)| {
-                    if !self.is_dna || b"ACGT#".contains(val) {
-                        let part =
-                            self.upper_bound(T::from_usize(i), &pivot_sa);
-                        (part == wanted).then_some(T::from_usize(i))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        };
+        let capacity = 4096;
+        let mut builders: Vec<_> = vec![];
+        for _ in 0..num_partitions {
+            let builder: PartitionBuilder<T> =
+                PartitionBuilder::new(capacity)?;
+            builders.push(Arc::new(Mutex::new(builder)));
+        }
 
-        let now = Instant::now();
+        //self.text.iter().enumerate().try_for_each(
+        self.text.par_iter().enumerate().try_for_each(
+            |(i, val)| -> Result<()> {
+                if !self.is_dna || b"ACGT#".contains(val) {
+                    let partition_num =
+                        self.upper_bound(T::from_usize(i), &pivot_sa);
+                    match builders[partition_num].lock() {
+                        Ok(mut guard) => {
+                            guard.add(T::from_usize(i))?;
+                        }
+                        Err(e) => panic!("Failed to lock: {e}"),
+                    }
+                }
+                Ok(())
+            },
+        )?;
+
+        // Flush out any remaining buffers
+        let mut num_suffixes = 0;
+        for builder in &builders {
+            match builder.lock() {
+                Ok(mut val) => {
+                    val.write()?;
+                    num_suffixes += val.total_len;
+                }
+                Err(e) => panic!("Failed to lock: {e}"),
+            }
+        }
+
+        Ok((builders, num_suffixes))
+    }
+
+    // --------------------------------------------------
+    pub fn sort(&mut self, num_partitions: usize) -> Result<()> {
+        // We will get more partition files than num_partitions
+        let (mut part_files, num_suffixes) =
+            self.partition(num_partitions)?;
+        let num_per_partition = num_suffixes / num_partitions;
+        let total_sort_time = Instant::now();
+
+        let mut partition_inputs = vec![vec![]; num_partitions];
+        for part_num in 0..num_partitions {
+            let mut num_taken = 0;
+            while !part_files.is_empty() {
+                let part = part_files.remove(0);
+                match part.lock() {
+                    Ok(builder) => {
+                        partition_inputs[part_num]
+                            .push((builder.path.clone(), builder.total_len));
+                        num_taken += builder.total_len;
+                    }
+                    Err(e) => panic!("Can't get partition: {e}"),
+                }
+
+                if num_taken > num_per_partition {
+                    break;
+                }
+            }
+        }
+
+        //dbg!(&partition_inputs);
+
         let mut partitions: Vec<Option<Partition<T>>> =
             (0..num_partitions).map(|_| None).collect();
+
         //partitions.iter_mut().enumerate().try_for_each(
         partitions.par_iter_mut().enumerate().try_for_each(
             |(partition_num, partition)| -> Result<()> {
-                //let now = Instant::now();
                 // Find the suffixes in this partition
-                let mut part_sa = partitioner(T::from_usize(partition_num));
-                //info!(
-                //    "Found {} suffixes for partition {partition_num} in {:?}",
-                //    part_sa.len(),
-                //    now.elapsed()
-                //);
+                let mut part_sa = vec![];
+                for (path, len) in &partition_inputs[partition_num] {
+                    let buffer = fs::read(path)?;
+                    let mut part: Vec<T> =
+                        SuffixArrayBuilder::slice_u8_to_vec(&buffer, *len);
+                    part_sa.append(&mut part);
+                }
+
                 let len = part_sa.len();
                 if len > 0 {
-                    //let now = Instant::now();
+                    let now = Instant::now();
                     //info!("UNSORTED partition {partition_num}: {part_sa:?}");
                     let mut sa_w = part_sa.clone();
                     let mut lcp = vec![T::default(); len];
@@ -290,6 +415,10 @@ where
                         &mut lcp_w,
                     );
                     //info!("SORTED partition {partition_num}  : {part_sa:?}");
+                    info!(
+                        "Partition {partition_num:2}: Sorted {len:8} in {:?}",
+                        now.elapsed()
+                    );
 
                     // Write to disk
                     let mut sa_file = NamedTempFile::new()?;
@@ -309,11 +438,6 @@ where
                         lcp_path,
                     });
                 }
-                //info!(
-                //    "Sorted {} in partition {partition_num} in {:?}",
-                //    part_sa.len(),
-                //    now.elapsed()
-                //);
                 Ok(())
             },
         )?;
@@ -327,7 +451,7 @@ where
         info!(
             "Split/sorted {num_partitions} partitions (avg {}) in {:?}",
             sizes.iter().sum::<usize>() / num_partitions,
-            now.elapsed()
+            total_sort_time.elapsed()
         );
         self.suffix_array_len = T::from_usize(sizes.iter().sum());
         self.partitions = partitions;
@@ -646,6 +770,8 @@ where
         num_partitions: usize,
     ) -> Vec<T> {
         if num_partitions > 1 {
+            // Use a HashMap because selecting pivots one-at-a-time
+            // can result in duplicates.
             let num_pivots = num_partitions - 1;
             let rng = &mut rand::thread_rng();
             let mut pivot_sa = HashSet::<T>::new();
@@ -659,6 +785,7 @@ where
                     break;
                 }
             }
+            // Sort the selected pivots
             let mut pivot_sa: Vec<T> = pivot_sa.iter().cloned().collect();
             let mut sa_w = pivot_sa.clone();
             let len = pivot_sa.len();
