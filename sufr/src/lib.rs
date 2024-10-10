@@ -2,12 +2,13 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_sequence_file, read_suffix_length, FromUsize, Int, SufrFile,
-    SufrBuilder,
+    read_sequence_file, read_suffix_length, FromUsize, Int, SufrBuilder,
+    SufrFile,
 };
 use log::info;
 use regex::Regex;
 use std::{
+    cmp::min,
     ffi::OsStr,
     fmt::Debug,
     fs::File,
@@ -165,25 +166,32 @@ pub fn _check<T>(sufr_file: SufrFile<T>, _args: &CheckArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
-    dbg!(&sufr_file);
-    println!("text = '{}'", sufr_file.get_text()?);
-    println!("suffix_array = {:?}", sufr_file.get_suffix_array()?);
-    let now = Instant::now();
+    //dbg!(&sufr_file);
+    //println!("text         = {}", sufr_file.get_text()?);
+    //println!("raw text     = {:?}", sufr_file.get_raw_text()?);
+    //println!("suffix_array = {:?}", sufr_file.get_suffix_array()?);
+    //println!("lcp          = {:?}", sufr_file.get_lcp()?);
 
-    // Manual for now
-    let num_errors = 0;
-    //if sa.suffix_array.len() > 1 {
-    //    for i in 1..sa.suffix_array.len() {
-    //        let cur = sa.string_at(sa.suffix_array[i].to_usize());
-    //        let prev = sa.string_at(sa.suffix_array[i-1].to_usize());
-    //        if prev > cur {
-    //            eprintln!("{i}: '{cur}' vs '{prev}'");
-    //        }
-    //    }
+    //let suffix_array_iter = sufr_file.get_suffix_array_iter();
+    //for i in 0..sufr_file.num_suffixes.to_usize() {
+    //    let val = suffix_array_iter.get(i)?;
+    //    println!("SA {i:3}: {val}");
     //}
-
+    ////let r = &suffix_array_iter.get_range(1..5)?;
+    ////dbg!(r);
+    //
+    //for (i, val) in suffix_array_iter.enumerate() {
+    //    println!("suffix_array {i:3}: {val}");
+    //}
+    let now = Instant::now();
+    let errors = sufr_file.check_suffix_array()?;
+    let num_errors = errors.len();
+    let num_fmt = NumberFormat::new();
     println!(
-        "Found {num_errors} error{} in suffix array.",
+        "Checked {} suffix{}, found {} error{} in suffix array.",
+        num_fmt.format(",.0", sufr_file.num_suffixes.to_usize() as f64),
+        if sufr_file.num_suffixes.to_usize() == 1 { "" } else { "es" },
+        num_fmt.format(",.0", num_errors as f64),
         if num_errors == 1 { "" } else { "s" },
     );
 
@@ -357,34 +365,31 @@ pub fn _extract<T>(sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
-    dbg!(&sufr_file);
     let now = Instant::now();
     let positions: Vec<_> = parse_pos(&args.extract)?
         .into_iter()
         .flat_map(|r| r.collect::<Vec<_>>())
         .collect();
 
-    //let mut output: Box<dyn Write> = match &args.output {
-    //    Some(out_name) => Box::new(File::create(out_name)?),
-    //    _ => Box::new(io::stdout()),
-    //};
-    //
-    //let sa_len = sa.text.len();
-    //for start in positions {
-    //    if let Some(pos) = sa.suffix_array.get(start).map(|v| v.to_usize()) {
-    //        let mut end = args.max_len.map_or(sa_len, |len| pos + len);
-    //        if end > sa_len {
-    //            end = sa_len
-    //        }
-    //        let seq = String::from_utf8(sa.text[pos..end].to_vec())?;
-    //        if args.number {
-    //            writeln!(output, "{pos:3}: {seq}")?;
-    //        } else {
-    //            writeln!(output, "{seq}")?;
-    //        }
-    //    }
-    //}
-    //info!("Extracted suffixes in {:?}", now.elapsed());
+    let mut output: Box<dyn Write> = match &args.output {
+        Some(out_name) => Box::new(File::create(out_name)?),
+        _ => Box::new(io::stdout()),
+    };
+
+    let text_len = sufr_file.len.to_usize();
+    let sa_iter = sufr_file.get_suffix_array()?;
+    for start in positions {
+        if let Some(pos) = sa_iter.get(start).map(|v| v.to_usize()) {
+            let end = min(args.max_len.map_or(text_len, |len| pos + len), text_len);
+            let seq = String::from_utf8(sufr_file.text[pos..end].to_vec())?;
+            if args.number {
+                writeln!(output, "{pos:3}: {seq}")?;
+            } else {
+                writeln!(output, "{seq}")?;
+            }
+        }
+    }
+    info!("Extracted suffixes in {:?}", now.elapsed());
 
     Ok(())
 }

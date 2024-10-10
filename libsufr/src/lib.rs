@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use log::info;
 use needletail::parse_fastx_file;
+use range_minimum_query::Rmq;
 //use rand::seq::SliceRandom;
 use rand::Rng;
 use rayon::prelude::*;
@@ -14,7 +15,7 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     mem,
     //ops::Range,
-    ops::{Add, Div, Sub},
+    ops::{Add, Div, Range, Sub},
     path::PathBuf,
     slice,
     sync::{Arc, Mutex},
@@ -900,6 +901,113 @@ where
 
 // --------------------------------------------------
 #[derive(Debug)]
+pub struct FileIter<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    filename: String,
+    buffer: Vec<T>,
+    buffer_size: usize,
+    start_position: u64,
+    current_position: u64,
+    end_position: u64,
+    exhausted: bool,
+}
+
+impl<T> FileIter<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    pub fn new(filename: &str, pos: &SufrFilePosition) -> Self {
+        FileIter {
+            filename: filename.to_string(),
+            buffer: vec![],
+            buffer_size: 4,
+            start_position: pos.start as u64,
+            current_position: pos.start as u64,
+            end_position: (pos.start + pos.size) as u64,
+            exhausted: false,
+        }
+    }
+
+    // --------------------------------------------------
+    pub fn get(&self, pos: usize) -> Result<T> {
+        let mut file = File::open(&self.filename).unwrap();
+        let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
+        file.seek(SeekFrom::Start(seek))?;
+        let mut buffer: Vec<u8> = vec![0; mem::size_of::<T>()];
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == mem::size_of::<T>() {
+            let res = unsafe {
+                std::slice::from_raw_parts(buffer.as_ptr() as *const _, 1)
+            };
+            Ok(res[0])
+        } else {
+            bail!("Failed to get position '{pos}'")
+        }
+    }
+
+    // --------------------------------------------------
+    pub fn get_range(&self, range: Range<usize>) -> Result<Vec<T>> {
+        let mut file = File::open(&self.filename).unwrap();
+        let start = self.start_position as usize
+            + (range.start * mem::size_of::<T>());
+        let end =
+            self.start_position as usize + (range.end * mem::size_of::<T>());
+        let valid = self.start_position as usize..self.end_position as usize;
+        if valid.contains(&start) && valid.contains(&end) {
+            file.seek(SeekFrom::Start(start as u64))?;
+            let mut buffer: Vec<u8> = vec![0; end - start];
+            let bytes_read = file.read(&mut buffer)?;
+            let num_vals = bytes_read / mem::size_of::<T>();
+            Ok(SufrBuilder::slice_u8_to_vec(&buffer, num_vals))
+        } else {
+            bail!("Invalid range: {range:?}")
+        }
+    }
+}
+
+impl<T> Iterator for FileIter<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.exhausted {
+            None
+        } else {
+            // Fill the buffer
+            if self.buffer.is_empty() {
+                if self.current_position >= self.end_position {
+                    self.exhausted = true;
+                    return None;
+                }
+
+                let mut file = File::open(&self.filename).unwrap();
+                file.seek(SeekFrom::Start(self.current_position)).unwrap();
+                let mut bytes_wanted = self.buffer_size * mem::size_of::<T>();
+                if self.current_position + bytes_wanted as u64
+                    > self.end_position
+                {
+                    bytes_wanted =
+                        (self.end_position - self.current_position) as usize;
+                }
+                let mut buffer: Vec<u8> = vec![0; bytes_wanted];
+                let bytes_read = file.read(&mut buffer).unwrap();
+                self.current_position = file.stream_position().unwrap();
+                let num_vals = bytes_read / mem::size_of::<T>();
+                self.buffer = SufrBuilder::slice_u8_to_vec(&buffer, num_vals);
+                self.buffer.reverse();
+            }
+
+            self.buffer.pop()
+        }
+    }
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
 pub struct SufrFilePosition {
     start: usize,
     size: usize,
@@ -920,7 +1028,7 @@ where
     pub num_sequences: T,
     pub sequence_starts: Vec<T>,
     pub headers: Vec<String>,
-    pub text: SufrFilePosition,
+    pub text: Vec<u8>,
     pub suffix_array: SufrFilePosition,
     pub lcp: SufrFilePosition,
 }
@@ -931,7 +1039,7 @@ where
 {
     // Read serialized ".sufr" file
     pub fn read(filename: &str) -> Result<SufrFile<T>> {
-        println!("Reading '{filename}'");
+        let now = Instant::now();
         let mut file =
             File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
@@ -969,11 +1077,8 @@ where
             SufrBuilder::slice_u8_to_vec(&buffer, num_sequences.to_usize());
 
         // Text
-        let text = SufrFilePosition {
-            start: file.stream_position()? as usize,
-            size: text_len,
-        };
-        file.seek_relative(text.size as i64)?;
+        let mut text = vec![0u8; text_len];
+        file.read_exact(&mut text)?;
 
         // Suffix Array
         let suffix_array = SufrFilePosition {
@@ -993,6 +1098,8 @@ where
         let mut buffer = vec![];
         file.read_to_end(&mut buffer)?;
         let headers: Vec<String> = bincode::deserialize(&buffer)?;
+
+        info!("Read '{filename}' in {:?}", now.elapsed());
 
         Ok(SufrFile {
             filename: filename.to_string(),
@@ -1017,38 +1124,60 @@ where
         file.seek(SeekFrom::Start(self.suffix_array.start as u64))?;
         let mut buffer = vec![0u8; self.suffix_array.size];
         file.read_exact(&mut buffer)?;
-        let suffix_array: Vec<T> =
-            SufrBuilder::slice_u8_to_vec(&buffer, self.num_suffixes.to_usize());
+        let suffix_array: Vec<T> = SufrBuilder::slice_u8_to_vec(
+            &buffer,
+            self.num_suffixes.to_usize(),
+        );
         Ok(suffix_array)
     }
 
     // --------------------------------------------------
-    pub fn get_raw_text(&self) -> Result<Vec<u8>> {
+    pub fn get_lcp(&self) -> Result<Vec<T>> {
         let mut file = File::open(&self.filename)
             .map_err(|e| anyhow!("{}: {e}", self.filename))?;
-        file.seek(SeekFrom::Start(self.text.start as u64))?;
-        let mut buffer = vec![0u8; self.text.size];
+        file.seek(SeekFrom::Start(self.lcp.start as u64))?;
+        let mut buffer = vec![0u8; self.lcp.size];
         file.read_exact(&mut buffer)?;
-        Ok(buffer)
+        let lcp: Vec<T> = SufrBuilder::slice_u8_to_vec(
+            &buffer,
+            self.num_suffixes.to_usize(),
+        );
+        Ok(lcp)
+    }
+
+    // --------------------------------------------------
+    pub fn get_suffix_array_iter(&self) -> FileIter<T> {
+        FileIter::new(&self.filename, &self.suffix_array)
+    }
+
+    // --------------------------------------------------
+    pub fn get_lcp_iter(&self) -> FileIter<T> {
+        FileIter::new(&self.filename, &self.lcp)
     }
 
     // --------------------------------------------------
     pub fn get_text(&self) -> Result<String> {
-        Ok(String::from_utf8(self.get_raw_text()?)?)
+        Ok(String::from_utf8(self.text.to_vec())?)
     }
 
-    //pub fn string_at(&self, pos: usize) -> String {
-    //    self.text
-    //        .get(pos..)
-    //        .map(|v| String::from_utf8(v.to_vec()).unwrap())
-    //        .unwrap()
-    //}
+    pub fn string_at(&self, pos: usize, len: Option<usize>) -> String {
+        let end = len.map_or(self.len.to_usize(), |n| pos + n);
+        self.text
+            .get(pos..end)
+            .map(|v| String::from_utf8(v.to_vec()).unwrap())
+            .unwrap()
+    }
 
     //pub fn is_less(&self, s1: T, s2: T) -> bool {
     //    if s1 == s2 {
     //        false
     //    } else {
-    //        let len_lcp = self.find_lcp(s1, s2, self.max_context).to_usize();
+    //        let lcp_range = if s1 < s2 { s1..s2 } else { s2..s1 };
+    //        let vals = self.get_lcp_iter().get_range(lcp_range);
+    //        dbg!(vals);
+    //        let rmq =
+    //            Rmq::from_iter(self.get_lcp_iter().get_range(lcp_range));
+    //        let lcp = rmq.range_minimum(0..);
     //
     //        match (
     //            self.text.get(s1.to_usize() + len_lcp),
@@ -1060,22 +1189,37 @@ where
     //        }
     //    }
     //}
-    //
+
     //pub fn get_lcp(pos: T) -> usize {
     //
     //}
-    //
-    //pub fn check_order(&self) -> Vec<T> {
-    //    let mut errors = vec![];
-    //    for window in self.suffix_array.windows(2) {
-    //        if let [prev, cur] = window {
-    //            if !self.is_less(*prev, *cur) {
-    //                errors.push(*prev);
-    //            }
-    //        }
-    //    }
-    //    errors
-    //}
+
+    pub fn check_suffix_array(&self) -> Result<Vec<usize>> {
+        let sa = self.get_suffix_array_iter();
+        let lcp = self.get_lcp_iter();
+        let mut previous: Option<usize> = None;
+        let mut errors = vec![];
+
+        for (cur_sa, len_lcp) in sa.zip(lcp) {
+            let cur_sa = cur_sa.to_usize();
+            let len_lcp = len_lcp.to_usize();
+            if let Some(prev_sa) = previous {
+                let is_less = match (
+                    self.text.get(prev_sa + len_lcp),
+                    self.text.get(cur_sa + len_lcp),
+                ) {
+                    (Some(a), Some(b)) => a < b,
+                    (None, Some(_)) => true,
+                    _ => false,
+                };
+                if !is_less {
+                    errors.push(cur_sa);
+                }
+            }
+            previous = Some(cur_sa);
+        }
+        Ok(errors)
+    }
 }
 
 // --------------------------------------------------
