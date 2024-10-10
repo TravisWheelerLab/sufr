@@ -38,7 +38,7 @@ chr1:
 	$(CREATE_RELEASE) --dna -n 64 $(CHR1)
 
 human:
-	$(CREATE_RELEASE) -t 16 --dna -n 8000 $(HUMAN)
+	$(CREATE_RELEASE) -t 8 --dna -n 800 $(HUMAN)
 
 valcache:
 	valgrind --tool=cachegrind ./target/release/sufr create ../data/chr1.fa --ignore-start-n -o chr1.sa --log info

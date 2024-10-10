@@ -2,10 +2,10 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_sequence_file, read_suffix_length, FromUsize, Int, SuffixArray,
-    SuffixArrayBuilder,
+    read_sequence_file, read_suffix_length, FromUsize, Int, SufrFile,
+    SufrBuilder,
 };
-use log::{debug, info};
+use log::info;
 use regex::Regex;
 use std::{
     ffi::OsStr,
@@ -152,32 +152,35 @@ type PositionList = Vec<Range<usize>>;
 pub fn check(args: &CheckArgs) -> Result<()> {
     let len = read_suffix_length(&args.filename)? as u64;
     if len < u32::MAX as u64 {
-        let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
-        _check(sa, args)
+        let sufr_file: SufrFile<u32> = SufrFile::read(&args.filename)?;
+        _check(sufr_file, args)
     } else {
-        let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
-        _check(sa, args)
+        let sufr_file: SufrFile<u64> = SufrFile::read(&args.filename)?;
+        _check(sufr_file, args)
     }
 }
 
 // --------------------------------------------------
-pub fn _check<T>(sa: SuffixArray<T>, _args: &CheckArgs) -> Result<()>
+pub fn _check<T>(sufr_file: SufrFile<T>, _args: &CheckArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
+    dbg!(&sufr_file);
+    println!("text = '{}'", sufr_file.get_text()?);
+    println!("suffix_array = {:?}", sufr_file.get_suffix_array()?);
     let now = Instant::now();
 
     // Manual for now
     let num_errors = 0;
-    if sa.suffix_array.len() > 1 {
-        for i in 1..sa.suffix_array.len() {
-            let cur = sa.string_at(sa.suffix_array[i].to_usize());
-            let prev = sa.string_at(sa.suffix_array[i-1].to_usize());
-            if prev > cur {
-                eprintln!("{i}: '{cur}' vs '{prev}'");
-            }
-        }
-    }
+    //if sa.suffix_array.len() > 1 {
+    //    for i in 1..sa.suffix_array.len() {
+    //        let cur = sa.string_at(sa.suffix_array[i].to_usize());
+    //        let prev = sa.string_at(sa.suffix_array[i-1].to_usize());
+    //        if prev > cur {
+    //            eprintln!("{i}: '{cur}' vs '{prev}'");
+    //        }
+    //    }
+    //}
 
     println!(
         "Found {num_errors} error{} in suffix array.",
@@ -241,7 +244,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     if len < u32::MAX as u64 {
         let start_positions: Vec<u32> =
             seq_data.start_positions.iter().map(|&v| v as u32).collect();
-        let sa: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
+        let sa: SufrBuilder<u32> = SufrBuilder::new(
             seq_data.seq,
             len as u32,
             args.max_context.map(|val| val as u32),
@@ -254,7 +257,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     } else {
         let start_positions: Vec<u64> =
             seq_data.start_positions.iter().map(|&v| v as u64).collect();
-        let sa: SuffixArrayBuilder<u64> = SuffixArrayBuilder::new(
+        let sa: SufrBuilder<u64> = SufrBuilder::new(
             seq_data.seq,
             len,
             args.max_context.map(|val| val as u64),
@@ -269,7 +272,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
 // --------------------------------------------------
 // Helper for "create" that checks/writes SA/LCP
-pub fn _create<T>(sa: SuffixArrayBuilder<T>, args: &CreateArgs) -> Result<()>
+pub fn _create<T>(sa: SufrBuilder<T>, args: &CreateArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -338,49 +341,50 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
     let len = read_suffix_length(&args.filename)? as u64;
     if len < u32::MAX as u64 {
         let now = Instant::now();
-        let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
+        let sufr_file: SufrFile<u32> = SufrFile::read(&args.filename)?;
         info!("Read sufr file in {:?}", now.elapsed());
-        _extract(sa, args)
+        _extract(sufr_file, args)
     } else {
         let now = Instant::now();
-        let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
+        let sufr_file: SufrFile<u64> = SufrFile::read(&args.filename)?;
         info!("Read sufr file in {:?}", now.elapsed());
-        _extract(sa, args)
+        _extract(sufr_file, args)
     }
 }
 
 // --------------------------------------------------
-pub fn _extract<T>(sa: SuffixArray<T>, args: &ExtractArgs) -> Result<()>
+pub fn _extract<T>(sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
+    dbg!(&sufr_file);
     let now = Instant::now();
     let positions: Vec<_> = parse_pos(&args.extract)?
         .into_iter()
         .flat_map(|r| r.collect::<Vec<_>>())
         .collect();
 
-    let mut output: Box<dyn Write> = match &args.output {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
-    };
-
-    let sa_len = sa.text.len();
-    for start in positions {
-        if let Some(pos) = sa.suffix_array.get(start).map(|v| v.to_usize()) {
-            let mut end = args.max_len.map_or(sa_len, |len| pos + len);
-            if end > sa_len {
-                end = sa_len
-            }
-            let seq = String::from_utf8(sa.text[pos..end].to_vec())?;
-            if args.number {
-                writeln!(output, "{pos:3}: {seq}")?;
-            } else {
-                writeln!(output, "{seq}")?;
-            }
-        }
-    }
-    info!("Extracted suffixes in {:?}", now.elapsed());
+    //let mut output: Box<dyn Write> = match &args.output {
+    //    Some(out_name) => Box::new(File::create(out_name)?),
+    //    _ => Box::new(io::stdout()),
+    //};
+    //
+    //let sa_len = sa.text.len();
+    //for start in positions {
+    //    if let Some(pos) = sa.suffix_array.get(start).map(|v| v.to_usize()) {
+    //        let mut end = args.max_len.map_or(sa_len, |len| pos + len);
+    //        if end > sa_len {
+    //            end = sa_len
+    //        }
+    //        let seq = String::from_utf8(sa.text[pos..end].to_vec())?;
+    //        if args.number {
+    //            writeln!(output, "{pos:3}: {seq}")?;
+    //        } else {
+    //            writeln!(output, "{seq}")?;
+    //        }
+    //    }
+    //}
+    //info!("Extracted suffixes in {:?}", now.elapsed());
 
     Ok(())
 }
@@ -390,19 +394,19 @@ where
 //    let len = read_suffix_length(&args.filename)? as u64;
 //    if len < u32::MAX as u64 {
 //        let now = Instant::now();
-//        let sa: SuffixArray<u32> = SuffixArray::read(&args.filename)?;
+//        let sa: SufrFile<u32> = SufrFile::read(&args.filename)?;
 //        info!("Read sufr file in {:?}", now.elapsed());
 //        _search(sa, args)
 //    } else {
 //        let now = Instant::now();
-//        let sa: SuffixArray<u64> = SuffixArray::read(&args.filename)?;
+//        let sa: SufrFile<u64> = SufrFile::read(&args.filename)?;
 //        info!("Read sufr file in {:?}", now.elapsed());
 //        _search(sa, args)
 //    }
 //}
 //
 //// --------------------------------------------------
-//pub fn _search<T>(sa: SuffixArrayBuilder<T>, args: &SearchArgs) -> Result<()>
+//pub fn _search<T>(sa: SufrBuilder<T>, args: &SearchArgs) -> Result<()>
 //where
 //    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 //{

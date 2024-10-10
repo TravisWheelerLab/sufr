@@ -11,7 +11,7 @@ use std::{
     fmt::{Debug, Display},
     fs::{self, File, OpenOptions},
     hash::Hash,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     mem,
     //ops::Range,
     ops::{Add, Div, Sub},
@@ -22,14 +22,16 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
-const OUTFILE_VERSION: u8 = 1;
+const OUTFILE_VERSION: u8 = 2;
 
+// --------------------------------------------------
 #[derive(Debug)]
 pub struct Comparison {
     cmp: Ordering,
     lcp: usize,
 }
 
+// --------------------------------------------------
 #[derive(Debug)]
 pub struct SequenceFileData {
     pub seq: Vec<u8>,
@@ -37,22 +39,7 @@ pub struct SequenceFileData {
     pub headers: Vec<String>,
 }
 
-pub trait FromUsize<T> {
-    fn from_usize(val: usize) -> T;
-}
-
-impl FromUsize<u32> for u32 {
-    fn from_usize(val: usize) -> u32 {
-        val as u32
-    }
-}
-
-impl FromUsize<u64> for u64 {
-    fn from_usize(val: usize) -> u64 {
-        val as u64
-    }
-}
-
+// --------------------------------------------------
 pub trait Int:
     Debug
     + Add<Output = Self>
@@ -80,6 +67,23 @@ impl Int for u64 {
     }
 }
 
+pub trait FromUsize<T> {
+    fn from_usize(val: usize) -> T;
+}
+
+impl FromUsize<u32> for u32 {
+    fn from_usize(val: usize) -> u32 {
+        val as u32
+    }
+}
+
+impl FromUsize<u64> for u64 {
+    fn from_usize(val: usize) -> u64 {
+        val as u64
+    }
+}
+
+// --------------------------------------------------
 #[derive(Debug)]
 pub struct Partition<T>
 where
@@ -105,6 +109,7 @@ where
     path: PathBuf,
 }
 
+// --------------------------------------------------
 impl<T> PartitionBuilder<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
@@ -143,7 +148,7 @@ where
                 .create(true)
                 .append(true)
                 .open(&self.path)?;
-            out.write_all(SuffixArrayBuilder::vec_to_slice_u8(
+            out.write_all(SufrBuilder::vec_to_slice_u8(
                 &self.vals[0..self.len],
             ))?;
             self.total_len += self.len;
@@ -154,7 +159,7 @@ where
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct SuffixArrayBuilder<T>
+pub struct SufrBuilder<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
@@ -170,7 +175,7 @@ where
     pub partitions: Vec<Partition<T>>,
 }
 
-impl<T> SuffixArrayBuilder<T>
+impl<T> SufrBuilder<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
@@ -182,8 +187,8 @@ where
         sequence_starts: Vec<T>,
         headers: Vec<String>,
         num_partitions: usize,
-    ) -> Result<SuffixArrayBuilder<T>> {
-        let mut sa = SuffixArrayBuilder {
+    ) -> Result<SufrBuilder<T>> {
+        let mut sa = SufrBuilder {
             version: OUTFILE_VERSION,
             is_dna,
             max_context: max_context.unwrap_or(len),
@@ -303,7 +308,6 @@ where
         } else {
             num_partitions
         };
-        println!("Partition into {num_partitions}");
 
         // Randomly select some pivots
         let now = Instant::now();
@@ -323,6 +327,7 @@ where
             builders.push(Arc::new(Mutex::new(builder)));
         }
 
+        let now = Instant::now();
         //self.text.iter().enumerate().try_for_each(
         self.text.par_iter().enumerate().try_for_each(
             |(i, val)| -> Result<()> {
@@ -352,6 +357,12 @@ where
             }
         }
 
+        info!(
+            "Finished writing pivot{} in {:?}",
+            if num_pivots == 1 { "" } else { "s" },
+            now.elapsed()
+        );
+
         Ok((builders, num_suffixes))
     }
 
@@ -360,6 +371,7 @@ where
         // We will get more partition files than num_partitions
         let (mut part_files, num_suffixes) =
             self.partition(num_partitions)?;
+
         let num_per_partition = num_suffixes / num_partitions;
         let total_sort_time = Instant::now();
 
@@ -396,7 +408,7 @@ where
                 for (path, len) in &partition_inputs[partition_num] {
                     let buffer = fs::read(path)?;
                     let mut part: Vec<T> =
-                        SuffixArrayBuilder::slice_u8_to_vec(&buffer, *len);
+                        SufrBuilder::slice_u8_to_vec(&buffer, *len);
                     part_sa.append(&mut part);
                 }
 
@@ -832,6 +844,9 @@ where
         bytes_out +=
             out.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
 
+        // Text
+        bytes_out += out.write(&self.text)?;
+
         // Stitch partitioned suffix files together
         for partition in &self.partitions {
             let buffer = fs::read(&partition.sa_path)?;
@@ -857,12 +872,6 @@ where
                 bytes_out += out.write(Self::vec_to_slice_u8(&lcp))?;
             }
         }
-
-        // Sequence
-        bytes_out += out.write(&self.text)?;
-        //let bytes_text = out.write(&self.text)?;
-        //info!("Wrote {bytes_text} '{:?}'", self.text);
-        //bytes_out += bytes_text;
 
         // Headers are variable in length so they are at the end
         bytes_out += out.write(&bincode::serialize(&self.headers)?)?;
@@ -891,47 +900,37 @@ where
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct SuffixArray<T>
+pub struct SufrFilePosition {
+    start: usize,
+    size: usize,
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
+pub struct SufrFile<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    pub filename: String,
     pub version: u8,
     pub is_dna: bool,
     pub max_context: T,
     pub len: T,
+    pub num_suffixes: T,
     pub num_sequences: T,
     pub sequence_starts: Vec<T>,
     pub headers: Vec<String>,
-    pub text: Vec<u8>,
-    pub suffix_array: Vec<T>,
-    pub lcp: Vec<T>,
+    pub text: SufrFilePosition,
+    pub suffix_array: SufrFilePosition,
+    pub lcp: SufrFilePosition,
 }
 
-impl<T> SuffixArray<T>
+impl<T> SufrFile<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
-    pub fn string_at(&self, pos: usize) -> String {
-        self.text
-            .get(pos..)
-            .map(|v| String::from_utf8(v.to_vec()).unwrap())
-            .unwrap()
-    }
-
-    //pub fn check_order(&self) -> Vec<T> {
-    //    let mut errors = vec![];
-    //    for window in self.suffix_array.windows(2) {
-    //        if let [prev, cur] = window {
-    //            if !self.is_less(*prev, *cur) {
-    //                errors.push(*prev);
-    //            }
-    //        }
-    //    }
-    //    errors
-    //}
-
     // Read serialized ".sufr" file
-    pub fn read(filename: &str) -> Result<SuffixArray<T>> {
+    pub fn read(filename: &str) -> Result<SufrFile<T>> {
         println!("Reading '{filename}'");
         let mut file =
             File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
@@ -950,7 +949,7 @@ where
         // Length of SA
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let sa_len = usize::from_ne_bytes(buffer);
+        let num_suffixes = usize::from_ne_bytes(buffer);
 
         // Max context
         let mut buffer = [0; 8];
@@ -966,45 +965,117 @@ where
         let mut buffer =
             vec![0u8; num_sequences.to_usize() * mem::size_of::<T>()];
         file.read_exact(&mut buffer)?;
-        let sequence_starts: Vec<T> = SuffixArrayBuilder::slice_u8_to_vec(
-            &buffer,
-            num_sequences.to_usize(),
-        );
+        let sequence_starts: Vec<T> =
+            SufrBuilder::slice_u8_to_vec(&buffer, num_sequences.to_usize());
+
+        // Text
+        let text = SufrFilePosition {
+            start: file.stream_position()? as usize,
+            size: text_len,
+        };
+        file.seek_relative(text.size as i64)?;
 
         // Suffix Array
-        let mut buffer = vec![0u8; sa_len * mem::size_of::<T>()];
-        file.read_exact(&mut buffer)?;
-        let suffix_array: Vec<T> =
-            SuffixArrayBuilder::slice_u8_to_vec(&buffer, sa_len);
+        let suffix_array = SufrFilePosition {
+            start: file.stream_position()? as usize,
+            size: num_suffixes * mem::size_of::<T>(),
+        };
+        file.seek_relative(suffix_array.size as i64)?;
 
-        // LCP Array
-        let mut buffer = vec![0u8; sa_len * mem::size_of::<T>()];
-        file.read_exact(&mut buffer)?;
-        let lcp: Vec<T> =
-            SuffixArrayBuilder::slice_u8_to_vec(&buffer, sa_len);
-
-        // Sequence/text
-        let mut text = vec![0u8; text_len];
-        file.read_exact(&mut text)?;
+        // LCP
+        let lcp = SufrFilePosition {
+            start: file.stream_position()? as usize,
+            size: suffix_array.size,
+        };
+        file.seek_relative(lcp.size as i64)?;
 
         // Headers are variable in length so they are at the end
         let mut buffer = vec![];
         file.read_to_end(&mut buffer)?;
         let headers: Vec<String> = bincode::deserialize(&buffer)?;
 
-        Ok(SuffixArray {
+        Ok(SufrFile {
+            filename: filename.to_string(),
             version,
             is_dna,
             len: T::from_usize(text_len),
+            num_suffixes: T::from_usize(num_suffixes),
             max_context,
             num_sequences,
             sequence_starts,
             headers,
+            text,
             suffix_array,
             lcp,
-            text,
         })
     }
+
+    // --------------------------------------------------
+    pub fn get_suffix_array(&self) -> Result<Vec<T>> {
+        let mut file = File::open(&self.filename)
+            .map_err(|e| anyhow!("{}: {e}", self.filename))?;
+        file.seek(SeekFrom::Start(self.suffix_array.start as u64))?;
+        let mut buffer = vec![0u8; self.suffix_array.size];
+        file.read_exact(&mut buffer)?;
+        let suffix_array: Vec<T> =
+            SufrBuilder::slice_u8_to_vec(&buffer, self.num_suffixes.to_usize());
+        Ok(suffix_array)
+    }
+
+    // --------------------------------------------------
+    pub fn get_raw_text(&self) -> Result<Vec<u8>> {
+        let mut file = File::open(&self.filename)
+            .map_err(|e| anyhow!("{}: {e}", self.filename))?;
+        file.seek(SeekFrom::Start(self.text.start as u64))?;
+        let mut buffer = vec![0u8; self.text.size];
+        file.read_exact(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    // --------------------------------------------------
+    pub fn get_text(&self) -> Result<String> {
+        Ok(String::from_utf8(self.get_raw_text()?)?)
+    }
+
+    //pub fn string_at(&self, pos: usize) -> String {
+    //    self.text
+    //        .get(pos..)
+    //        .map(|v| String::from_utf8(v.to_vec()).unwrap())
+    //        .unwrap()
+    //}
+
+    //pub fn is_less(&self, s1: T, s2: T) -> bool {
+    //    if s1 == s2 {
+    //        false
+    //    } else {
+    //        let len_lcp = self.find_lcp(s1, s2, self.max_context).to_usize();
+    //
+    //        match (
+    //            self.text.get(s1.to_usize() + len_lcp),
+    //            self.text.get(s2.to_usize() + len_lcp),
+    //        ) {
+    //            (Some(a), Some(b)) => a < b,
+    //            (None, Some(_)) => true,
+    //            _ => false,
+    //        }
+    //    }
+    //}
+    //
+    //pub fn get_lcp(pos: T) -> usize {
+    //
+    //}
+    //
+    //pub fn check_order(&self) -> Vec<T> {
+    //    let mut errors = vec![];
+    //    for window in self.suffix_array.windows(2) {
+    //        if let [prev, cur] = window {
+    //            if !self.is_less(*prev, *cur) {
+    //                errors.push(*prev);
+    //            }
+    //        }
+    //    }
+    //    errors
+    //}
 }
 
 // --------------------------------------------------
@@ -1019,7 +1090,7 @@ pub fn read_suffix_length(filename: &str) -> Result<usize> {
     file.read_exact(&mut buffer)?;
 
     let outfile_version = buffer[0];
-    if outfile_version == 1 {
+    if outfile_version == OUTFILE_VERSION {
         // Length of SA is the next usize
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
@@ -1031,7 +1102,7 @@ pub fn read_suffix_length(filename: &str) -> Result<usize> {
 
 // --------------------------------------------------
 // Utility function to read FASTA/Q file for sequence
-// data needed by SuffixArrayBuilder
+// data needed by SufrBuilder
 pub fn read_sequence_file(filename: &str) -> Result<SequenceFileData> {
     let mut reader = parse_fastx_file(filename)?;
     //let mut seq : Vec<u8> = vec![];
@@ -1069,7 +1140,7 @@ pub fn read_sequence_file(filename: &str) -> Result<SequenceFileData> {
 }
 
 // --------------------------------------------------
-// Utility function used by SuffixArrayBuilder
+// Utility function used by SufrBuilder
 fn usize_to_bytes(value: usize) -> Vec<u8> {
     // Determine the size of usize in bytes
     let size = std::mem::size_of::<usize>();
@@ -1089,8 +1160,7 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_sequence_file, read_suffix_length, usize_to_bytes,
-        SuffixArrayBuilder,
+        read_sequence_file, read_suffix_length, usize_to_bytes, SufrBuilder,
     };
     use anyhow::{anyhow, Result};
     use std::{cmp::Ordering, fs::File, io::BufWriter};
@@ -1098,39 +1168,37 @@ mod tests {
 
     #[test]
     fn test_slice_u8_to_vec() -> Result<()> {
-        let res: Vec<u32> =
-            SuffixArrayBuilder::slice_u8_to_vec(&[0, 0, 0, 0], 1);
+        let res: Vec<u32> = SufrBuilder::slice_u8_to_vec(&[0, 0, 0, 0], 1);
         assert_eq!(res, &[0u32]);
 
         let res: Vec<u64> =
-            SuffixArrayBuilder::slice_u8_to_vec(&[0, 0, 0, 0, 0, 0, 0, 0], 1);
+            SufrBuilder::slice_u8_to_vec(&[0, 0, 0, 0, 0, 0, 0, 0], 1);
         assert_eq!(res, &[0u64]);
 
-        let res: Vec<u32> =
-            SuffixArrayBuilder::slice_u8_to_vec(&[1, 0, 0, 0], 1);
+        let res: Vec<u32> = SufrBuilder::slice_u8_to_vec(&[1, 0, 0, 0], 1);
         assert_eq!(res, &[1u32]);
 
         let res: Vec<u64> =
-            SuffixArrayBuilder::slice_u8_to_vec(&[1, 0, 0, 0, 0, 0, 0, 0], 1);
+            SufrBuilder::slice_u8_to_vec(&[1, 0, 0, 0, 0, 0, 0, 0], 1);
         assert_eq!(res, &[1u64]);
 
         let res: Vec<u32> =
-            SuffixArrayBuilder::slice_u8_to_vec(&[255, 255, 255, 255], 1);
+            SufrBuilder::slice_u8_to_vec(&[255, 255, 255, 255], 1);
         assert_eq!(res, &[u32::MAX]);
 
-        let res: Vec<u64> = SuffixArrayBuilder::slice_u8_to_vec(
+        let res: Vec<u64> = SufrBuilder::slice_u8_to_vec(
             &[255, 255, 255, 255, 255, 255, 255, 255],
             1,
         );
         assert_eq!(res, &[u64::MAX]);
 
-        let res: Vec<u32> = SuffixArrayBuilder::slice_u8_to_vec(
+        let res: Vec<u32> = SufrBuilder::slice_u8_to_vec(
             &[0, 0, 0, 0, 255, 255, 255, 255],
             2,
         );
         assert_eq!(res, &[0u32, u32::MAX]);
 
-        let res: Vec<u64> = SuffixArrayBuilder::slice_u8_to_vec(
+        let res: Vec<u64> = SufrBuilder::slice_u8_to_vec(
             &[
                 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255,
                 255,
@@ -1144,28 +1212,28 @@ mod tests {
 
     #[test]
     fn test_vec_to_slice_u8() -> Result<()> {
-        let res = SuffixArrayBuilder::vec_to_slice_u8(&[0u32]);
+        let res = SufrBuilder::vec_to_slice_u8(&[0u32]);
         assert_eq!(res, &[0, 0, 0, 0]);
 
-        let res = SuffixArrayBuilder::vec_to_slice_u8(&[0u64]);
+        let res = SufrBuilder::vec_to_slice_u8(&[0u64]);
         assert_eq!(res, &[0, 0, 0, 0, 0, 0, 0, 0]);
 
-        let res = SuffixArrayBuilder::vec_to_slice_u8(&[1u32]);
+        let res = SufrBuilder::vec_to_slice_u8(&[1u32]);
         assert_eq!(res, &[1, 0, 0, 0]);
 
-        let res = SuffixArrayBuilder::vec_to_slice_u8(&[1u64]);
+        let res = SufrBuilder::vec_to_slice_u8(&[1u64]);
         assert_eq!(res, &[1, 0, 0, 0, 0, 0, 0, 0]);
 
-        let res = SuffixArrayBuilder::vec_to_slice_u8(&[u32::MAX]);
+        let res = SufrBuilder::vec_to_slice_u8(&[u32::MAX]);
         assert_eq!(res, &[255, 255, 255, 255]);
 
-        let res = SuffixArrayBuilder::vec_to_slice_u8(&[u64::MAX]);
+        let res = SufrBuilder::vec_to_slice_u8(&[u64::MAX]);
         assert_eq!(res, &[255, 255, 255, 255, 255, 255, 255, 255]);
 
-        let res = SuffixArrayBuilder::vec_to_slice_u8(&[0u32, u32::MAX]);
+        let res = SufrBuilder::vec_to_slice_u8(&[0u32, u32::MAX]);
         assert_eq!(res, &[0, 0, 0, 0, 255, 255, 255, 255]);
 
-        let res = SuffixArrayBuilder::vec_to_slice_u8(&[0u64, u64::MAX]);
+        let res = SufrBuilder::vec_to_slice_u8(&[0u64, u64::MAX]);
         assert_eq!(
             res,
             &[
@@ -1189,7 +1257,7 @@ mod tests {
             seq_data.start_positions.iter().map(|&v| v as u32).collect();
         let len = seq_data.seq.len() as u32;
         let num_partitions = 1;
-        let sa: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
+        let sa: SufrBuilder<u32> = SufrBuilder::new(
             seq_data.seq,
             len,
             max_context,
@@ -1257,7 +1325,7 @@ mod tests {
             seq_data.start_positions.iter().map(|&v| v as u32).collect();
         let len = seq_data.seq.len() as u32;
         let num_partitions = 1;
-        let sa: SuffixArrayBuilder<u32> = SuffixArrayBuilder::new(
+        let sa: SufrBuilder<u32> = SufrBuilder::new(
             seq_data.seq,
             len,
             max_context,
