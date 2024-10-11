@@ -8,6 +8,7 @@ use libsufr::{
 use log::info;
 use regex::Regex;
 use std::{
+    num::NonZeroUsize,
     cmp::min,
     ffi::OsStr,
     fmt::Debug,
@@ -309,13 +310,21 @@ where
 
 // --------------------------------------------------
 // Parse an index from a string representation of an integer.
+// Ensures the number is non-zero.
 // Ensures the number does not start with '+'.
+// Returns an index, which is a non-negative integer that is
+// one less than the number represented by the original input.
 fn parse_index(input: &str) -> Result<usize> {
     let value_error = || anyhow!(r#"illegal list value: "{input}""#);
     input
         .starts_with('+')
         .then(|| Err(value_error()))
-        .unwrap_or_else(|| input.parse::<usize>().map_err(|_| value_error()))
+        .unwrap_or_else(|| {
+            input
+                .parse::<NonZeroUsize>()
+                .map(|n| usize::from(n) - 1)
+                .map_err(|_| value_error())
+        })
 }
 
 // --------------------------------------------------
@@ -377,13 +386,13 @@ where
     };
 
     let text_len = sufr_file.len.to_usize();
-    let sa_iter = sufr_file.get_suffix_array()?;
+    let width = text_len.to_string().len();
     for start in positions {
-        if let Some(pos) = sa_iter.get(start).map(|v| v.to_usize()) {
+        if let Some(pos) = sufr_file.suffix_array.get(start).map(|v| v.to_usize()) {
             let end = min(args.max_len.map_or(text_len, |len| pos + len), text_len);
             let seq = String::from_utf8(sufr_file.text[pos..end].to_vec())?;
             if args.number {
-                writeln!(output, "{pos:3}: {seq}")?;
+                writeln!(output, "{pos:width$}: {seq}")?;
             } else {
                 writeln!(output, "{seq}")?;
             }
@@ -394,32 +403,32 @@ where
     Ok(())
 }
 
-//// --------------------------------------------------
-//pub fn search(args: &SearchArgs) -> Result<()> {
-//    let len = read_suffix_length(&args.filename)? as u64;
-//    if len < u32::MAX as u64 {
-//        let now = Instant::now();
-//        let sa: SufrFile<u32> = SufrFile::read(&args.filename)?;
-//        info!("Read sufr file in {:?}", now.elapsed());
-//        _search(sa, args)
-//    } else {
-//        let now = Instant::now();
-//        let sa: SufrFile<u64> = SufrFile::read(&args.filename)?;
-//        info!("Read sufr file in {:?}", now.elapsed());
-//        _search(sa, args)
-//    }
-//}
-//
-//// --------------------------------------------------
-//pub fn _search<T>(sa: SufrBuilder<T>, args: &SearchArgs) -> Result<()>
-//where
-//    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-//{
-//    let now = Instant::now();
-//    let res = match sa.search(&args.query) {
-//        Some(range) => format!("found in range {range:?}"),
-//        _ => "not found".to_string(),
-//    };
-//    println!("Query '{}' {res} in {:?}", args.query, now.elapsed());
-//    Ok(())
-//}
+// --------------------------------------------------
+pub fn search(args: &SearchArgs) -> Result<()> {
+    let len = read_suffix_length(&args.filename)? as u64;
+    if len < u32::MAX as u64 {
+        let now = Instant::now();
+        let sa: SufrFile<u32> = SufrFile::read(&args.filename)?;
+        info!("Read sufr file in {:?}", now.elapsed());
+        _search(sa, args)
+    } else {
+        let now = Instant::now();
+        let sa: SufrFile<u64> = SufrFile::read(&args.filename)?;
+        info!("Read sufr file in {:?}", now.elapsed());
+        _search(sa, args)
+    }
+}
+
+// --------------------------------------------------
+pub fn _search<T>(sufr_file: SufrFile<T>, args: &SearchArgs) -> Result<()>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+{
+    let now = Instant::now();
+    let res = match sufr_file.search(&args.query) {
+        Some(range) => format!("found in range {range:?}"),
+        _ => "not found".to_string(),
+    };
+    println!("Query '{}' {res} in {:?}", args.query, now.elapsed());
+    Ok(())
+}

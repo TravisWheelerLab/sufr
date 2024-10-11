@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use log::info;
 use needletail::parse_fastx_file;
-use range_minimum_query::Rmq;
+//use range_minimum_query::Rmq;
 //use rand::seq::SliceRandom;
 use rand::Rng;
 use rayon::prelude::*;
@@ -615,167 +615,6 @@ where
     }
 
     // --------------------------------------------------
-    // Search SuffixArray
-    //pub fn search(&self, query: &str) -> Option<Range<usize>> {
-    //    //let suffixes: Vec<_> = self
-    //    //    .suffix_array
-    //    //    .iter()
-    //    //    .zip(self.suffix_array.iter().map(|&p| self.string_at(p.to_usize())))
-    //    //    .map(|(p,s)| format!("{p:3}: {s}"))
-    //    //    .collect();
-    //    //println!("{}", suffixes.join("\n"));
-    //    let qry = query.as_bytes();
-    //    let n = self.suffix_array.len();
-    //    self.suffix_search_first(qry, 0, n - 1, 0, 0).map(|first| {
-    //        let last =
-    //            self.suffix_search_last(qry, first, n - 1, n, 0, 0).unwrap();
-    //        first..last
-    //    })
-    //}
-
-    // --------------------------------------------------
-    //fn suffix_search_first(
-    //    &self,
-    //    qry: &[u8],
-    //    low: usize,
-    //    high: usize,
-    //    left_lcp: usize,
-    //    right_lcp: usize,
-    //) -> Option<usize> {
-    //    if high >= low {
-    //        let mid = low + ((high - low) / 2);
-    //
-    //        let mid_cmp = self.compare(
-    //            qry,
-    //            self.suffix_array[mid].to_usize(),
-    //            min(left_lcp, right_lcp),
-    //        );
-    //
-    //        if mid_cmp.cmp == Ordering::Equal
-    //            && (mid == 0
-    //                || self
-    //                    .compare(
-    //                        qry,
-    //                        self.suffix_array[mid - 1].to_usize(),
-    //                        0,
-    //                    )
-    //                    .cmp
-    //                    == Ordering::Greater)
-    //        {
-    //            Some(mid)
-    //        } else if mid_cmp.cmp == Ordering::Greater {
-    //            self.suffix_search_first(
-    //                qry,
-    //                mid + 1,
-    //                high,
-    //                mid_cmp.lcp,
-    //                right_lcp,
-    //            )
-    //        } else {
-    //            // Ordering::Less
-    //            self.suffix_search_first(
-    //                qry,
-    //                low,
-    //                mid - 1,
-    //                left_lcp,
-    //                mid_cmp.lcp,
-    //            )
-    //        }
-    //    } else {
-    //        None
-    //    }
-    //}
-
-    // --------------------------------------------------
-    //fn suffix_search_last(
-    //    &self,
-    //    qry: &[u8],
-    //    low: usize,
-    //    high: usize,
-    //    n: usize,
-    //    left_lcp: usize,
-    //    right_lcp: usize,
-    //) -> Option<usize> {
-    //    if high >= low {
-    //        let mid = low + ((high - low) / 2);
-    //        let mid_cmp = self.compare(
-    //            qry,
-    //            self.suffix_array[mid].to_usize(),
-    //            min(left_lcp, right_lcp),
-    //        );
-    //
-    //        if mid_cmp.cmp == Ordering::Equal
-    //            && (mid == n - 1
-    //                || self
-    //                    .compare(
-    //                        qry,
-    //                        self.suffix_array[mid + 1].to_usize(),
-    //                        0,
-    //                    )
-    //                    .cmp
-    //                    == Ordering::Less)
-    //        {
-    //            Some(mid)
-    //        } else if mid_cmp.cmp == Ordering::Less {
-    //            self.suffix_search_last(
-    //                qry,
-    //                low,
-    //                mid - 1,
-    //                n,
-    //                left_lcp,
-    //                mid_cmp.lcp,
-    //            )
-    //        } else {
-    //            self.suffix_search_last(
-    //                qry,
-    //                mid + 1,
-    //                high,
-    //                n,
-    //                mid_cmp.lcp,
-    //                right_lcp,
-    //            )
-    //        }
-    //    } else {
-    //        None
-    //    }
-    //}
-
-    // --------------------------------------------------
-    pub fn compare(
-        &self,
-        query: &[u8],
-        suffix_pos: usize,
-        skip: usize,
-    ) -> Comparison {
-        let lcp = query
-            .iter()
-            .skip(skip)
-            .zip(self.text.get(suffix_pos + skip..).unwrap())
-            .map_while(|(a, b)| (a == b).then_some(a))
-            .count()
-            + skip;
-
-        let cmp = match (query.get(lcp), self.text.get(suffix_pos + lcp)) {
-            // Entire query matched
-            (None, _) => Ordering::Equal,
-            // Compare next char
-            (Some(a), Some(b)) => a.cmp(b),
-            // Panic at the disco
-            _ => unreachable!(),
-        };
-
-        //let q = String::from_utf8(query.to_vec()).unwrap();
-        //let s =
-        //    String::from_utf8(self.text.get(suffix_pos..).unwrap().to_vec())
-        //        .unwrap();
-        //println!(
-        //    "q '{q}' s at {suffix_pos} '{s}' skip {skip} = {:?}",
-        //    Comparison { lcp, cmp }
-        //);
-        Comparison { lcp, cmp }
-    }
-
-    // --------------------------------------------------
     #[inline(always)]
     fn select_pivots(
         &self,
@@ -900,50 +739,55 @@ where
 }
 
 // --------------------------------------------------
-#[derive(Debug)]
-pub struct FileIter<T>
+#[derive(Debug, Clone)]
+pub struct FileAccess<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     filename: String,
     buffer: Vec<T>,
     buffer_size: usize,
+    size: usize,
     start_position: u64,
     current_position: u64,
     end_position: u64,
     exhausted: bool,
 }
 
-impl<T> FileIter<T>
+impl<T> FileAccess<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
-    pub fn new(filename: &str, pos: &SufrFilePosition) -> Self {
-        FileIter {
+    pub fn new(filename: &str, start: u64, size: usize) -> Self {
+        FileAccess {
             filename: filename.to_string(),
             buffer: vec![],
-            buffer_size: 4,
-            start_position: pos.start as u64,
-            current_position: pos.start as u64,
-            end_position: (pos.start + pos.size) as u64,
+            buffer_size: 1000000,
+            size,
+            start_position: start,
+            current_position: start,
+            end_position: start + size as u64,
             exhausted: false,
         }
     }
 
     // --------------------------------------------------
-    pub fn get(&self, pos: usize) -> Result<T> {
+    // TODO: Ignoring lots of Results to return Option
+    pub fn get(&self, pos: usize) -> Option<T> {
         let mut file = File::open(&self.filename).unwrap();
         let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
-        file.seek(SeekFrom::Start(seek))?;
-        let mut buffer: Vec<u8> = vec![0; mem::size_of::<T>()];
-        let bytes_read = file.read(&mut buffer)?;
-        if bytes_read == mem::size_of::<T>() {
-            let res = unsafe {
-                std::slice::from_raw_parts(buffer.as_ptr() as *const _, 1)
-            };
-            Ok(res[0])
+        if seek <= self.end_position {
+            let _ = file.seek(SeekFrom::Start(seek));
+            let mut buffer: Vec<u8> = vec![0; mem::size_of::<T>()];
+            let bytes_read = file.read(&mut buffer).unwrap();
+            (bytes_read == mem::size_of::<T>()).then(|| {
+                let res = unsafe {
+                    std::slice::from_raw_parts(buffer.as_ptr() as *const _, 1)
+                };
+                res[0]
+            })
         } else {
-            bail!("Failed to get position '{pos}'")
+            None
         }
     }
 
@@ -967,7 +811,7 @@ where
     }
 }
 
-impl<T> Iterator for FileIter<T>
+impl<T> Iterator for FileAccess<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
@@ -1008,13 +852,6 @@ where
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct SufrFilePosition {
-    start: usize,
-    size: usize,
-}
-
-// --------------------------------------------------
-#[derive(Debug)]
 pub struct SufrFile<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
@@ -1029,8 +866,8 @@ where
     pub sequence_starts: Vec<T>,
     pub headers: Vec<String>,
     pub text: Vec<u8>,
-    pub suffix_array: SufrFilePosition,
-    pub lcp: SufrFilePosition,
+    pub suffix_array: FileAccess<T>,
+    pub lcp: FileAccess<T>,
 }
 
 impl<T> SufrFile<T>
@@ -1039,7 +876,6 @@ where
 {
     // Read serialized ".sufr" file
     pub fn read(filename: &str) -> Result<SufrFile<T>> {
-        let now = Instant::now();
         let mut file =
             File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
@@ -1081,25 +917,25 @@ where
         file.read_exact(&mut text)?;
 
         // Suffix Array
-        let suffix_array = SufrFilePosition {
-            start: file.stream_position()? as usize,
-            size: num_suffixes * mem::size_of::<T>(),
-        };
+        let suffix_array: FileAccess<T> = FileAccess::new(
+            filename,
+            file.stream_position()?,
+            num_suffixes * mem::size_of::<T>(),
+        );
         file.seek_relative(suffix_array.size as i64)?;
 
         // LCP
-        let lcp = SufrFilePosition {
-            start: file.stream_position()? as usize,
-            size: suffix_array.size,
-        };
+        let lcp: FileAccess<T> = FileAccess::new(
+            filename,
+            file.stream_position()?,
+            suffix_array.size,
+        );
         file.seek_relative(lcp.size as i64)?;
 
         // Headers are variable in length so they are at the end
         let mut buffer = vec![];
         file.read_to_end(&mut buffer)?;
         let headers: Vec<String> = bincode::deserialize(&buffer)?;
-
-        info!("Read '{filename}' in {:?}", now.elapsed());
 
         Ok(SufrFile {
             filename: filename.to_string(),
@@ -1118,54 +954,244 @@ where
     }
 
     // --------------------------------------------------
-    pub fn get_suffix_array(&self) -> Result<Vec<T>> {
-        let mut file = File::open(&self.filename)
-            .map_err(|e| anyhow!("{}: {e}", self.filename))?;
-        file.seek(SeekFrom::Start(self.suffix_array.start as u64))?;
-        let mut buffer = vec![0u8; self.suffix_array.size];
-        file.read_exact(&mut buffer)?;
-        let suffix_array: Vec<T> = SufrBuilder::slice_u8_to_vec(
-            &buffer,
-            self.num_suffixes.to_usize(),
-        );
-        Ok(suffix_array)
+    pub fn check_suffix_array(&self) -> Result<Vec<usize>> {
+        let sa = self.suffix_array.clone();
+        let lcp = self.lcp.clone();
+        let mut previous: Option<usize> = None;
+        let mut errors = vec![];
+
+        for (cur_sa, len_lcp) in sa.into_iter().zip(lcp.into_iter()) {
+            let cur_sa = cur_sa.to_usize();
+            let len_lcp = len_lcp.to_usize();
+            if let Some(prev_sa) = previous {
+                let is_less = match (
+                    self.text.get(prev_sa + len_lcp),
+                    self.text.get(cur_sa + len_lcp),
+                ) {
+                    (Some(a), Some(b)) => a < b,
+                    (None, Some(_)) => true,
+                    _ => false,
+                };
+                if !is_less {
+                    errors.push(cur_sa);
+                }
+            }
+            previous = Some(cur_sa);
+        }
+        Ok(errors)
     }
 
     // --------------------------------------------------
-    pub fn get_lcp(&self) -> Result<Vec<T>> {
-        let mut file = File::open(&self.filename)
-            .map_err(|e| anyhow!("{}: {e}", self.filename))?;
-        file.seek(SeekFrom::Start(self.lcp.start as u64))?;
-        let mut buffer = vec![0u8; self.lcp.size];
-        file.read_exact(&mut buffer)?;
-        let lcp: Vec<T> = SufrBuilder::slice_u8_to_vec(
-            &buffer,
-            self.num_suffixes.to_usize(),
-        );
-        Ok(lcp)
-    }
+    //pub fn get_suffix_array(&self) -> Result<Vec<T>> {
+    //    let mut file = File::open(&self.filename)
+    //        .map_err(|e| anyhow!("{}: {e}", self.filename))?;
+    //    file.seek(SeekFrom::Start(self.suffix_array.start as u64))?;
+    //    let mut buffer = vec![0u8; self.suffix_array.size];
+    //    file.read_exact(&mut buffer)?;
+    //    let suffix_array: Vec<T> = SufrBuilder::slice_u8_to_vec(
+    //        &buffer,
+    //        self.num_suffixes.to_usize(),
+    //    );
+    //    Ok(suffix_array)
+    //}
 
     // --------------------------------------------------
-    pub fn get_suffix_array_iter(&self) -> FileIter<T> {
-        FileIter::new(&self.filename, &self.suffix_array)
-    }
+    //pub fn get_lcp(&self) -> Result<Vec<T>> {
+    //    let mut file = File::open(&self.filename)
+    //        .map_err(|e| anyhow!("{}: {e}", self.filename))?;
+    //    file.seek(SeekFrom::Start(self.lcp.start as u64))?;
+    //    let mut buffer = vec![0u8; self.lcp.size];
+    //    file.read_exact(&mut buffer)?;
+    //    let lcp: Vec<T> = SufrBuilder::slice_u8_to_vec(
+    //        &buffer,
+    //        self.num_suffixes.to_usize(),
+    //    );
+    //    Ok(lcp)
+    //}
 
     // --------------------------------------------------
-    pub fn get_lcp_iter(&self) -> FileIter<T> {
-        FileIter::new(&self.filename, &self.lcp)
-    }
+    //pub fn get_suffix_array_iter(&self) -> FileAccess<T> {
+    //    FileAccess::new(&self.filename, &self.suffix_array)
+    //}
 
     // --------------------------------------------------
-    pub fn get_text(&self) -> Result<String> {
-        Ok(String::from_utf8(self.text.to_vec())?)
-    }
+    //pub fn get_lcp_iter(&self) -> FileAccess<T> {
+    //    FileAccess::new(&self.filename, &self.lcp)
+    //}
 
+    // --------------------------------------------------
+    //pub fn get_text(&self) -> Result<String> {
+    //    Ok(String::from_utf8(self.text.to_vec())?)
+    //}
+
+    // --------------------------------------------------
     pub fn string_at(&self, pos: usize, len: Option<usize>) -> String {
         let end = len.map_or(self.len.to_usize(), |n| pos + n);
         self.text
             .get(pos..end)
             .map(|v| String::from_utf8(v.to_vec()).unwrap())
             .unwrap()
+    }
+
+    // --------------------------------------------------
+    pub fn search(&self, query: &str) -> Option<Range<usize>> {
+        //let suffixes: Vec<_> = self
+        //    .suffix_array
+        //    .iter()
+        //    .zip(self.suffix_array.iter().map(|&p| self.string_at(p.to_usize())))
+        //    .map(|(p,s)| format!("{p:3}: {s}"))
+        //    .collect();
+        //println!("{}", suffixes.join("\n"));
+        let qry = query.as_bytes();
+        let n = self.num_suffixes.to_usize();
+        self.suffix_search_first(qry, 0, n - 1, 0, 0).map(|first| {
+            let last =
+                self.suffix_search_last(qry, first, n - 1, n, 0, 0).unwrap();
+            // TODO: Return zero-offset or 1-based?
+            (first + 1)..(last + 1)
+        })
+    }
+
+    // --------------------------------------------------
+    fn suffix_search_first(
+        &self,
+        qry: &[u8],
+        low: usize,
+        high: usize,
+        left_lcp: usize,
+        right_lcp: usize,
+    ) -> Option<usize> {
+        if high >= low {
+            let mid = low + ((high - low) / 2);
+
+            let mid_cmp = self.compare(
+                qry,
+                self.suffix_array.get(mid)?.to_usize(),
+                min(left_lcp, right_lcp),
+            );
+
+            if mid_cmp.cmp == Ordering::Equal
+                && (mid == 0
+                    || self
+                        .compare(
+                            qry,
+                            self.suffix_array.get(mid - 1)?.to_usize(),
+                            0,
+                        )
+                        .cmp
+                        == Ordering::Greater)
+            {
+                Some(mid)
+            } else if mid_cmp.cmp == Ordering::Greater {
+                self.suffix_search_first(
+                    qry,
+                    mid + 1,
+                    high,
+                    mid_cmp.lcp,
+                    right_lcp,
+                )
+            } else {
+                // Ordering::Less
+                self.suffix_search_first(
+                    qry,
+                    low,
+                    mid - 1,
+                    left_lcp,
+                    mid_cmp.lcp,
+                )
+            }
+        } else {
+            None
+        }
+    }
+
+    // --------------------------------------------------
+    fn suffix_search_last(
+        &self,
+        qry: &[u8],
+        low: usize,
+        high: usize,
+        n: usize,
+        left_lcp: usize,
+        right_lcp: usize,
+    ) -> Option<usize> {
+        if high >= low {
+            let mid = low + ((high - low) / 2);
+            let mid_cmp = self.compare(
+                qry,
+                self.suffix_array.get(mid)?.to_usize(),
+                min(left_lcp, right_lcp),
+            );
+
+            if mid_cmp.cmp == Ordering::Equal
+                && (mid == n - 1
+                    || self
+                        .compare(
+                            qry,
+                            self.suffix_array.get(mid + 1)?.to_usize(),
+                            0,
+                        )
+                        .cmp
+                        == Ordering::Less)
+            {
+                Some(mid)
+            } else if mid_cmp.cmp == Ordering::Less {
+                self.suffix_search_last(
+                    qry,
+                    low,
+                    mid - 1,
+                    n,
+                    left_lcp,
+                    mid_cmp.lcp,
+                )
+            } else {
+                self.suffix_search_last(
+                    qry,
+                    mid + 1,
+                    high,
+                    n,
+                    mid_cmp.lcp,
+                    right_lcp,
+                )
+            }
+        } else {
+            None
+        }
+    }
+
+    // --------------------------------------------------
+    pub fn compare(
+        &self,
+        query: &[u8],
+        suffix_pos: usize,
+        skip: usize,
+    ) -> Comparison {
+        let lcp = query
+            .iter()
+            .skip(skip)
+            .zip(self.text.get(suffix_pos + skip..).unwrap())
+            .map_while(|(a, b)| (a == b).then_some(a))
+            .count()
+            + skip;
+
+        let cmp = match (query.get(lcp), self.text.get(suffix_pos + lcp)) {
+            // Entire query matched
+            (None, _) => Ordering::Equal,
+            // Compare next char
+            (Some(a), Some(b)) => a.cmp(b),
+            // Panic at the disco
+            _ => unreachable!(),
+        };
+
+        //let q = String::from_utf8(query.to_vec()).unwrap();
+        //let s =
+        //    String::from_utf8(self.text.get(suffix_pos..).unwrap().to_vec())
+        //        .unwrap();
+        //println!(
+        //    "q '{q}' s at {suffix_pos} '{s}' skip {skip} = {:?}",
+        //    Comparison { lcp, cmp }
+        //);
+        Comparison { lcp, cmp }
     }
 
     //pub fn is_less(&self, s1: T, s2: T) -> bool {
@@ -1193,33 +1219,6 @@ where
     //pub fn get_lcp(pos: T) -> usize {
     //
     //}
-
-    pub fn check_suffix_array(&self) -> Result<Vec<usize>> {
-        let sa = self.get_suffix_array_iter();
-        let lcp = self.get_lcp_iter();
-        let mut previous: Option<usize> = None;
-        let mut errors = vec![];
-
-        for (cur_sa, len_lcp) in sa.zip(lcp) {
-            let cur_sa = cur_sa.to_usize();
-            let len_lcp = len_lcp.to_usize();
-            if let Some(prev_sa) = previous {
-                let is_less = match (
-                    self.text.get(prev_sa + len_lcp),
-                    self.text.get(cur_sa + len_lcp),
-                ) {
-                    (Some(a), Some(b)) => a < b,
-                    (None, Some(_)) => true,
-                    _ => false,
-                };
-                if !is_less {
-                    errors.push(cur_sa);
-                }
-            }
-            previous = Some(cur_sa);
-        }
-        Ok(errors)
-    }
 }
 
 // --------------------------------------------------

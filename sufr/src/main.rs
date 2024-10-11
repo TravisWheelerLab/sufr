@@ -41,10 +41,10 @@ fn run(args: Cli) -> Result<()> {
             sufr::extract(args)?;
             Ok(())
         }
-        //Some(Command::Search(args)) => {
-        //    sufr::search(args)?;
-        //    Ok(())
-        //}
+        Some(Command::Search(args)) => {
+            sufr::search(args)?;
+            Ok(())
+        }
         _ => unreachable!(),
     }
 }
