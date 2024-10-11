@@ -10,18 +10,21 @@ const SEQ3: &str = "tests/inputs/3.fa";
 
 // --------------------------------------------------
 fn create(input_file: &str, expected_file: &str) -> Result<()> {
+    dbg!(&expected_file);
     let outfile = NamedTempFile::new()?;
     let outpath = &outfile.path().to_str().unwrap();
     let output = Command::cargo_bin(PRG)?
         .args(vec!["create", "--dna", "-o", outpath, input_file])
         .output()
         .expect("fail");
+    println!("{output:?}");
 
     assert!(output.status.success());
     assert!(outfile.path().exists());
 
     let actual = fs::read(outfile.path())?;
     let expected = fs::read(expected_file)?;
+    dbg!(&expected);
 
     assert_eq!(actual, expected);
 
@@ -39,7 +42,7 @@ fn check(filename: &str) -> Result<()> {
 
     let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
 
-    assert!(stdout.starts_with("Found 0 errors"));
+    assert!(stdout.contains("found 0 errors"));
 
     Ok(())
 }

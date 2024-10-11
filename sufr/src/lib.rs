@@ -2,18 +2,17 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_sequence_file, read_suffix_length, FromUsize, Int, SufrBuilder,
-    SufrFile,
+    read_sequence_file, read_suffix_length, FromUsize, Int, SufrBuilder, SufrFile,
 };
 use log::info;
 use regex::Regex;
 use std::{
-    num::NonZeroUsize,
     cmp::min,
     ffi::OsStr,
     fmt::Debug,
     fs::File,
     io::{self, BufWriter, Write},
+    num::NonZeroUsize,
     ops::Range,
     path::PathBuf,
     time::Instant,
@@ -191,7 +190,11 @@ where
     println!(
         "Checked {} suffix{}, found {} error{} in suffix array.",
         num_fmt.format(",.0", sufr_file.num_suffixes.to_usize() as f64),
-        if sufr_file.num_suffixes.to_usize() == 1 { "" } else { "es" },
+        if sufr_file.num_suffixes.to_usize() == 1 {
+            ""
+        } else {
+            "es"
+        },
         num_fmt.format(",.0", num_errors as f64),
         if num_errors == 1 { "" } else { "s" },
     );
@@ -292,9 +295,8 @@ where
             .unwrap_or(OsStr::new("out"))
             .to_string_lossy()
     ));
-    let mut output = BufWriter::new(
-        File::create(outfile).map_err(|e| anyhow!("{outfile}: {e}"))?,
-    );
+    let mut output =
+        BufWriter::new(File::create(outfile).map_err(|e| anyhow!("{outfile}: {e}"))?);
     let now = Instant::now();
     let bytes_written = sa.write(&mut output)?;
     let num_fmt = NumberFormat::new();
@@ -386,16 +388,19 @@ where
     };
 
     let text_len = sufr_file.len.to_usize();
-    let width = text_len.to_string().len();
-    for start in positions {
-        if let Some(pos) = sufr_file.suffix_array.get(start).map(|v| v.to_usize()) {
-            let end = min(args.max_len.map_or(text_len, |len| pos + len), text_len);
-            let seq = String::from_utf8(sufr_file.text[pos..end].to_vec())?;
+    let width = text_len.to_string().len() + 1;
+    for pos in positions {
+        if let Some(suffix) = sufr_file.suffix_array.get(pos).map(|v| v.to_usize()) {
+            let end = min(args.max_len.map_or(text_len, |len| suffix + len), text_len);
+            let seq = String::from_utf8(sufr_file.text[suffix..end].to_vec())?;
+
             if args.number {
-                writeln!(output, "{pos:width$}: {seq}")?;
+                writeln!(output, "{suffix:width$}: {seq}")?;
             } else {
                 writeln!(output, "{seq}")?;
             }
+        } else {
+            break;
         }
     }
     info!("Extracted suffixes in {:?}", now.elapsed());
@@ -426,7 +431,7 @@ where
 {
     let now = Instant::now();
     let res = match sufr_file.search(&args.query) {
-        Some(range) => format!("found in range {range:?}"),
+        Some((start, stop)) => format!("found in range {}..{}", start + 1, stop + 1),
         _ => "not found".to_string(),
     };
     println!("Query '{}' {res} in {:?}", args.query, now.elapsed());

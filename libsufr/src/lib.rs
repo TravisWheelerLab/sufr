@@ -149,9 +149,7 @@ where
                 .create(true)
                 .append(true)
                 .open(&self.path)?;
-            out.write_all(SufrBuilder::vec_to_slice_u8(
-                &self.vals[0..self.len],
-            ))?;
+            out.write_all(SufrBuilder::vec_to_slice_u8(&self.vals[0..self.len]))?;
             self.total_len += self.len;
         }
         Ok(())
@@ -243,8 +241,7 @@ where
                 (start1..end1)
                     .zip(start2..end2)
                     .take_while(|(a, b)| {
-                        self.text.get_unchecked(*a)
-                            == self.text.get_unchecked(*b)
+                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
                     })
                     .count(),
             );
@@ -293,21 +290,24 @@ where
         }
     }
 
+    // --------------------------------------------------
     fn partition(
         &mut self,
         num_partitions: usize,
     ) -> Result<(Vec<Arc<Mutex<PartitionBuilder<T>>>>, usize)> {
         // Create more partitions than requested because
         // we can't know how big they will end up being
-        let max_partitions = self.len.to_usize() / 2;
+        let max_partitions = self.len.to_usize() / 4;
         let num_partitions = if num_partitions * 10 < max_partitions {
             num_partitions * 10
         } else if num_partitions * 5 < max_partitions {
             num_partitions * 5
         } else if num_partitions * 2 < max_partitions {
             num_partitions * 2
-        } else {
+        } else if num_partitions < max_partitions {
             num_partitions
+        } else {
+            max_partitions
         };
 
         // Randomly select some pivots
@@ -320,21 +320,20 @@ where
             now.elapsed()
         );
 
-        let capacity = 4096;
+        let capacity = 4; //4096;
         let mut builders: Vec<_> = vec![];
         for _ in 0..num_partitions {
-            let builder: PartitionBuilder<T> =
-                PartitionBuilder::new(capacity)?;
+            let builder: PartitionBuilder<T> = PartitionBuilder::new(capacity)?;
             builders.push(Arc::new(Mutex::new(builder)));
         }
 
         let now = Instant::now();
-        //self.text.iter().enumerate().try_for_each(
-        self.text.par_iter().enumerate().try_for_each(
-            |(i, val)| -> Result<()> {
+        self.text
+            .par_iter()
+            .enumerate()
+            .try_for_each(|(i, val)| -> Result<()> {
                 if !self.is_dna || b"ACGT#".contains(val) {
-                    let partition_num =
-                        self.upper_bound(T::from_usize(i), &pivot_sa);
+                    let partition_num = self.upper_bound(T::from_usize(i), &pivot_sa);
                     match builders[partition_num].lock() {
                         Ok(mut guard) => {
                             guard.add(T::from_usize(i))?;
@@ -343,8 +342,7 @@ where
                     }
                 }
                 Ok(())
-            },
-        )?;
+            })?;
 
         // Flush out any remaining buffers
         let mut num_suffixes = 0;
@@ -370,22 +368,23 @@ where
     // --------------------------------------------------
     pub fn sort(&mut self, num_partitions: usize) -> Result<()> {
         // We will get more partition files than num_partitions
-        let (mut part_files, num_suffixes) =
-            self.partition(num_partitions)?;
+        let (mut part_files, num_suffixes) = self.partition(num_partitions)?;
 
         let num_per_partition = num_suffixes / num_partitions;
         let total_sort_time = Instant::now();
-
         let mut partition_inputs = vec![vec![]; num_partitions];
+
         for part_num in 0..num_partitions {
             let mut num_taken = 0;
             while !part_files.is_empty() {
                 let part = part_files.remove(0);
                 match part.lock() {
                     Ok(builder) => {
-                        partition_inputs[part_num]
-                            .push((builder.path.clone(), builder.total_len));
-                        num_taken += builder.total_len;
+                        if builder.total_len > 0 {
+                            partition_inputs[part_num]
+                                .push((builder.path.clone(), builder.total_len));
+                            num_taken += builder.total_len;
+                        }
                     }
                     Err(e) => panic!("Can't get partition: {e}"),
                 }
@@ -396,20 +395,16 @@ where
             }
         }
 
-        //dbg!(&partition_inputs);
-
         let mut partitions: Vec<Option<Partition<T>>> =
             (0..num_partitions).map(|_| None).collect();
 
-        //partitions.iter_mut().enumerate().try_for_each(
         partitions.par_iter_mut().enumerate().try_for_each(
             |(partition_num, partition)| -> Result<()> {
                 // Find the suffixes in this partition
                 let mut part_sa = vec![];
                 for (path, len) in &partition_inputs[partition_num] {
                     let buffer = fs::read(path)?;
-                    let mut part: Vec<T> =
-                        SufrBuilder::slice_u8_to_vec(&buffer, *len);
+                    let mut part: Vec<T> = SufrBuilder::slice_u8_to_vec(&buffer, *len);
                     part_sa.append(&mut part);
                 }
 
@@ -420,13 +415,7 @@ where
                     let mut sa_w = part_sa.clone();
                     let mut lcp = vec![T::default(); len];
                     let mut lcp_w = vec![T::default(); len];
-                    self.merge_sort(
-                        &mut sa_w,
-                        &mut part_sa,
-                        len,
-                        &mut lcp,
-                        &mut lcp_w,
-                    );
+                    self.merge_sort(&mut sa_w, &mut part_sa, len, &mut lcp, &mut lcp_w);
                     //info!("SORTED partition {partition_num}  : {part_sa:?}");
                     info!(
                         "Partition {partition_num:2}: Sorted {len:8} in {:?}",
@@ -456,8 +445,7 @@ where
         )?;
 
         // Get rid of None/unwrap Some, put in order
-        let mut partitions: Vec<_> =
-            partitions.into_iter().flatten().collect();
+        let mut partitions: Vec<_> = partitions.into_iter().flatten().collect();
         partitions.sort_by_key(|p| p.order);
 
         let sizes: Vec<_> = partitions.iter().map(|p| p.len).collect();
@@ -544,11 +532,8 @@ where
                     let context = min(self.max_context, max_n);
 
                     // LCP(X_i, Y_j)
-                    let len_lcp = m + self.find_lcp(
-                        x[idx_x] + m,
-                        y[idx_y] + m,
-                        context - m,
-                    );
+                    let len_lcp =
+                        m + self.find_lcp(x[idx_x] + m, y[idx_y] + m, context - m);
 
                     // If the len of the LCP is the entire shorter
                     // sequence, take that.
@@ -616,11 +601,7 @@ where
 
     // --------------------------------------------------
     #[inline(always)]
-    fn select_pivots(
-        &self,
-        text_len: usize,
-        num_partitions: usize,
-    ) -> Vec<T> {
+    fn select_pivots(&self, text_len: usize, num_partitions: usize) -> Vec<T> {
         if num_partitions > 1 {
             // Use a HashMap because selecting pivots one-at-a-time
             // can result in duplicates.
@@ -643,13 +624,7 @@ where
             let len = pivot_sa.len();
             let mut lcp = vec![T::default(); len];
             let mut lcp_w = vec![T::default(); len];
-            self.merge_sort(
-                &mut sa_w,
-                &mut pivot_sa,
-                len,
-                &mut lcp,
-                &mut lcp_w,
-            );
+            self.merge_sort(&mut sa_w, &mut pivot_sa, len, &mut lcp, &mut lcp_w);
             pivot_sa
         } else {
             vec![]
@@ -669,20 +644,16 @@ where
         bytes_out += out.write(&usize_to_bytes(self.len.to_usize()))?;
 
         // SA length
-        bytes_out +=
-            out.write(&usize_to_bytes(self.suffix_array_len.to_usize()))?;
+        bytes_out += out.write(&usize_to_bytes(self.suffix_array_len.to_usize()))?;
 
         // Max context
-        bytes_out +=
-            out.write(&usize_to_bytes(self.max_context.to_usize()))?;
+        bytes_out += out.write(&usize_to_bytes(self.max_context.to_usize()))?;
 
         // Number of sequences
-        bytes_out +=
-            out.write(&usize_to_bytes(self.sequence_starts.len()))?;
+        bytes_out += out.write(&usize_to_bytes(self.sequence_starts.len()))?;
 
         // Sequence starts
-        bytes_out +=
-            out.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
+        bytes_out += out.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
 
         // Text
         bytes_out += out.write(&self.text)?;
@@ -731,10 +702,7 @@ where
 
     // --------------------------------------------------
     pub fn slice_u8_to_vec(buffer: &[u8], len: usize) -> Vec<T> {
-        unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const _, len)
-                .to_vec()
-        }
+        unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const _, len).to_vec() }
     }
 }
 
@@ -758,7 +726,8 @@ impl<T> FileAccess<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
-    pub fn new(filename: &str, start: u64, size: usize) -> Self {
+    pub fn new(filename: &str, start: u64, num_elements: usize) -> Self {
+        let size = num_elements * mem::size_of::<T>();
         FileAccess {
             filename: filename.to_string(),
             buffer: vec![],
@@ -775,8 +744,10 @@ where
     // TODO: Ignoring lots of Results to return Option
     pub fn get(&self, pos: usize) -> Option<T> {
         let mut file = File::open(&self.filename).unwrap();
+
+        // Don't bother looking for something beyond the end
         let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
-        if seek <= self.end_position {
+        if seek < self.end_position {
             let _ = file.seek(SeekFrom::Start(seek));
             let mut buffer: Vec<u8> = vec![0; mem::size_of::<T>()];
             let bytes_read = file.read(&mut buffer).unwrap();
@@ -794,10 +765,8 @@ where
     // --------------------------------------------------
     pub fn get_range(&self, range: Range<usize>) -> Result<Vec<T>> {
         let mut file = File::open(&self.filename).unwrap();
-        let start = self.start_position as usize
-            + (range.start * mem::size_of::<T>());
-        let end =
-            self.start_position as usize + (range.end * mem::size_of::<T>());
+        let start = self.start_position as usize + (range.start * mem::size_of::<T>());
+        let end = self.start_position as usize + (range.end * mem::size_of::<T>());
         let valid = self.start_position as usize..self.end_position as usize;
         if valid.contains(&start) && valid.contains(&end) {
             file.seek(SeekFrom::Start(start as u64))?;
@@ -831,11 +800,8 @@ where
                 let mut file = File::open(&self.filename).unwrap();
                 file.seek(SeekFrom::Start(self.current_position)).unwrap();
                 let mut bytes_wanted = self.buffer_size * mem::size_of::<T>();
-                if self.current_position + bytes_wanted as u64
-                    > self.end_position
-                {
-                    bytes_wanted =
-                        (self.end_position - self.current_position) as usize;
+                if self.current_position + bytes_wanted as u64 > self.end_position {
+                    bytes_wanted = (self.end_position - self.current_position) as usize;
                 }
                 let mut buffer: Vec<u8> = vec![0; bytes_wanted];
                 let bytes_read = file.read(&mut buffer).unwrap();
@@ -876,8 +842,7 @@ where
 {
     // Read serialized ".sufr" file
     pub fn read(filename: &str) -> Result<SufrFile<T>> {
-        let mut file =
-            File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+        let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
         // Meta (version, is_dna)
         let mut buffer = [0; 2];
@@ -906,8 +871,7 @@ where
         let num_sequences = T::from_usize(usize::from_ne_bytes(buffer));
 
         // Sequence starts
-        let mut buffer =
-            vec![0u8; num_sequences.to_usize() * mem::size_of::<T>()];
+        let mut buffer = vec![0u8; num_sequences.to_usize() * mem::size_of::<T>()];
         file.read_exact(&mut buffer)?;
         let sequence_starts: Vec<T> =
             SufrBuilder::slice_u8_to_vec(&buffer, num_sequences.to_usize());
@@ -920,7 +884,8 @@ where
         let suffix_array: FileAccess<T> = FileAccess::new(
             filename,
             file.stream_position()?,
-            num_suffixes * mem::size_of::<T>(),
+            //num_suffixes * mem::size_of::<T>(),
+            num_suffixes,
         );
         file.seek_relative(suffix_array.size as i64)?;
 
@@ -928,7 +893,8 @@ where
         let lcp: FileAccess<T> = FileAccess::new(
             filename,
             file.stream_position()?,
-            suffix_array.size,
+            //suffix_array.size,
+            num_suffixes,
         );
         file.seek_relative(lcp.size as i64)?;
 
@@ -982,49 +948,6 @@ where
     }
 
     // --------------------------------------------------
-    //pub fn get_suffix_array(&self) -> Result<Vec<T>> {
-    //    let mut file = File::open(&self.filename)
-    //        .map_err(|e| anyhow!("{}: {e}", self.filename))?;
-    //    file.seek(SeekFrom::Start(self.suffix_array.start as u64))?;
-    //    let mut buffer = vec![0u8; self.suffix_array.size];
-    //    file.read_exact(&mut buffer)?;
-    //    let suffix_array: Vec<T> = SufrBuilder::slice_u8_to_vec(
-    //        &buffer,
-    //        self.num_suffixes.to_usize(),
-    //    );
-    //    Ok(suffix_array)
-    //}
-
-    // --------------------------------------------------
-    //pub fn get_lcp(&self) -> Result<Vec<T>> {
-    //    let mut file = File::open(&self.filename)
-    //        .map_err(|e| anyhow!("{}: {e}", self.filename))?;
-    //    file.seek(SeekFrom::Start(self.lcp.start as u64))?;
-    //    let mut buffer = vec![0u8; self.lcp.size];
-    //    file.read_exact(&mut buffer)?;
-    //    let lcp: Vec<T> = SufrBuilder::slice_u8_to_vec(
-    //        &buffer,
-    //        self.num_suffixes.to_usize(),
-    //    );
-    //    Ok(lcp)
-    //}
-
-    // --------------------------------------------------
-    //pub fn get_suffix_array_iter(&self) -> FileAccess<T> {
-    //    FileAccess::new(&self.filename, &self.suffix_array)
-    //}
-
-    // --------------------------------------------------
-    //pub fn get_lcp_iter(&self) -> FileAccess<T> {
-    //    FileAccess::new(&self.filename, &self.lcp)
-    //}
-
-    // --------------------------------------------------
-    //pub fn get_text(&self) -> Result<String> {
-    //    Ok(String::from_utf8(self.text.to_vec())?)
-    //}
-
-    // --------------------------------------------------
     pub fn string_at(&self, pos: usize, len: Option<usize>) -> String {
         let end = len.map_or(self.len.to_usize(), |n| pos + n);
         self.text
@@ -1034,21 +957,13 @@ where
     }
 
     // --------------------------------------------------
-    pub fn search(&self, query: &str) -> Option<Range<usize>> {
-        //let suffixes: Vec<_> = self
-        //    .suffix_array
-        //    .iter()
-        //    .zip(self.suffix_array.iter().map(|&p| self.string_at(p.to_usize())))
-        //    .map(|(p,s)| format!("{p:3}: {s}"))
-        //    .collect();
-        //println!("{}", suffixes.join("\n"));
+    pub fn search(&self, query: &str) -> Option<(usize, usize)> {
         let qry = query.as_bytes();
         let n = self.num_suffixes.to_usize();
         self.suffix_search_first(qry, 0, n - 1, 0, 0).map(|first| {
-            let last =
-                self.suffix_search_last(qry, first, n - 1, n, 0, 0).unwrap();
+            let last = self.suffix_search_last(qry, first, n - 1, n, 0, 0).unwrap();
             // TODO: Return zero-offset or 1-based?
-            (first + 1)..(last + 1)
+            (first, last)
         })
     }
 
@@ -1073,32 +988,16 @@ where
             if mid_cmp.cmp == Ordering::Equal
                 && (mid == 0
                     || self
-                        .compare(
-                            qry,
-                            self.suffix_array.get(mid - 1)?.to_usize(),
-                            0,
-                        )
+                        .compare(qry, self.suffix_array.get(mid - 1)?.to_usize(), 0)
                         .cmp
                         == Ordering::Greater)
             {
                 Some(mid)
             } else if mid_cmp.cmp == Ordering::Greater {
-                self.suffix_search_first(
-                    qry,
-                    mid + 1,
-                    high,
-                    mid_cmp.lcp,
-                    right_lcp,
-                )
+                self.suffix_search_first(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
             } else {
                 // Ordering::Less
-                self.suffix_search_first(
-                    qry,
-                    low,
-                    mid - 1,
-                    left_lcp,
-                    mid_cmp.lcp,
-                )
+                self.suffix_search_first(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
             }
         } else {
             None
@@ -1126,33 +1025,15 @@ where
             if mid_cmp.cmp == Ordering::Equal
                 && (mid == n - 1
                     || self
-                        .compare(
-                            qry,
-                            self.suffix_array.get(mid + 1)?.to_usize(),
-                            0,
-                        )
+                        .compare(qry, self.suffix_array.get(mid + 1)?.to_usize(), 0)
                         .cmp
                         == Ordering::Less)
             {
                 Some(mid)
             } else if mid_cmp.cmp == Ordering::Less {
-                self.suffix_search_last(
-                    qry,
-                    low,
-                    mid - 1,
-                    n,
-                    left_lcp,
-                    mid_cmp.lcp,
-                )
+                self.suffix_search_last(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
             } else {
-                self.suffix_search_last(
-                    qry,
-                    mid + 1,
-                    high,
-                    n,
-                    mid_cmp.lcp,
-                    right_lcp,
-                )
+                self.suffix_search_last(qry, mid + 1, high, n, mid_cmp.lcp, right_lcp)
             }
         } else {
             None
@@ -1160,12 +1041,7 @@ where
     }
 
     // --------------------------------------------------
-    pub fn compare(
-        &self,
-        query: &[u8],
-        suffix_pos: usize,
-        skip: usize,
-    ) -> Comparison {
+    pub fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
         let lcp = query
             .iter()
             .skip(skip)
@@ -1183,50 +1059,15 @@ where
             _ => unreachable!(),
         };
 
-        //let q = String::from_utf8(query.to_vec()).unwrap();
-        //let s =
-        //    String::from_utf8(self.text.get(suffix_pos..).unwrap().to_vec())
-        //        .unwrap();
-        //println!(
-        //    "q '{q}' s at {suffix_pos} '{s}' skip {skip} = {:?}",
-        //    Comparison { lcp, cmp }
-        //);
         Comparison { lcp, cmp }
     }
-
-    //pub fn is_less(&self, s1: T, s2: T) -> bool {
-    //    if s1 == s2 {
-    //        false
-    //    } else {
-    //        let lcp_range = if s1 < s2 { s1..s2 } else { s2..s1 };
-    //        let vals = self.get_lcp_iter().get_range(lcp_range);
-    //        dbg!(vals);
-    //        let rmq =
-    //            Rmq::from_iter(self.get_lcp_iter().get_range(lcp_range));
-    //        let lcp = rmq.range_minimum(0..);
-    //
-    //        match (
-    //            self.text.get(s1.to_usize() + len_lcp),
-    //            self.text.get(s2.to_usize() + len_lcp),
-    //        ) {
-    //            (Some(a), Some(b)) => a < b,
-    //            (None, Some(_)) => true,
-    //            _ => false,
-    //        }
-    //    }
-    //}
-
-    //pub fn get_lcp(pos: T) -> usize {
-    //
-    //}
 }
 
 // --------------------------------------------------
 // Utility function to find suffix array length to
 // determine whether to build u32 or u64
 pub fn read_suffix_length(filename: &str) -> Result<usize> {
-    let mut file =
-        File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+    let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
     // Meta (version, is_dna)
     let mut buffer = [0; 2];
@@ -1264,8 +1105,7 @@ pub fn read_sequence_file(filename: &str) -> Result<SequenceFileData> {
         start_positions.push(seq.len());
 
         // Uppercase (mask w/32)
-        let mut current: Vec<u8> =
-            rec.seq().iter().map(|b| b & 0b1011111).collect();
+        let mut current: Vec<u8> = rec.seq().iter().map(|b| b & 0b1011111).collect();
         seq.append(&mut current);
         i += 1;
 
@@ -1303,48 +1143,39 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_sequence_file, read_suffix_length, usize_to_bytes, SufrBuilder,
+        read_sequence_file, read_suffix_length, usize_to_bytes, SufrBuilder, SufrFile,
     };
-    use anyhow::{anyhow, Result};
-    use std::{cmp::Ordering, fs::File, io::BufWriter};
-    use tempfile::NamedTempFile;
+    use anyhow::Result;
+    use std::cmp::Ordering;
 
     #[test]
     fn test_slice_u8_to_vec() -> Result<()> {
         let res: Vec<u32> = SufrBuilder::slice_u8_to_vec(&[0, 0, 0, 0], 1);
         assert_eq!(res, &[0u32]);
 
-        let res: Vec<u64> =
-            SufrBuilder::slice_u8_to_vec(&[0, 0, 0, 0, 0, 0, 0, 0], 1);
+        let res: Vec<u64> = SufrBuilder::slice_u8_to_vec(&[0, 0, 0, 0, 0, 0, 0, 0], 1);
         assert_eq!(res, &[0u64]);
 
         let res: Vec<u32> = SufrBuilder::slice_u8_to_vec(&[1, 0, 0, 0], 1);
         assert_eq!(res, &[1u32]);
 
-        let res: Vec<u64> =
-            SufrBuilder::slice_u8_to_vec(&[1, 0, 0, 0, 0, 0, 0, 0], 1);
+        let res: Vec<u64> = SufrBuilder::slice_u8_to_vec(&[1, 0, 0, 0, 0, 0, 0, 0], 1);
         assert_eq!(res, &[1u64]);
 
-        let res: Vec<u32> =
-            SufrBuilder::slice_u8_to_vec(&[255, 255, 255, 255], 1);
+        let res: Vec<u32> = SufrBuilder::slice_u8_to_vec(&[255, 255, 255, 255], 1);
         assert_eq!(res, &[u32::MAX]);
 
-        let res: Vec<u64> = SufrBuilder::slice_u8_to_vec(
-            &[255, 255, 255, 255, 255, 255, 255, 255],
-            1,
-        );
+        let res: Vec<u64> =
+            SufrBuilder::slice_u8_to_vec(&[255, 255, 255, 255, 255, 255, 255, 255], 1);
         assert_eq!(res, &[u64::MAX]);
 
-        let res: Vec<u32> = SufrBuilder::slice_u8_to_vec(
-            &[0, 0, 0, 0, 255, 255, 255, 255],
-            2,
-        );
+        let res: Vec<u32> =
+            SufrBuilder::slice_u8_to_vec(&[0, 0, 0, 0, 255, 255, 255, 255], 2);
         assert_eq!(res, &[0u32, u32::MAX]);
 
         let res: Vec<u64> = SufrBuilder::slice_u8_to_vec(
             &[
-                0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255,
-                255,
+                0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255,
             ],
             2,
         );
@@ -1379,10 +1210,7 @@ mod tests {
         let res = SufrBuilder::vec_to_slice_u8(&[0u64, u64::MAX]);
         assert_eq!(
             res,
-            &[
-                0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255,
-                255
-            ]
+            &[0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255]
         );
 
         Ok(())
@@ -1392,51 +1220,35 @@ mod tests {
     fn test_compare() -> Result<()> {
         // 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14
         // A  A  B  A  B  A  B  A  B  B  A  B  A  B  #
-        let seq_file = "tests/inputs/abba.fa";
-        let seq_data = read_sequence_file(seq_file)?;
-        let max_context: Option<u32> = None;
-        let is_dna = false;
-        let start_positions: Vec<_> =
-            seq_data.start_positions.iter().map(|&v| v as u32).collect();
-        let len = seq_data.seq.len() as u32;
-        let num_partitions = 1;
-        let sa: SufrBuilder<u32> = SufrBuilder::new(
-            seq_data.seq,
-            len,
-            max_context,
-            is_dna,
-            start_positions,
-            seq_data.headers,
-            num_partitions,
-        )?;
+        let sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
 
         // Compare to B to B with no skip
         let query = "B".as_bytes();
-        let res = sa.compare(query, 13, 0);
+        let res = sufr_file.compare(query, 13, 0);
         assert_eq!(res.cmp, Ordering::Equal);
         assert_eq!(res.lcp, 1);
 
         // Compare to B to B with skip = 1
         let query = "B".as_bytes();
-        let res = sa.compare(query, 13, 1);
+        let res = sufr_file.compare(query, 13, 1);
         assert_eq!(res.cmp, Ordering::Equal);
         assert_eq!(res.lcp, 1);
 
         // Compare to B to AB
         let query = "B".as_bytes();
-        let res = sa.compare(query, 12, 0);
+        let res = sufr_file.compare(query, 12, 0);
         assert_eq!(res.cmp, Ordering::Greater);
         assert_eq!(res.lcp, 0);
 
         // Compare to ABABA to ABBABAB#
         let query = "ABABA".as_bytes();
-        let res = sa.compare(query, 7, 2);
+        let res = sufr_file.compare(query, 7, 2);
         assert_eq!(res.cmp, Ordering::Less);
         assert_eq!(res.lcp, 2);
 
         // Compare to ABAB to ABABBABAB#
         let query = "ABABA".as_bytes();
-        let res = sa.compare(query, 5, 2);
+        let res = sufr_file.compare(query, 5, 2);
         assert_eq!(res.cmp, Ordering::Less);
         assert_eq!(res.lcp, 4);
 
@@ -1445,54 +1257,38 @@ mod tests {
 
     #[test]
     fn test_search() -> Result<()> {
-        // 14: #
-        //  0: AABABABABBABAB#
-        // 12: AB#
-        // 10: ABAB#
-        //  1: ABABABABBABAB#
-        //  3: ABABABBABAB#
-        //  5: ABABBABAB#
-        //  7: ABBABAB#
-        // 13: B#
-        // 11: BAB#
-        //  9: BABAB#
-        //  2: BABABABBABAB#
-        //  4: BABABBABAB#
-        //  6: BABBABAB#
-        //  8: BBABAB#
-        let seq_file = "tests/inputs/abba.fa";
-        let seq_data = read_sequence_file(seq_file)?;
-        let max_context: Option<u32> = None;
-        let is_dna = false;
-        let start_positions: Vec<_> =
-            seq_data.start_positions.iter().map(|&v| v as u32).collect();
-        let len = seq_data.seq.len() as u32;
-        let num_partitions = 1;
-        let sa: SufrBuilder<u32> = SufrBuilder::new(
-            seq_data.seq,
-            len,
-            max_context,
-            is_dna,
-            start_positions,
-            seq_data.headers,
-            num_partitions,
-        )?;
+        //  0  14: #
+        //  1   0: AABABABABBABAB#
+        //  2  12: AB#
+        //  3  10: ABAB#
+        //  4   1: ABABABABBABAB#
+        //  5   3: ABABABBABAB#
+        //  6   5: ABABBABAB#
+        //  7   7: ABBABAB#
+        //  8  13: B#
+        //  9  11: BAB#
+        // 10   9: BABAB#
+        // 11   2: BABABABBABAB#
+        // 12   4: BABABBABAB#
+        // 13   6: BABBABAB#
+        // 14   8: BBABAB#
+        //
+        let sufr_file : SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
 
-        let res = sa.search("B");
-        assert_eq!(res, Some(8..14));
+        let res = sufr_file.search("B");
+        assert_eq!(res, Some((8, 14)));
 
-        let res = sa.search("AB");
-        assert_eq!(res, Some(2..7));
+        let res = sufr_file.search("AB");
+        assert_eq!(res, Some((2, 7)));
 
-        let res = sa.search("BABAB");
-        assert_eq!(res, Some(10..12));
+        let res = sufr_file.search("BABAB");
+        assert_eq!(res, Some((10, 12)));
 
-        let res = sa.search("ABAA");
+        let res = sufr_file.search("ABAA");
         assert_eq!(res, None);
 
         Ok(())
     }
-
     #[test]
     fn test_usize_to_bytes() -> Result<()> {
         assert_eq!(usize_to_bytes(usize::MIN), [0, 0, 0, 0, 0, 0, 0, 0]);
@@ -1527,7 +1323,7 @@ mod tests {
         let res = read_suffix_length(sufr_file);
         assert!(res.is_ok());
         let len = res.unwrap();
-        assert_eq!(len, 16);
+        assert_eq!(len, 18);
         Ok(())
     }
 
