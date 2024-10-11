@@ -265,7 +265,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             seq_data.headers,
             args.num_partitions,
         )?;
-        _create(sa, args)
+        _create(sa, args, now)
     } else {
         let start_positions: Vec<u64> =
             seq_data.start_positions.iter().map(|&v| v as u64).collect();
@@ -278,13 +278,13 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             seq_data.headers,
             args.num_partitions,
         )?;
-        _create(sa, args)
+        _create(sa, args, now)
     }
 }
 
 // --------------------------------------------------
 // Helper for "create" that checks/writes SA/LCP
-pub fn _create<T>(sa: SufrBuilder<T>, args: &CreateArgs) -> Result<()>
+pub fn _create<T>(sa: SufrBuilder<T>, args: &CreateArgs, timer: Instant) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -306,6 +306,7 @@ where
         if bytes_written == 1 { "" } else { "s" },
         now.elapsed()
     );
+    info!("Total time: {:?}", timer.elapsed());
 
     Ok(())
 }

@@ -6,7 +6,7 @@ The basic ideas are as follow:
 
 * Read the input file as `u8` (unsigned 8-bit integer values). 
 * Select the suffixes, which are normally 0 to the length of the text but there is the option to skip suffixes that don't start with A/C/G/T if the input is DNA. Note: Following the C++ implementation, we use 32-bit integers if the input text length is less than 2^32 and 64-bit integers, otherwise.
-* Create `N` number of suffix partitions by randomly choosing `N - 1` suffixes and copying the suffixes to the highest possible partition bounded by any pivot.
+* Create partitions by randomly choosing suffixes and copying the suffixes to the highest possible partition bounded by any pivot.
 * Sort the partitions in parallel.
 * Merge the partitions. Because the values fall into nonoverlapping ranges, these subarrays can be appended in order to produce the final SA.
 * Produce a binary-encoded output file with the suffix/LCP arrays and other metadata.

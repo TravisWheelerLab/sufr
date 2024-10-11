@@ -320,7 +320,7 @@ where
             now.elapsed()
         );
 
-        let capacity = 4; //4096;
+        let capacity = 4096;
         let mut builders: Vec<_> = vec![];
         for _ in 0..num_partitions {
             let builder: PartitionBuilder<T> = PartitionBuilder::new(capacity)?;
@@ -357,7 +357,7 @@ where
         }
 
         info!(
-            "Finished writing pivot{} in {:?}",
+            "Wrote unsorted partition{} in {:?}",
             if num_pivots == 1 { "" } else { "s" },
             now.elapsed()
         );
@@ -369,7 +369,6 @@ where
     pub fn sort(&mut self, num_partitions: usize) -> Result<()> {
         // We will get more partition files than num_partitions
         let (mut part_files, num_suffixes) = self.partition(num_partitions)?;
-
         let num_per_partition = num_suffixes / num_partitions;
         let total_sort_time = Instant::now();
         let mut partition_inputs = vec![vec![]; num_partitions];
@@ -410,17 +409,11 @@ where
 
                 let len = part_sa.len();
                 if len > 0 {
-                    let now = Instant::now();
-                    //info!("UNSORTED partition {partition_num}: {part_sa:?}");
+                    //let now = Instant::now();
                     let mut sa_w = part_sa.clone();
                     let mut lcp = vec![T::default(); len];
                     let mut lcp_w = vec![T::default(); len];
                     self.merge_sort(&mut sa_w, &mut part_sa, len, &mut lcp, &mut lcp_w);
-                    //info!("SORTED partition {partition_num}  : {part_sa:?}");
-                    info!(
-                        "Partition {partition_num:2}: Sorted {len:8} in {:?}",
-                        now.elapsed()
-                    );
 
                     // Write to disk
                     let mut sa_file = NamedTempFile::new()?;
@@ -439,6 +432,10 @@ where
                         sa_path,
                         lcp_path,
                     });
+                    //info!(
+                    //    "Partition {partition_num:4}: Sorted/wrote {len:8} in {:?}",
+                    //    now.elapsed()
+                    //);
                 }
                 Ok(())
             },
@@ -450,7 +447,7 @@ where
 
         let sizes: Vec<_> = partitions.iter().map(|p| p.len).collect();
         info!(
-            "Split/sorted {num_partitions} partitions (avg {}) in {:?}",
+            "Sorted {num_partitions} partitions (avg {}) in {:?}",
             sizes.iter().sum::<usize>() / num_partitions,
             total_sort_time.elapsed()
         );
@@ -731,7 +728,7 @@ where
         FileAccess {
             filename: filename.to_string(),
             buffer: vec![],
-            buffer_size: 1000000,
+            buffer_size: 1048576,
             size,
             start_position: start,
             current_position: start,
