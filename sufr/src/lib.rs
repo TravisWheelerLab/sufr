@@ -21,7 +21,7 @@ use std::{
 
 // --------------------------------------------------
 #[derive(Parser, Debug)]
-#[command(arg_required_else_help = true)]
+#[command(arg_required_else_help = true, version, about)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
