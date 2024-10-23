@@ -881,7 +881,6 @@ where
         let suffix_array: FileAccess<T> = FileAccess::new(
             filename,
             file.stream_position()?,
-            //num_suffixes * mem::size_of::<T>(),
             num_suffixes,
         );
         file.seek_relative(suffix_array.size as i64)?;
@@ -890,7 +889,6 @@ where
         let lcp: FileAccess<T> = FileAccess::new(
             filename,
             file.stream_position()?,
-            //suffix_array.size,
             num_suffixes,
         );
         file.seek_relative(lcp.size as i64)?;
