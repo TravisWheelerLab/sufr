@@ -9,22 +9,20 @@ const SEQ2: &str = "tests/inputs/2.fa";
 const SEQ3: &str = "tests/inputs/3.fa";
 
 // --------------------------------------------------
-fn create(input_file: &str, expected_file: &str) -> Result<()> {
-    dbg!(&expected_file);
+fn create(input_file: &str, allow_ambiguity: bool, expected_file: &str) -> Result<()> {
     let outfile = NamedTempFile::new()?;
     let outpath = &outfile.path().to_str().unwrap();
-    let output = Command::cargo_bin(PRG)?
-        .args(vec!["create", "--dna", "-o", outpath, input_file])
-        .output()
-        .expect("fail");
-    println!("{output:?}");
+    let mut args = vec!["create", "--dna", "-o", outpath, input_file];
+    if allow_ambiguity {
+        args.push("--allow-ambiguity");
+    }
+    let output = Command::cargo_bin(PRG)?.args(args).output().expect("fail");
 
     assert!(output.status.success());
     assert!(outfile.path().exists());
 
     let actual = fs::read(outfile.path())?;
     let expected = fs::read(expected_file)?;
-    dbg!(&expected);
 
     assert_eq!(actual, expected);
 
@@ -72,7 +70,7 @@ fn check(filename: &str) -> Result<()> {
 #[test]
 fn create_empty_dies() -> Result<()> {
     Command::cargo_bin(PRG)?
-        .args(&["create", "tests/expected/empty.sa"])
+        .args(["create", "tests/expected/empty.sa"])
         .assert()
         .failure();
     Ok(())
@@ -81,19 +79,25 @@ fn create_empty_dies() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn create_seq1() -> Result<()> {
-    create(SEQ1, "tests/expected/1.sufr")
+    create(SEQ1, false, "tests/expected/1.sufr")
+}
+
+// --------------------------------------------------
+#[test]
+fn create_seq1_with_ns() -> Result<()> {
+    create(SEQ1, true, "tests/expected/1n.sufr")
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2() -> Result<()> {
-    create(SEQ2, "tests/expected/2.sufr")
+    create(SEQ2, false, "tests/expected/2.sufr")
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq3() -> Result<()> {
-    create(SEQ3, "tests/expected/3.sufr")
+    create(SEQ3, false, "tests/expected/3.sufr")
 }
 
 // --------------------------------------------------

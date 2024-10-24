@@ -2,10 +2,8 @@ use anyhow::{anyhow, bail, Result};
 use log::info;
 use needletail::parse_fastx_file;
 //use range_minimum_query::Rmq;
-//use rand::seq::SliceRandom;
 use rand::Rng;
 use rayon::prelude::*;
-//use seq_io::fasta::{Reader, Record};
 use std::{
     cmp::{max, min, Ordering},
     collections::HashSet,
@@ -14,7 +12,6 @@ use std::{
     hash::Hash,
     io::{Read, Seek, SeekFrom, Write},
     mem,
-    //ops::Range,
     ops::{Add, Div, Range, Sub},
     path::PathBuf,
     slice,
@@ -23,7 +20,7 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
-const OUTFILE_VERSION: u8 = 2;
+const OUTFILE_VERSION: u8 = 3;
 
 // --------------------------------------------------
 #[derive(Debug)]
@@ -145,11 +142,11 @@ where
 
     pub fn write(&mut self) -> Result<()> {
         if self.len > 0 {
-            let mut out = OpenOptions::new()
+            let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&self.path)?;
-            out.write_all(SufrBuilder::vec_to_slice_u8(&self.vals[0..self.len]))?;
+            file.write_all(SufrBuilder::vec_to_slice_u8(&self.vals[0..self.len]))?;
             self.total_len += self.len;
         }
         Ok(())
@@ -164,6 +161,8 @@ where
 {
     pub version: u8,
     pub is_dna: bool,
+    pub allow_ambiguity: bool,
+    pub ignore_softmask: bool,
     pub max_context: T,
     pub len: T,
     pub suffix_array_len: T,
@@ -180,16 +179,20 @@ where
 {
     pub fn new(
         text: Vec<u8>,
-        len: T,
         max_context: Option<T>,
         is_dna: bool,
+        allow_ambiguity: bool,
+        ignore_softmask: bool,
         sequence_starts: Vec<T>,
         headers: Vec<String>,
         num_partitions: usize,
     ) -> Result<SufrBuilder<T>> {
+        let len = T::from_usize(text.len());
         let mut sa = SufrBuilder {
             version: OUTFILE_VERSION,
             is_dna,
+            allow_ambiguity,
+            ignore_softmask,
             max_context: max_context.unwrap_or(len),
             len,
             suffix_array_len: T::default(),
@@ -202,22 +205,6 @@ where
         sa.sort(num_partitions)?;
         Ok(sa)
     }
-
-    // --------------------------------------------------
-    //pub fn check_lcp(&self) -> Vec<T> {
-    //    let mut errors = vec![];
-    //    for i in 1..self.suffix_array.len() {
-    //        let len_lcp = self.find_lcp(
-    //            self.suffix_array[i],
-    //            self.suffix_array[i - 1],
-    //            self.max_context,
-    //        );
-    //        if len_lcp != self.lcp[i] {
-    //            errors.push(T::from_usize(i));
-    //        }
-    //    }
-    //    errors
-    //}
 
     // --------------------------------------------------
     // Assumes pos is always found -- danger
@@ -332,7 +319,7 @@ where
             .par_iter()
             .enumerate()
             .try_for_each(|(i, val)| -> Result<()> {
-                if !self.is_dna || b"ACGT#".contains(val) {
+                if !self.is_dna || b"ACGT#".contains(val) || self.allow_ambiguity {
                     let partition_num = self.upper_bound(T::from_usize(i), &pivot_sa);
                     match builders[partition_num].lock() {
                         Ok(mut guard) => {
@@ -630,43 +617,53 @@ where
 
     // --------------------------------------------------
     // Serialize data to a ".sufr" file
-    pub fn write(&self, mut out: impl Write) -> Result<usize> {
+    pub fn write(&self, mut file: impl Write + Seek) -> Result<usize> {
         let mut bytes_out = 0;
 
         // Header: version/is_dna
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
-        bytes_out += out.write(&[OUTFILE_VERSION, is_dna])?;
+        bytes_out += file.write(&[OUTFILE_VERSION, is_dna])?;
 
         // Text length
-        bytes_out += out.write(&usize_to_bytes(self.len.to_usize()))?;
+        bytes_out += file.write(&usize_to_bytes(self.len.to_usize()))?;
+
+        // Locations of text, suffix array, and LCP
+        // Will be corrected at the end
+        let locs_pos = file.stream_position()?;
+        bytes_out += file.write(&usize_to_bytes(0usize))?;
+        bytes_out += file.write(&usize_to_bytes(0usize))?;
+        bytes_out += file.write(&usize_to_bytes(0usize))?;
 
         // SA length
-        bytes_out += out.write(&usize_to_bytes(self.suffix_array_len.to_usize()))?;
+        bytes_out += file.write(&usize_to_bytes(self.suffix_array_len.to_usize()))?;
 
         // Max context
-        bytes_out += out.write(&usize_to_bytes(self.max_context.to_usize()))?;
+        bytes_out += file.write(&usize_to_bytes(self.max_context.to_usize()))?;
 
         // Number of sequences
-        bytes_out += out.write(&usize_to_bytes(self.sequence_starts.len()))?;
+        bytes_out += file.write(&usize_to_bytes(self.sequence_starts.len()))?;
 
         // Sequence starts
-        bytes_out += out.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
+        bytes_out += file.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
 
         // Text
-        bytes_out += out.write(&self.text)?;
+        let text_pos = file.stream_position()?;
+        bytes_out += file.write(&self.text)?;
 
         // Stitch partitioned suffix files together
+        let sa_pos = file.stream_position()?;
         for partition in &self.partitions {
             let buffer = fs::read(&partition.sa_path)?;
-            bytes_out += out.write(&buffer)?;
+            bytes_out += file.write(&buffer)?;
         }
 
         // Stitch partitioned LCP files together
+        let lcp_pos = file.stream_position()?;
         for (i, partition) in self.partitions.iter().enumerate() {
             let buffer = fs::read(&partition.lcp_path)?;
 
             if i == 0 {
-                bytes_out += out.write(&buffer)?;
+                bytes_out += file.write(&buffer)?;
             } else {
                 // Fix LCP boundary
                 let mut lcp = Self::slice_u8_to_vec(&buffer, partition.len);
@@ -677,12 +674,18 @@ where
                         self.max_context,
                     );
                 }
-                bytes_out += out.write(Self::vec_to_slice_u8(&lcp))?;
+                bytes_out += file.write(Self::vec_to_slice_u8(&lcp))?;
             }
         }
 
         // Headers are variable in length so they are at the end
-        bytes_out += out.write(&bincode::serialize(&self.headers)?)?;
+        bytes_out += file.write(&bincode::serialize(&self.headers)?)?;
+
+        // Go back to header and record the locations
+        file.seek(SeekFrom::Start(locs_pos))?;
+        let _ = file.write(&usize_to_bytes(text_pos as usize))?;
+        let _ = file.write(&usize_to_bytes(sa_pos as usize))?;
+        let _ = file.write(&usize_to_bytes(lcp_pos as usize))?;
 
         Ok(bytes_out)
     }
@@ -822,6 +825,9 @@ where
     pub filename: String,
     pub version: u8,
     pub is_dna: bool,
+    pub text_pos: usize,
+    pub suffix_array_pos: usize,
+    pub lcp_pos: usize,
     pub max_context: T,
     pub len: T,
     pub num_suffixes: T,
@@ -851,6 +857,25 @@ where
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let text_len = usize::from_ne_bytes(buffer);
+        dbg!(&text_len);
+
+        // Position of text
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let text_pos = usize::from_ne_bytes(buffer);
+        dbg!(&text_pos);
+
+        // Position of suffix array
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let suffix_array_pos = usize::from_ne_bytes(buffer);
+        dbg!(&suffix_array_pos);
+
+        // Position of LCP array
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let lcp_pos = usize::from_ne_bytes(buffer);
+        dbg!(&lcp_pos);
 
         // Length of SA
         let mut buffer = [0; 8];
@@ -878,19 +903,13 @@ where
         file.read_exact(&mut text)?;
 
         // Suffix Array
-        let suffix_array: FileAccess<T> = FileAccess::new(
-            filename,
-            file.stream_position()?,
-            num_suffixes,
-        );
+        let suffix_array: FileAccess<T> =
+            FileAccess::new(filename, file.stream_position()?, num_suffixes);
         file.seek_relative(suffix_array.size as i64)?;
 
         // LCP
-        let lcp: FileAccess<T> = FileAccess::new(
-            filename,
-            file.stream_position()?,
-            num_suffixes,
-        );
+        let lcp: FileAccess<T> =
+            FileAccess::new(filename, file.stream_position()?, num_suffixes);
         file.seek_relative(lcp.size as i64)?;
 
         // Headers are variable in length so they are at the end
@@ -902,6 +921,9 @@ where
             filename: filename.to_string(),
             version,
             is_dna,
+            text_pos,
+            suffix_array_pos,
+            lcp_pos,
             len: T::from_usize(text_len),
             num_suffixes: T::from_usize(num_suffixes),
             max_context,
@@ -1084,7 +1106,6 @@ pub fn read_suffix_length(filename: &str) -> Result<usize> {
 // data needed by SufrBuilder
 pub fn read_sequence_file(filename: &str) -> Result<SequenceFileData> {
     let mut reader = parse_fastx_file(filename)?;
-    //let mut seq : Vec<u8> = vec![];
     let mut seq = Vec::with_capacity(u32::MAX as usize);
     let mut headers: Vec<String> = vec![];
     let mut start_positions: Vec<usize> = vec![];
@@ -1137,11 +1158,14 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
+    use crate::OUTFILE_VERSION;
+
     use super::{
         read_sequence_file, read_suffix_length, usize_to_bytes, SufrBuilder, SufrFile,
     };
-    use anyhow::Result;
-    use std::cmp::Ordering;
+    use anyhow::{anyhow, Result};
+    use std::{cmp::Ordering, fs::File, io::BufWriter};
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_slice_u8_to_vec() -> Result<()> {
@@ -1268,7 +1292,7 @@ mod tests {
         // 13   6: BABBABAB#
         // 14   8: BBABAB#
         //
-        let sufr_file : SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
+        let sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
 
         let res = sufr_file.search("B");
         assert_eq!(res, Some((8, 14)));
@@ -1322,132 +1346,141 @@ mod tests {
         Ok(())
     }
 
-    //#[test]
-    //fn test_write_read_suffix_file_32() -> Result<()> {
-    //    let seq_file = "tests/inputs/2.fa";
-    //    let seq_data = read_sequence_file(seq_file)?;
-    //    let max_context: Option<u32> = None;
-    //    let is_dna = true;
-    //    let start_positions: Vec<_> =
-    //        seq_data.start_positions.iter().map(|&v| v as u32).collect();
-    //    let len = seq_data.seq.len() as u32;
-    //    let num_partitions = 2;
-    //    let suffix_array: SuffixArray<u32> = SuffixArray::new(
-    //        seq_data.seq,
-    //        len,
-    //        max_context,
-    //        is_dna,
-    //        start_positions,
-    //        seq_data.headers,
-    //        num_partitions,
-    //    )?;
-    //
-    //    let sorted_sa =
-    //        [17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
-    //    let lcp = [0, 0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
-    //    let outfile = NamedTempFile::new()?;
-    //    let outpath = &outfile.path().to_str().unwrap();
-    //    let out = BufWriter::new(
-    //        File::create(outpath).map_err(|e| anyhow!("{outpath}: {e}"))?,
-    //    );
-    //    let res = suffix_array.write(out);
-    //    assert!(res.is_ok());
-    //    assert!(outfile.path().exists());
-    //
-    //    let res: Result<SuffixArray<u32>> = SuffixArray::read(outpath);
-    //    assert!(res.is_ok());
-    //
-    //    let sa = res.unwrap();
-    //    assert_eq!(sa.version, 1);
-    //    assert!(sa.is_dna);
-    //    assert_eq!(sa.len, 18);
-    //    assert_eq!(sa.num_sequences, 2);
-    //    assert_eq!(sa.sequence_starts, [0, 9]);
-    //    assert_eq!(sa.headers, ["ABC", "DEF"]);
-    //    assert_eq!(sa.suffix_array, sorted_sa);
-    //    assert_eq!(sa.lcp, lcp);
-    //    assert_eq!(sa.text, b"ACGTACGT$ACGTACGT#");
-    //    Ok(())
-    //}
-    //
-    //#[test]
-    //fn test_write_read_suffix_file_64() -> Result<()> {
-    //    let seq_file = "tests/inputs/2.fa";
-    //    let seq_data = read_sequence_file(seq_file)?;
-    //    let max_context: Option<u64> = None;
-    //    let is_dna = true;
-    //    let start_positions: Vec<_> =
-    //        seq_data.start_positions.iter().map(|&v| v as u64).collect();
-    //    let len = seq_data.seq.len() as u64;
-    //    let num_partitions = 2;
-    //    let suffix_array: SuffixArray<u64> = SuffixArray::new(
-    //        seq_data.seq,
-    //        len,
-    //        max_context,
-    //        is_dna,
-    //        start_positions,
-    //        seq_data.headers,
-    //        num_partitions,
-    //    )?;
-    //
-    //    let sorted_sa: &[u64] =
-    //        &[17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
-    //    let lcp: &[u64] =
-    //        &[0, 0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
-    //    let outfile = NamedTempFile::new()?;
-    //    let outpath = &outfile.path().to_str().unwrap();
-    //    let out = BufWriter::new(
-    //        File::create(outpath).map_err(|e| anyhow!("{outpath}: {e}"))?,
-    //    );
-    //    let res = suffix_array.write(out);
-    //    assert!(res.is_ok());
-    //    assert!(outfile.path().exists());
-    //
-    //    let res: Result<SuffixArray<u64>> = SuffixArray::read(outpath);
-    //    assert!(res.is_ok());
-    //
-    //    let sa = res.unwrap();
-    //    assert_eq!(sa.version, 1);
-    //    assert!(sa.is_dna);
-    //    assert_eq!(sa.len, 18);
-    //    assert_eq!(sa.num_sequences, 2);
-    //    assert_eq!(sa.sequence_starts, [0, 9]);
-    //    assert_eq!(sa.headers, ["ABC", "DEF"]);
-    //    assert_eq!(sa.suffix_array, sorted_sa);
-    //    assert_eq!(sa.lcp, lcp);
-    //    assert_eq!(sa.text, b"ACGTACGT$ACGTACGT#");
-    //    Ok(())
-    //}
-    //
-    //#[test]
-    //fn test_upper_bound() -> Result<()> {
-    //    //          012345
-    //    let text = "TTTAGC".as_bytes().to_vec();
-    //    let len = text.len();
-    //    let max_context: Option<u32> = None;
-    //    let is_dna = false;
-    //    let sequence_starts = vec![0];
-    //    let headers = vec!["1".to_string()];
-    //    let num_partitions = 2;
-    //    let sa: SuffixArray<u32> = SuffixArray::new(
-    //        text,
-    //        len as u32,
-    //        max_context,
-    //        is_dna,
-    //        sequence_starts,
-    //        headers,
-    //        num_partitions,
-    //    )?;
-    //
-    //    // The suffix "AGC$" is found before "GC$" and "C$
-    //    assert_eq!(sa.upper_bound(3, &[5, 4]), None);
-    //
-    //    // The suffix "TAGC$" is beyond all the values
-    //    assert_eq!(sa.upper_bound(2, &[3, 5, 4]), Some(3));
-    //
-    //    // The "C$" is the last value
-    //    assert_eq!(sa.upper_bound(5, &[3, 5, 4]), Some(2));
-    //
-    //    Ok(())
-    //}
+    #[test]
+    fn test_write_read_suffix_file_32() -> Result<()> {
+        let seq_file = "tests/inputs/2.fa";
+        let seq_data = read_sequence_file(seq_file)?;
+        let max_context: Option<u32> = None;
+        let is_dna = true;
+        let allow_ambiguity = false;
+        let ignore_softmask = false;
+        let start_positions: Vec<_> =
+            seq_data.start_positions.iter().map(|&v| v as u32).collect();
+        let num_partitions = 2;
+        let suffix_array: SufrBuilder<u32> = SufrBuilder::new(
+            seq_data.seq,
+            max_context,
+            is_dna,
+            allow_ambiguity,
+            ignore_softmask,
+            start_positions,
+            seq_data.headers,
+            num_partitions,
+        )?;
+
+        let sorted_sa = [17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
+        let lcp = [0, 0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
+        let outfile = NamedTempFile::new()?;
+        let outpath = &outfile.path().to_str().unwrap();
+        let out = BufWriter::new(
+            File::create(outpath).map_err(|e| anyhow!("{outpath}: {e}"))?,
+        );
+        let res = suffix_array.write(out);
+        assert!(res.is_ok());
+        assert!(outfile.path().exists());
+
+        let res: Result<SufrFile<u32>> = SufrFile::read(outpath);
+        assert!(res.is_ok());
+
+        let sufr_file = res.unwrap();
+        assert_eq!(sufr_file.version, OUTFILE_VERSION);
+        assert!(sufr_file.is_dna);
+        assert_eq!(sufr_file.len, 18);
+        assert_eq!(sufr_file.num_sequences, 2);
+        assert_eq!(sufr_file.sequence_starts, [0, 9]);
+        assert_eq!(sufr_file.headers, ["ABC", "DEF"]);
+        assert_eq!(sufr_file.text, b"ACGTACGT$ACGTACGT#");
+
+        let file_sa: Vec<_> = sufr_file.suffix_array.collect();
+        assert_eq!(file_sa, sorted_sa);
+        let file_lcp: Vec<_> = sufr_file.lcp.collect();
+        assert_eq!(file_lcp, lcp);
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_read_suffix_file_64() -> Result<()> {
+        let seq_file = "tests/inputs/1.fa";
+        let seq_data = read_sequence_file(seq_file)?;
+        let max_context: Option<u64> = None;
+        let is_dna = true;
+        let allow_ambiguity = true;
+        let ignore_softmask = false;
+        let start_positions: Vec<_> =
+            seq_data.start_positions.iter().map(|&v| v as u64).collect();
+        let num_partitions = 2;
+        let suffix_array: SufrBuilder<u64> = SufrBuilder::new(
+            seq_data.seq,
+            max_context,
+            is_dna,
+            allow_ambiguity,
+            ignore_softmask,
+            start_positions,
+            seq_data.headers,
+            num_partitions,
+        )?;
+
+        let sorted_sa = [10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3];
+        let lcp = [0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1];
+        let outfile = NamedTempFile::new()?;
+        let outpath = &outfile.path().to_str().unwrap();
+        let out = BufWriter::new(
+            File::create(outpath).map_err(|e| anyhow!("{outpath}: {e}"))?,
+        );
+        let res = suffix_array.write(out);
+        assert!(res.is_ok());
+        assert!(outfile.path().exists());
+
+        let res: Result<SufrFile<u64>> = SufrFile::read(outpath);
+        assert!(res.is_ok());
+
+        let sufr_file = res.unwrap();
+        assert_eq!(sufr_file.version, OUTFILE_VERSION);
+        assert!(sufr_file.is_dna);
+        assert_eq!(sufr_file.len, 11);
+        assert_eq!(sufr_file.num_sequences, 1);
+        assert_eq!(sufr_file.sequence_starts, [0]);
+        assert_eq!(sufr_file.headers, ["1"]);
+        assert_eq!(sufr_file.text, b"ACGTNNACGT#");
+
+        let file_sa: Vec<_> = sufr_file.suffix_array.collect();
+        assert_eq!(file_sa, sorted_sa);
+        let file_lcp: Vec<_> = sufr_file.lcp.collect();
+        assert_eq!(file_lcp, lcp);
+        Ok(())
+    }
+
+    #[test]
+    fn test_upper_bound() -> Result<()> {
+        //          012345
+        let text = "TTTAGC".as_bytes().to_vec();
+        let max_context: Option<u32> = None;
+        let is_dna = false;
+        let allow_ambiguity = false;
+        let ignore_softmask = false;
+        let sequence_starts = vec![0];
+        let headers = vec!["1".to_string()];
+        let num_partitions = 2;
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(
+            text,
+            max_context,
+            is_dna,
+            allow_ambiguity,
+            ignore_softmask,
+            sequence_starts,
+            headers,
+            num_partitions,
+        )?;
+
+        // The suffix "AGC$" is found before "GC$" and "C$
+        assert_eq!(sufr.upper_bound(3, &[5, 4]), 0);
+
+        // The suffix "TAGC$" is beyond all the values
+        assert_eq!(sufr.upper_bound(2, &[3, 5, 4]), 3);
+
+        // The "C$" is the last value
+        assert_eq!(sufr.upper_bound(5, &[3, 5, 4]), 2);
+
+        Ok(())
+    }
 }

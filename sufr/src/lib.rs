@@ -85,9 +85,17 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "OUTPUT")]
     pub output: Option<String>,
 
-    /// Input is DNA, ignore sequences starting with 'N'
+    /// Input is DNA
     #[arg(short('d'), long("dna"))]
     pub is_dna: bool,
+
+    /// Allow suffixes starting with ambiguity codes
+    #[arg(short, long)]
+    pub allow_ambiguity: bool,
+
+    /// Ignore suffixes in soft-mask/lowercase regions
+    #[arg(short, long)]
+    pub ignore_softmask: bool,
 }
 
 /// Extract suffixes from sufr file
@@ -258,9 +266,10 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             seq_data.start_positions.iter().map(|&v| v as u32).collect();
         let sa: SufrBuilder<u32> = SufrBuilder::new(
             seq_data.seq,
-            len as u32,
             args.max_context.map(|val| val as u32),
             args.is_dna,
+            args.allow_ambiguity,
+            args.ignore_softmask,
             start_positions,
             seq_data.headers,
             args.num_partitions,
@@ -271,9 +280,10 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             seq_data.start_positions.iter().map(|&v| v as u64).collect();
         let sa: SufrBuilder<u64> = SufrBuilder::new(
             seq_data.seq,
-            len,
             args.max_context.map(|val| val as u64),
             args.is_dna,
+            args.allow_ambiguity,
+            args.ignore_softmask,
             start_positions,
             seq_data.headers,
             args.num_partitions,

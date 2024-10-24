@@ -23,7 +23,10 @@ r1:
 	$(SEARCH) C 1.sufr
 
 s1:
-	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna 
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1.sufr
+
+s1n:
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --allow-ambiguity -o 1n.sufr
 
 s2:
 	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna 
