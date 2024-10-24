@@ -123,6 +123,10 @@ pub struct SearchArgs {
     #[arg(value_name = "QUERY")]
     pub query: String,
 
+    /// Maximum query length
+    #[arg(short, long, value_name = "LEN")]
+    pub max_query_len: Option<usize>,
+
     /// Sufr file
     #[arg(value_name = "SUFR")]
     pub filename: String,
@@ -431,7 +435,7 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
     let now = Instant::now();
-    let res = match sufr_file.search(&args.query) {
+    let res = match sufr_file.search(&args.query, args.max_query_len) {
         Some((start, stop)) => format!("found in range {}..{}", start + 1, stop + 1),
         _ => "not found".to_string(),
     };

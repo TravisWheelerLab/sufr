@@ -878,19 +878,13 @@ where
         file.read_exact(&mut text)?;
 
         // Suffix Array
-        let suffix_array: FileAccess<T> = FileAccess::new(
-            filename,
-            file.stream_position()?,
-            num_suffixes,
-        );
+        let suffix_array: FileAccess<T> =
+            FileAccess::new(filename, file.stream_position()?, num_suffixes);
         file.seek_relative(suffix_array.size as i64)?;
 
         // LCP
-        let lcp: FileAccess<T> = FileAccess::new(
-            filename,
-            file.stream_position()?,
-            num_suffixes,
-        );
+        let lcp: FileAccess<T> =
+            FileAccess::new(filename, file.stream_position()?, num_suffixes);
         file.seek_relative(lcp.size as i64)?;
 
         // Headers are variable in length so they are at the end
@@ -944,7 +938,15 @@ where
 
     // --------------------------------------------------
     pub fn string_at(&self, pos: usize, len: Option<usize>) -> String {
-        let end = len.map_or(self.len.to_usize(), |n| pos + n);
+        let text_len = self.len.to_usize();
+        let end = len.map_or(text_len, |n| {
+            let end = pos + n;
+            if end > text_len {
+                text_len
+            } else {
+                end
+            }
+        });
         self.text
             .get(pos..end)
             .map(|v| String::from_utf8(v.to_vec()).unwrap())
@@ -952,8 +954,30 @@ where
     }
 
     // --------------------------------------------------
-    pub fn search(&self, query: &str) -> Option<(usize, usize)> {
+    pub fn search(
+        &self,
+        query: &str,
+        max_query_len: Option<usize>,
+    ) -> Option<(usize, usize)> {
         let qry = query.as_bytes();
+        let max_query_len = max_query_len.unwrap_or(query.len());
+        let mut compressed_sa = vec![];
+        //let mut prev_suffix = "".to_string();
+        //let mut i = 0;
+        for (sa, lcp) in self.suffix_array.clone().zip(self.lcp.clone()) {
+            //i += 1;
+            if lcp.to_usize() < max_query_len { 
+                let suffix = self.string_at(sa.to_usize(), Some(max_query_len));
+                println!("{lcp}: {suffix} ({sa})");
+                compressed_sa.push(sa);
+            }
+            if compressed_sa.len() > 20 { break }
+            //if suffix != prev_suffix {
+            //    prev_suffix = suffix.clone();
+            //}
+        }
+        dbg!(&compressed_sa);
+
         let n = self.num_suffixes.to_usize();
         self.suffix_search_first(qry, 0, n - 1, 0, 0).map(|first| {
             let last = self.suffix_search_last(qry, first, n - 1, n, 0, 0).unwrap();
@@ -1268,18 +1292,18 @@ mod tests {
         // 13   6: BABBABAB#
         // 14   8: BBABAB#
         //
-        let sufr_file : SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
+        let sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
 
-        let res = sufr_file.search("B");
+        let res = sufr_file.search("B", None);
         assert_eq!(res, Some((8, 14)));
 
-        let res = sufr_file.search("AB");
+        let res = sufr_file.search("AB", None);
         assert_eq!(res, Some((2, 7)));
 
-        let res = sufr_file.search("BABAB");
+        let res = sufr_file.search("BABAB", None);
         assert_eq!(res, Some((10, 12)));
 
-        let res = sufr_file.search("ABAA");
+        let res = sufr_file.search("ABAA", None);
         assert_eq!(res, None);
 
         Ok(())
