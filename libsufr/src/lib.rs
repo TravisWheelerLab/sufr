@@ -857,25 +857,21 @@ where
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let text_len = usize::from_ne_bytes(buffer);
-        dbg!(&text_len);
 
         // Position of text
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let text_pos = usize::from_ne_bytes(buffer);
-        dbg!(&text_pos);
 
         // Position of suffix array
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let suffix_array_pos = usize::from_ne_bytes(buffer);
-        dbg!(&suffix_array_pos);
 
         // Position of LCP array
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let lcp_pos = usize::from_ne_bytes(buffer);
-        dbg!(&lcp_pos);
 
         // Length of SA
         let mut buffer = [0; 8];
