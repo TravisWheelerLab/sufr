@@ -107,6 +107,13 @@ fn create_seq2() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
+fn create_seq2_allow_ambiguity() -> Result<()> {
+    let args = CreateArgs { allow_ambiguity: true, ignore_softmask: false };
+    create(SEQ2, "tests/expected/2n.sufr", args)
+}
+
+// --------------------------------------------------
+#[test]
 fn create_seq2_ignore_softmask() -> Result<()> {
     let args = CreateArgs { allow_ambiguity: false, ignore_softmask: true };
     create(SEQ2, "tests/expected/2s.sufr", args)

@@ -252,7 +252,8 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Read sequence input
     let now = Instant::now();
-    let seq_data = read_sequence_file(&args.input)?;
+    let sequence_delimiter = if args.is_dna { b'N' } else { b'X' };
+    let seq_data = read_sequence_file(&args.input, sequence_delimiter)?;
     let len = seq_data.seq.len() as u64;
     let num_fmt = NumberFormat::new();
     info!(
@@ -269,6 +270,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sequence_starts: seq_data.start_positions.into_iter().collect(),
         headers: seq_data.headers,
         num_partitions: args.num_partitions,
+        sequence_delimiter,
     };
 
     if len < u32::MAX as u64 {

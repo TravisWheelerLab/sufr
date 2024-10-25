@@ -21,7 +21,6 @@ use std::{
 use tempfile::NamedTempFile;
 
 const OUTFILE_VERSION: u8 = 3;
-const SEQUENCE_DELIMITER: u8 = b'%';
 const SENTINEL: u8 = b'$';
 
 // --------------------------------------------------
@@ -166,6 +165,7 @@ pub struct SufrBuilderArgs {
     pub sequence_starts: Vec<usize>,
     pub headers: Vec<String>,
     pub num_partitions: usize,
+    pub sequence_delimiter: u8,
 }
 
 // --------------------------------------------------
@@ -186,6 +186,7 @@ where
     pub headers: Vec<String>,
     pub text: Vec<u8>,
     pub partitions: Vec<Partition<T>>,
+    pub sequence_delimiter: u8,
 }
 
 impl<T> SufrBuilder<T>
@@ -228,6 +229,7 @@ where
                 .collect::<Vec<_>>(),
             headers: args.headers,
             partitions: vec![],
+            sequence_delimiter: args.sequence_delimiter,
         };
         sa.sort(args.num_partitions)?;
         Ok(sa)
@@ -345,7 +347,6 @@ where
         self.text
             .par_iter()
             .enumerate()
-            .filter(|(_, val)| **val != SEQUENCE_DELIMITER)
             .try_for_each(|(i, &val)| -> Result<()> {
                 if val == SENTINEL
                     || !self.is_dna // Allow anything else if not DNA
@@ -1131,7 +1132,10 @@ pub fn read_suffix_length(filename: &str) -> Result<usize> {
 // --------------------------------------------------
 // Utility function to read FASTA/Q file for sequence
 // data needed by SufrBuilder
-pub fn read_sequence_file(filename: &str) -> Result<SequenceFileData> {
+pub fn read_sequence_file(
+    filename: &str,
+    sequence_delimiter: u8,
+) -> Result<SequenceFileData> {
     let mut reader = parse_fastx_file(filename)?;
     let mut seq: Vec<u8> = Vec::with_capacity(u32::MAX as usize);
     let mut headers: Vec<String> = vec![];
@@ -1140,7 +1144,7 @@ pub fn read_sequence_file(filename: &str) -> Result<SequenceFileData> {
     while let Some(rec) = reader.next() {
         let rec = rec?;
         if i > 0 {
-            seq.push(SEQUENCE_DELIMITER);
+            seq.push(sequence_delimiter);
         }
 
         // Record current length as start position
@@ -1352,10 +1356,11 @@ mod tests {
     #[test]
     fn test_read_sequence_file() -> Result<()> {
         let file = "tests/inputs/2.fa";
-        let res = read_sequence_file(file);
+        let sequence_delimiter = b'N';
+        let res = read_sequence_file(file, sequence_delimiter);
         assert!(res.is_ok());
         let data = res.unwrap();
-        assert_eq!(data.seq, b"ACGTacgt%acgtACGT$");
+        assert_eq!(data.seq, b"ACGTacgtNacgtACGT$");
         assert_eq!(data.start_positions, [0, 9]);
         assert_eq!(data.headers, ["ABC", "DEF"]);
         Ok(())
@@ -1374,7 +1379,8 @@ mod tests {
     #[test]
     fn test_write_read_suffix_file_32() -> Result<()> {
         let seq_file = "tests/inputs/2.fa";
-        let seq_data = read_sequence_file(seq_file)?;
+        let sequence_delimiter = b'N';
+        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let args = SufrBuilderArgs {
             text: seq_data.seq,
             max_context: None,
@@ -1384,10 +1390,12 @@ mod tests {
             sequence_starts: seq_data.start_positions.into_iter().collect(),
             headers: seq_data.headers,
             num_partitions: 2,
+            sequence_delimiter,
         };
         let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
-        let sorted_sa = [17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
-        let lcp = [0, 0, 4, 4, 8, 0, 3, 3, 7, 0, 2, 2, 6, 0, 1, 1, 5];
+        //let sorted_sa = [17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
+        let sorted_sa = [17, 13, 9, 0, 4, 14, 10, 1, 5, 15, 11, 2, 6, 16, 12, 3, 7];
+        let lcp = [0, 0, 4, 8, 4, 0, 3, 7, 3, 0, 2, 6, 2, 0, 1, 5, 1];
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
         let out = BufWriter::new(
@@ -1407,7 +1415,7 @@ mod tests {
         assert_eq!(sufr_file.num_sequences, 2);
         assert_eq!(sufr_file.sequence_starts, [0, 9]);
         assert_eq!(sufr_file.headers, ["ABC", "DEF"]);
-        assert_eq!(sufr_file.text, b"ACGTACGT%ACGTACGT$");
+        assert_eq!(sufr_file.text, b"ACGTACGTNACGTACGT$");
 
         let file_sa: Vec<_> = sufr_file.suffix_array.collect();
         assert_eq!(file_sa, sorted_sa);
@@ -1419,7 +1427,8 @@ mod tests {
     #[test]
     fn test_write_read_suffix_file_64() -> Result<()> {
         let seq_file = "tests/inputs/1.fa";
-        let seq_data = read_sequence_file(seq_file)?;
+        let sequence_delimiter = b'N';
+        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let args = SufrBuilderArgs {
             text: seq_data.seq,
             max_context: None,
@@ -1429,6 +1438,7 @@ mod tests {
             sequence_starts: seq_data.start_positions.into_iter().collect(),
             headers: seq_data.headers,
             num_partitions: 2,
+            sequence_delimiter,
         };
 
         let suffix_array: SufrBuilder<u64> = SufrBuilder::new(args)?;
@@ -1475,6 +1485,7 @@ mod tests {
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
+            sequence_delimiter: b'N',
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
