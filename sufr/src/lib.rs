@@ -2,7 +2,8 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_sequence_file, read_suffix_length, FromUsize, Int, SufrBuilder, SufrFile,
+    read_sequence_file, read_suffix_length, FromUsize, Int, SufrBuilder,
+    SufrBuilderArgs, SufrFile,
 };
 use log::info;
 use regex::Regex;
@@ -85,9 +86,17 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "OUTPUT")]
     pub output: Option<String>,
 
-    /// Input is DNA, ignore sequences starting with 'N'
+    /// Input is DNA
     #[arg(short('d'), long("dna"))]
     pub is_dna: bool,
+
+    /// Allow suffixes starting with ambiguity codes
+    #[arg(short, long)]
+    pub allow_ambiguity: bool,
+
+    /// Ignore suffixes in soft-mask/lowercase regions
+    #[arg(short, long)]
+    pub ignore_softmask: bool,
 }
 
 /// Extract suffixes from sufr file
@@ -255,33 +264,22 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         num_fmt.format(",.0", len as f64),
         now.elapsed()
     );
-    //debug!("Raw input '{:?}'", seq_data.seq);
+    let builder_args = SufrBuilderArgs {
+        text: seq_data.seq,
+        max_context: args.max_context,
+        is_dna: args.is_dna,
+        allow_ambiguity: args.allow_ambiguity,
+        ignore_softmask: args.ignore_softmask,
+        sequence_starts: seq_data.start_positions.into_iter().collect(),
+        headers: seq_data.headers,
+        num_partitions: args.num_partitions,
+    };
 
     if len < u32::MAX as u64 {
-        let start_positions: Vec<u32> =
-            seq_data.start_positions.iter().map(|&v| v as u32).collect();
-        let sa: SufrBuilder<u32> = SufrBuilder::new(
-            seq_data.seq,
-            len as u32,
-            args.max_context.map(|val| val as u32),
-            args.is_dna,
-            start_positions,
-            seq_data.headers,
-            args.num_partitions,
-        )?;
+        let sa: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
         _create(sa, args, now)
     } else {
-        let start_positions: Vec<u64> =
-            seq_data.start_positions.iter().map(|&v| v as u64).collect();
-        let sa: SufrBuilder<u64> = SufrBuilder::new(
-            seq_data.seq,
-            len,
-            args.max_context.map(|val| val as u64),
-            args.is_dna,
-            start_positions,
-            seq_data.headers,
-            args.num_partitions,
-        )?;
+        let sa: SufrBuilder<u64> = SufrBuilder::new(builder_args)?;
         _create(sa, args, now)
     }
 }
