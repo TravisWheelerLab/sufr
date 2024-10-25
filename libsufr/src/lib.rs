@@ -762,7 +762,7 @@ where
         FileAccess {
             filename: filename.to_string(),
             buffer: vec![],
-            buffer_size: 1048576,
+            buffer_size: 2usize.pow(20), // 4194304, // 1048576,
             size,
             start_position: start,
             current_position: start,
@@ -823,6 +823,7 @@ where
         } else {
             // Fill the buffer
             if self.buffer.is_empty() {
+                println!("Filling buffer!");
                 if self.current_position >= self.end_position {
                     self.exhausted = true;
                     return None;
@@ -1015,23 +1016,22 @@ where
         max_query_len: Option<usize>,
     ) -> Option<(usize, usize)> {
         let qry = query.as_bytes();
-        let max_query_len = max_query_len.unwrap_or(query.len());
-        let mut compressed_sa = vec![];
-        //let mut prev_suffix = "".to_string();
-        //let mut i = 0;
-        for (sa, lcp) in self.suffix_array.clone().zip(self.lcp.clone()) {
-            //i += 1;
-            if lcp.to_usize() < max_query_len { 
-                let suffix = self.string_at(sa.to_usize(), Some(max_query_len));
-                println!("{lcp}: {suffix} ({sa})");
-                compressed_sa.push(sa);
-            }
-            if compressed_sa.len() > 20 { break }
-            //if suffix != prev_suffix {
-            //    prev_suffix = suffix.clone();
-            //}
-        }
-        dbg!(&compressed_sa);
+        //let now = Instant::now();
+        //let max_query_len = max_query_len.unwrap_or(query.len());
+        //let mut compressed_sa = vec![];
+        //for (sa, lcp) in self.suffix_array.clone().zip(self.lcp.clone()) {
+        //    if lcp.to_usize() < max_query_len {
+        //        compressed_sa.push(sa);
+        //    }
+        //}
+        //info!(
+        //    "Built compressed SA ({}/{}) in {:?}",
+        //    compressed_sa.len(),
+        //    self.num_suffixes,
+        //    now.elapsed()
+        //);
+        //dbg!(&compressed_sa);
+        //dbg!(&self.suffix_array.clone().into_iter().collect::<Vec<_>>());
 
         let n = self.num_suffixes.to_usize();
         self.suffix_search_first(qry, 0, n - 1, 0, 0).map(|first| {
