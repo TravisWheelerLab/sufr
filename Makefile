@@ -25,11 +25,23 @@ r1:
 s1:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1.sufr
 
+s1s:
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1s.sufr --ignore-softmask
+
 s1n:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --allow-ambiguity -o 1n.sufr
 
 s2:
-	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna 
+	$(CREATE_DEBUG) $(SEQ2) -n 3
+
+s2n:
+	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --allow-ambiguity -o 2n.sufr
+
+s2s:
+	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --ignore-softmask -o 2s.sufr
+
+s2ns:
+	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --allow-ambiguity --ignore-softmask -o 2ns.sufr
 
 s3:
 	$(CREATE_DEBUG) $(SEQ3) --dna 
