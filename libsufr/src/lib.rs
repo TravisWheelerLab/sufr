@@ -747,6 +747,7 @@ where
     filename: String,
     buffer: Vec<T>,
     buffer_size: usize,
+    buffer_pos: usize,
     size: usize,
     start_position: u64,
     current_position: u64,
@@ -764,6 +765,7 @@ where
             filename: filename.to_string(),
             buffer: vec![],
             buffer_size: 1048576,
+            buffer_pos: 0,
             size,
             start_position: start,
             current_position: start,
@@ -823,7 +825,7 @@ where
             None
         } else {
             // Fill the buffer
-            if self.buffer.is_empty() {
+            if self.buffer.is_empty() || self.buffer_pos == self.buffer_size {
                 if self.current_position >= self.end_position {
                     self.exhausted = true;
                     return None;
@@ -840,10 +842,12 @@ where
                 self.current_position = file.stream_position().unwrap();
                 let num_vals = bytes_read / mem::size_of::<T>();
                 self.buffer = SufrBuilder::slice_u8_to_vec(&buffer, num_vals);
-                self.buffer.reverse();
+                self.buffer_pos = 0;
             }
 
-            self.buffer.pop()
+            let val = self.buffer.get(self.buffer_pos).copied();
+            self.buffer_pos += 1;
+            val
         }
     }
 }
@@ -1393,7 +1397,6 @@ mod tests {
             sequence_delimiter,
         };
         let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
-        //let sorted_sa = [17, 13, 4, 9, 0, 14, 5, 10, 1, 15, 6, 11, 2, 16, 7, 12, 3];
         let sorted_sa = [17, 13, 9, 0, 4, 14, 10, 1, 5, 15, 11, 2, 6, 16, 12, 3, 7];
         let lcp = [0, 0, 4, 8, 4, 0, 3, 7, 3, 0, 2, 6, 2, 0, 1, 5, 1];
         let outfile = NamedTempFile::new()?;
