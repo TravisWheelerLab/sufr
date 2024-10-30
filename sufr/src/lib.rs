@@ -13,7 +13,7 @@ use std::{
     ffi::OsStr,
     fmt::Debug,
     fs::{self, File},
-    io::{self, BufWriter, Write},
+    io::{self, Write},
     num::NonZeroUsize,
     ops::Range,
     path::{Path, PathBuf},
