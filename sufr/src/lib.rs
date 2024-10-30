@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
+use chrono::{DateTime, Local};
 use format_num::NumberFormat;
 use libsufr::{
     read_sequence_file, read_suffix_length, FromUsize, Int, SufrBuilder,
@@ -11,11 +12,11 @@ use std::{
     cmp::min,
     ffi::OsStr,
     fmt::Debug,
-    fs::File,
+    fs::{self, File},
     io::{self, BufWriter, Write},
     num::NonZeroUsize,
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Instant,
 };
 //use u4::{AsNibbles, U4x2, U4};
@@ -38,21 +39,24 @@ pub struct Cli {
 
 #[derive(Parser, Debug)]
 pub enum Command {
-    /// Create suffix array
+    /// Create sufr file
     Create(CreateArgs),
 
-    /// Check correctness of suffix array/LCP
+    /// Check sufr file for correctness
     Check(CheckArgs),
 
-    /// Read suffix array and extract sequences
+    /// Extract sequences from a sufr file
     Extract(ExtractArgs),
 
-    /// Search a suffix array
+    /// Search for sequences in a sufr file
     Search(SearchArgs),
+
+    /// Summarize sufr file
+    Summarize(SummarizeArgs),
 }
 
 #[derive(Debug, Parser)]
-#[command(author, version, about)]
+#[command(about, alias = "ch")]
 pub struct CheckArgs {
     /// Sufr file
     #[arg(value_name = "SUFR")]
@@ -64,7 +68,7 @@ pub struct CheckArgs {
 }
 
 #[derive(Debug, Parser)]
-#[command(author, version, about)]
+#[command(about, alias = "cr")]
 pub struct CreateArgs {
     /// Input file
     #[arg(value_name = "INPUT")]
@@ -76,7 +80,7 @@ pub struct CreateArgs {
 
     /// Max context
     #[arg(short, long, value_name = "CONTEXT")]
-    pub max_context: Option<usize>,
+    pub max_query_len: Option<usize>,
 
     /// Number of threads
     #[arg(short, long, value_name = "THREADS")]
@@ -99,9 +103,8 @@ pub struct CreateArgs {
     pub ignore_softmask: bool,
 }
 
-/// Extract suffixes from sufr file
 #[derive(Debug, Parser)]
-#[command(author, version, about)]
+#[command(about, alias = "ex")]
 pub struct ExtractArgs {
     /// Sufr file
     #[arg(value_name = "SUFR")]
@@ -124,21 +127,32 @@ pub struct ExtractArgs {
     pub output: Option<String>,
 }
 
-/// Search a suffix array
 #[derive(Debug, Parser)]
-#[command(author, version, about)]
+#[command(about, alias = "se")]
 pub struct SearchArgs {
     /// Query
-    #[arg(value_name = "QUERY")]
-    pub query: String,
+    #[arg(short, long, value_name = "QUERY")]
+    pub query: Vec<String>,
 
     /// Maximum query length
     #[arg(short, long, value_name = "LEN")]
     pub max_query_len: Option<usize>,
 
     /// Sufr file
+    #[arg(short, long, value_name = "SUFR")]
+    pub file: String,
+
+    /// Output
+    #[arg(short, long, value_name = "OUT")]
+    pub output: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+#[command(about, alias = "su")]
+pub struct SummarizeArgs {
+    /// Sufr file
     #[arg(value_name = "SUFR")]
-    pub filename: String,
+    pub file: String,
 }
 
 #[derive(Debug, Clone)]
@@ -175,7 +189,7 @@ pub fn check(args: &CheckArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _check<T>(sufr_file: SufrFile<T>, _args: &CheckArgs) -> Result<()>
+pub fn _check<T>(mut sufr_file: SufrFile<T>, _args: &CheckArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -256,7 +270,8 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Read sequence input
     let now = Instant::now();
-    let seq_data = read_sequence_file(&args.input)?;
+    let sequence_delimiter = if args.is_dna { b'N' } else { b'X' };
+    let seq_data = read_sequence_file(&args.input, sequence_delimiter)?;
     let len = seq_data.seq.len() as u64;
     let num_fmt = NumberFormat::new();
     info!(
@@ -266,13 +281,14 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     );
     let builder_args = SufrBuilderArgs {
         text: seq_data.seq,
-        max_context: args.max_context,
+        max_query_len: args.max_query_len,
         is_dna: args.is_dna,
         allow_ambiguity: args.allow_ambiguity,
         ignore_softmask: args.ignore_softmask,
         sequence_starts: seq_data.start_positions.into_iter().collect(),
         headers: seq_data.headers,
         num_partitions: args.num_partitions,
+        sequence_delimiter,
     };
 
     if len < u32::MAX as u64 {
@@ -297,10 +313,8 @@ where
             .unwrap_or(OsStr::new("out"))
             .to_string_lossy()
     ));
-    let mut output =
-        BufWriter::new(File::create(outfile).map_err(|e| anyhow!("{outfile}: {e}"))?);
     let now = Instant::now();
-    let bytes_written = sa.write(&mut output)?;
+    let bytes_written = sa.write(outfile)?;
     let num_fmt = NumberFormat::new();
     info!(
         "Wrote {} byte{} to '{outfile}' in {:?}",
@@ -375,7 +389,7 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _extract<T>(sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
+pub fn _extract<T>(mut sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -413,30 +427,110 @@ where
 
 // --------------------------------------------------
 pub fn search(args: &SearchArgs) -> Result<()> {
-    let len = read_suffix_length(&args.filename)? as u64;
+    let len = read_suffix_length(&args.file)? as u64;
     if len < u32::MAX as u64 {
         let now = Instant::now();
-        let sa: SufrFile<u32> = SufrFile::read(&args.filename)?;
+        let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _search(sa, args)
     } else {
         let now = Instant::now();
-        let sa: SufrFile<u64> = SufrFile::read(&args.filename)?;
+        let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _search(sa, args)
     }
 }
 
 // --------------------------------------------------
-pub fn _search<T>(sufr_file: SufrFile<T>, args: &SearchArgs) -> Result<()>
+pub fn _search<T>(mut sufr_file: SufrFile<T>, args: &SearchArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
-    let now = Instant::now();
-    let res = match sufr_file.search(&args.query, args.max_query_len) {
-        Some((start, stop)) => format!("found in range {}..{}", start + 1, stop + 1),
-        _ => "not found".to_string(),
+    let mut output: Box<dyn Write> = match &args.output {
+        Some(out_name) => Box::new(File::create(out_name)?),
+        _ => Box::new(io::stdout()),
     };
-    println!("Query '{}' {res} in {:?}", args.query, now.elapsed());
+
+    let whitespace = Regex::new(r"\s+").unwrap();
+    let mut queries = vec![];
+    for query in &args.query {
+        if Path::new(&query).exists() {
+            let contents = fs::read_to_string(query)?;
+            let mut vals: Vec<String> = whitespace
+                .split(&contents)
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string())
+                .collect();
+            queries.append(&mut vals);
+        } else {
+            queries.push(query.to_string());
+        }
+    }
+
+    let now = Instant::now();
+    for res in sufr_file.search(&queries, args.max_query_len)? {
+        let loc = match res.found {
+            Some((start, stop)) => {
+                format!("found in range {}..{}", start + 1, stop + 1)
+            }
+            _ => "not found".to_string(),
+        };
+        writeln!(output, "Query '{}' {loc}", res.query)?;
+    }
+
+    info!(
+        "Disk search of {} finished in {:?}",
+        queries.len(),
+        now.elapsed()
+    );
+    Ok(())
+}
+
+// --------------------------------------------------
+pub fn summarize(args: &SummarizeArgs) -> Result<()> {
+    let len = read_suffix_length(&args.file)? as u64;
+    if len < u32::MAX as u64 {
+        let now = Instant::now();
+        let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
+        info!("Read sufr file in {:?}", now.elapsed());
+        _summarize(sa, args)
+    } else {
+        let now = Instant::now();
+        let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
+        info!("Read sufr file in {:?}", now.elapsed());
+        _summarize(sa, args)
+    }
+}
+
+// --------------------------------------------------
+pub fn _summarize<T>(sufr_file: SufrFile<T>, _args: &SummarizeArgs) -> Result<()>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+{
+    let metadata = fs::metadata(&sufr_file.filename)?;
+    let modified: DateTime<Local> = DateTime::from(metadata.modified()?);
+    let num_fmt = NumberFormat::new();
+    println!("Filename       : {}", sufr_file.filename);
+    println!("Modified       : {}", modified.format("%Y-%m-%d %H:%M"));
+    println!("File Version   : {}", sufr_file.version);
+    println!("DNA            : {:?}", sufr_file.is_dna);
+    println!(
+        "Text len       : {}",
+        num_fmt.format(",.0", sufr_file.len.to_usize() as f64)
+    );
+    println!(
+        "Num suffixes   : {}",
+        num_fmt.format(",.0", sufr_file.num_suffixes.to_usize() as f64)
+    );
+    println!(
+        "Max query len  : {}",
+        num_fmt.format(",.0", sufr_file.max_query_len.to_usize() as f64)
+    );
+    println!(
+        "Num sequences  : {}",
+        num_fmt.format(",.0", sufr_file.num_sequences.to_usize() as f64)
+    );
+    println!("Sequence starts: {:?}", sufr_file.sequence_starts);
+    println!("Headers        : {}", sufr_file.headers.join(", "));
     Ok(())
 }

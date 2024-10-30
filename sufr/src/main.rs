@@ -45,6 +45,10 @@ fn run(args: Cli) -> Result<()> {
             sufr::search(args)?;
             Ok(())
         }
+        Some(Command::Summarize(args)) => {
+            sufr::summarize(args)?;
+            Ok(())
+        }
         _ => unreachable!(),
     }
 }
