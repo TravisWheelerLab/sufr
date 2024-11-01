@@ -661,7 +661,6 @@ where
         let mut file = BufWriter::new(
             File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
         );
-
         let mut bytes_out = 0;
 
         // Header: version/is_dna
@@ -688,29 +687,30 @@ where
         bytes_out += file.write(&usize_to_bytes(self.sequence_starts.len()))?;
 
         // Sequence starts
-        dbg!(&self.sequence_starts);
-        bytes_out += file.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
+        let _ = file.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
+        bytes_out += self.sequence_starts.len() * mem::size_of::<T>();
 
         // Text
         let text_pos = file.stream_position()?;
-        bytes_out += file.write(&self.text)?;
+        let _ = file.write(&self.text)?; // Returns max 2^31
+        bytes_out += &self.text.len();
 
         // Stitch partitioned suffix files together
-        file.flush()?;
         let sa_pos = file.stream_position()?;
         for partition in &self.partitions {
             let buffer = fs::read(&partition.sa_path)?;
-            bytes_out += file.write(&buffer)?;
+            bytes_out += &buffer.len();
+            let _ = file.write(&buffer)?;
         }
 
         // Stitch partitioned LCP files together
-        file.flush()?;
         let lcp_pos = file.stream_position()?;
         for (i, partition) in self.partitions.iter().enumerate() {
             let buffer = fs::read(&partition.lcp_path)?;
+            bytes_out += &buffer.len();
 
             if i == 0 {
-                bytes_out += file.write(&buffer)?;
+                file.write(&buffer)?;
             } else {
                 // Fix LCP boundary
                 let mut lcp: Vec<T> = Self::slice_u8_to_vec(&buffer, partition.len);
@@ -721,12 +721,14 @@ where
                         self.max_query_len,
                     );
                 }
-                bytes_out += file.write(Self::vec_to_slice_u8(&lcp))?;
+                file.write(Self::vec_to_slice_u8(&lcp))?;
             }
         }
 
         // Headers are variable in length so they are at the end
-        bytes_out += file.write(&bincode::serialize(&self.headers)?)?;
+        //bytes_out += file.write(&bincode::serialize(&self.headers)?)?;
+        let headers = bincode::serialize(&self.headers)?;
+        bytes_out += file.write(&headers)?;
 
         // Go back to header and record the locations
         file.seek(SeekFrom::Start(locs_pos))?;
@@ -1352,15 +1354,48 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use crate::OUTFILE_VERSION;
-
     use super::{
         read_sequence_file, read_suffix_length, usize_to_bytes, SearchResult,
         SufrBuilder, SufrBuilderArgs, SufrFile,
     };
-    use anyhow::{anyhow, Result};
-    use std::{cmp::Ordering, fs::File, io::BufWriter};
+    use crate::OUTFILE_VERSION;
+    use anyhow::Result;
+    use std::cmp::Ordering;
+    //use std::path::Path;
+    //use rand::Rng;
     use tempfile::NamedTempFile;
+
+    //#[test]
+    //fn test_write_sufr_file() -> Result<()> {
+    //    let bases = b"ACGT";
+    //    let text_len = 10;
+    //    let rng = &mut rand::thread_rng();
+    //    let text: Vec<u8> = (0..text_len).map(|_| bases[rng.gen_range(0..4)]).collect();
+    //    println!("{text:?}");
+    //    let mut sufr_builder: SufrBuilder<u32> = SufrBuilder {
+    //        version: OUTFILE_VERSION,
+    //        is_dna: true,
+    //        allow_ambiguity: false,
+    //        ignore_softmask: false,
+    //        max_query_len: 0,
+    //        text_len,
+    //        num_suffixes: text_len,
+    //        text,
+    //        num_sequences: 1,
+    //        sequence_starts: vec![0],
+    //        headers: vec!["One sequence".to_string()],
+    //        partitions: vec![],
+    //        sequence_delimiter: b'N',
+    //    };
+    //    sufr_builder.sort(2)?;
+    //    let outfile = "kyc.sufr"; // NamedTempFile::new()?;
+    //    //let outpath = &outfile.path().to_str().unwrap();
+    //    let res = sufr_builder.write(outfile);
+    //    assert!(res.is_ok());
+    //    //assert!(outfile.path().exists());
+    //    assert!(Path::new(outfile).exists());
+    //    Ok(())
+    //}
 
     #[test]
     fn test_slice_u8_to_vec() -> Result<()> {
@@ -1571,10 +1606,7 @@ mod tests {
         let lcp = [0, 0, 4, 8, 4, 0, 3, 7, 3, 0, 2, 6, 2, 0, 1, 5, 1];
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
-        let out = BufWriter::new(
-            File::create(outpath).map_err(|e| anyhow!("{outpath}: {e}"))?,
-        );
-        let res = sufr_builder.write(out);
+        let res = sufr_builder.write(outpath);
         assert!(res.is_ok());
         assert!(outfile.path().exists());
 
@@ -1619,10 +1651,7 @@ mod tests {
         let lcp = [0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1];
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
-        let out = BufWriter::new(
-            File::create(outpath).map_err(|e| anyhow!("{outpath}: {e}"))?,
-        );
-        let res = suffix_array.write(out);
+        let res = suffix_array.write(outpath);
         assert!(res.is_ok());
         assert!(outfile.path().exists());
 

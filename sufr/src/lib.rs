@@ -272,11 +272,15 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let now = Instant::now();
     let sequence_delimiter = if args.is_dna { b'N' } else { b'X' };
     let seq_data = read_sequence_file(&args.input, sequence_delimiter)?;
-    let len = seq_data.seq.len() as u64;
+    let text_len = seq_data.seq.len();
+    println!("First 10: {}", String::from_utf8(seq_data.seq[0..10].to_vec())?);
+    let n = text_len - 10;
+    println!("Last 10 : {}", String::from_utf8(seq_data.seq[n..text_len].to_vec())?);
+    let text_len = seq_data.seq.len() as u64;
     let num_fmt = NumberFormat::new();
     info!(
-        "Read raw input of len {} in {:?}",
-        num_fmt.format(",.0", len as f64),
+        "Read input of len {} in {:?}",
+        num_fmt.format(",.0", text_len as f64),
         now.elapsed()
     );
     let builder_args = SufrBuilderArgs {
@@ -291,7 +295,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sequence_delimiter,
     };
 
-    if len < u32::MAX as u64 {
+    if text_len < u32::MAX as u64 {
         let sa: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
         _create(sa, args, now)
     } else {
