@@ -223,8 +223,7 @@ where
             is_dna: args.is_dna,
             allow_ambiguity: args.allow_ambiguity,
             ignore_softmask: args.ignore_softmask,
-            max_query_len: args.max_query_len.map_or(text_len, |v| T::from_usize(v)),
-            //max_query_len: args.max_query_len.map_or(len, |v| T::default()),
+            max_query_len: args.max_query_len.map_or(T::default(), T::from_usize),
             text_len,
             num_suffixes: T::default(),
             text,
@@ -400,6 +399,7 @@ where
         let mut num_taken = 0;
         let mut partition_inputs = vec![vec![]; num_partitions];
 
+        #[allow(clippy::needless_range_loop)]
         for part_num in 0..num_partitions {
             let boundary = num_per_partition * (part_num + 1);
             while !part_files.is_empty() {
@@ -552,7 +552,11 @@ where
                     let max_n = self.text_len - max(x[idx_x], y[idx_y]);
 
                     // Prefix-context length for the suffixes
-                    let context = min(self.max_query_len, max_n);
+                    let context = if self.max_query_len > T::default() {
+                        min(self.max_query_len, max_n)
+                    } else {
+                        max_n
+                    };
 
                     // LCP(X_i, Y_j)
                     let len_lcp =
