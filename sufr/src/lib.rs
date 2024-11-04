@@ -275,7 +275,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sequence_delimiter,
     };
 
-    if text_len < u32::MAX as u64 {
+    if (text_len as u64) < u32::MAX as u64 {
         let sa: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
         _create(sa, args, now)
     } else {
