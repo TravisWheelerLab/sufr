@@ -1,7 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use log::info;
 use needletail::parse_fastx_file;
-//use range_minimum_query::Rmq;
 use rand::Rng;
 use rayon::prelude::*;
 use std::{
@@ -661,7 +660,7 @@ where
         let mut file = BufWriter::new(
             File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
         );
-        let mut bytes_out = 0;
+        let mut bytes_out: usize = 0;
 
         // Header: version/is_dna
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
@@ -687,30 +686,29 @@ where
         bytes_out += file.write(&usize_to_bytes(self.sequence_starts.len()))?;
 
         // Sequence starts
-        let _ = file.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
-        bytes_out += self.sequence_starts.len() * mem::size_of::<T>();
+        bytes_out += file.write(Self::vec_to_slice_u8(&self.sequence_starts))?;
 
         // Text
-        let text_pos = file.stream_position()?;
-        let _ = file.write(&self.text)?; // Returns max 2^31
-        bytes_out += &self.text.len();
+        let text_pos = bytes_out;
+        file.write_all(&self.text)?;
+        bytes_out += self.text.len();
 
         // Stitch partitioned suffix files together
-        let sa_pos = file.stream_position()?;
+        let sa_pos = bytes_out;
         for partition in &self.partitions {
             let buffer = fs::read(&partition.sa_path)?;
             bytes_out += &buffer.len();
-            let _ = file.write(&buffer)?;
+            file.write_all(&buffer)?;
         }
 
         // Stitch partitioned LCP files together
-        let lcp_pos = file.stream_position()?;
+        let lcp_pos = bytes_out;
         for (i, partition) in self.partitions.iter().enumerate() {
             let buffer = fs::read(&partition.lcp_path)?;
             bytes_out += &buffer.len();
 
             if i == 0 {
-                file.write(&buffer)?;
+                file.write_all(&buffer)?;
             } else {
                 // Fix LCP boundary
                 let mut lcp: Vec<T> = Self::slice_u8_to_vec(&buffer, partition.len);
@@ -721,23 +719,18 @@ where
                         self.max_query_len,
                     );
                 }
-                file.write(Self::vec_to_slice_u8(&lcp))?;
+                file.write_all(Self::vec_to_slice_u8(&lcp))?;
             }
         }
 
         // Headers are variable in length so they are at the end
-        //bytes_out += file.write(&bincode::serialize(&self.headers)?)?;
-        let headers = bincode::serialize(&self.headers)?;
-        bytes_out += file.write(&headers)?;
+        bytes_out += file.write(&bincode::serialize(&self.headers)?)?;
 
         // Go back to header and record the locations
         file.seek(SeekFrom::Start(locs_pos))?;
-        println!("Writing text_pos {text_pos}");
-        let _ = file.write(&usize_to_bytes(text_pos as usize))?;
-        println!("Writing sa_pos {sa_pos}");
-        let _ = file.write(&usize_to_bytes(sa_pos as usize))?;
-        println!("Writing lcp_pos {lcp_pos}");
-        let _ = file.write(&usize_to_bytes(lcp_pos as usize))?;
+        let _ = file.write(&usize_to_bytes(text_pos))?;
+        let _ = file.write(&usize_to_bytes(sa_pos))?;
+        let _ = file.write(&usize_to_bytes(lcp_pos))?;
 
         Ok(bytes_out)
     }
@@ -928,154 +921,82 @@ where
 {
     // Read serialized ".sufr" file
     pub fn read(filename: &str) -> Result<SufrFile<T>> {
-        let meta = fs::metadata(filename)?;
-        dbg!(meta);
         let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
-
-        println!("pos = {}", file.stream_position()?);
 
         // Meta (version, is_dna)
         let mut buffer = [0; 2];
         file.read_exact(&mut buffer)?;
         let version = buffer[0];
         let is_dna = buffer[1] == 1;
-        dbg!(&version);
-        dbg!(&is_dna);
 
         // Length of text
-        println!("pos = {}", file.stream_position()?);
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let text_len = usize::from_ne_bytes(buffer);
-        dbg!(&text_len);
 
         // Position of text
-        println!("pos = {}", file.stream_position()?);
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let text_pos = usize::from_ne_bytes(buffer);
-        dbg!(&text_pos);
 
         // Position of suffix array
-        println!("pos = {}", file.stream_position()?);
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let suffix_array_pos = usize::from_ne_bytes(buffer);
-        dbg!(&suffix_array_pos);
 
         // Position of LCP array
-        println!("pos = {}", file.stream_position()?);
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let lcp_pos = usize::from_ne_bytes(buffer);
-        dbg!(&lcp_pos);
 
         // Number of suffixes
-        println!("pos = {}", file.stream_position()?);
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let num_suffixes = usize::from_ne_bytes(buffer);
-        dbg!(&num_suffixes);
 
         // Max query length
-        println!("pos = {}", file.stream_position()?);
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let max_query_len = T::from_usize(usize::from_ne_bytes(buffer));
-        dbg!(&max_query_len);
 
         // Number of sequences
-        println!("pos = {}", file.stream_position()?);
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         let num_sequences = T::from_usize(usize::from_ne_bytes(buffer));
-        dbg!(&num_sequences);
 
         // Sequence starts
-        println!("pos = {}", file.stream_position()?);
         let mut buffer = vec![0; num_sequences.to_usize() * mem::size_of::<T>()];
         file.read_exact(&mut buffer)?;
         let sequence_starts: Vec<T> =
             SufrBuilder::slice_u8_to_vec(&buffer, num_sequences.to_usize());
-        dbg!(&sequence_starts);
 
         // Text
-        println!("pos = {}", file.stream_position()?);
         let mut text = vec![0; text_len];
         file.read_exact(&mut text)?;
-        println!("text len = {}", text.len());
-
-        println!("pos = {}", file.stream_position()?);
-        println!(
-            "correct ({} == {})= {:?}",
-            file.stream_position()?,
-            suffix_array_pos,
-            file.stream_position()? as usize == suffix_array_pos
-        );
-
-        // Seek past SA/LCP
-        //let sa_size = (num_suffixes * mem::size_of::<T>()) as i64;
-        //println!(
-        //    "starting from {}, skipping {}",
-        //    file.stream_position()?,
-        //    sa_size * 2
-        //);
-        //let r = file.seek_relative(sa_size * 2);
-        //dbg!(&r);
-
-        println!("Creating buffer {num_suffixes} to read SA");
-        let mut buffer = vec![0; num_suffixes * mem::size_of::<T>()];
-        println!("Reading into buffer");
-        file.read_exact(&mut buffer)?;
-        println!("Converting to Vec<T>");
-        let mem_suffix_array: Vec<T> =
-            SufrBuilder::slice_u8_to_vec(&buffer, num_suffixes);
-        dbg!(mem_suffix_array.len());
-
-        println!(
-            "correct = {:?}",
-            file.stream_position()? as usize == lcp_pos
-        );
-
-        println!("pos = {}", file.stream_position()?);
-        println!("Creating buffer {num_suffixes} to read LCP");
-        let mut buffer = vec![0; num_suffixes * mem::size_of::<T>()];
-        println!("Reading into buffer");
-        file.read_exact(&mut buffer)?;
-        println!("Converting to Vec<T>");
-        let mem_lcp: Vec<T> = SufrBuilder::slice_u8_to_vec(&buffer, num_suffixes);
-        dbg!(mem_lcp.len());
 
         // Suffix Array
         let suffix_array: FileAccess<T> =
             FileAccess::new(filename, suffix_array_pos as u64, num_suffixes)?;
-        //println!("pos = {}", file.stream_position()?);
-        //let suffix_array: FileAccess<T> =
-        //    FileAccess::new(filename, file.stream_position()?, num_suffixes)?;
-        //file.seek_relative(suffix_array.size as i64)?;
-        //println!("SA done");
+        file.seek_relative(suffix_array.size as i64)?;
 
         // LCP
         let lcp: FileAccess<T> =
             FileAccess::new(filename, lcp_pos as u64, num_suffixes)?;
-        //println!("pos = {}", file.stream_position()?);
-        //let lcp: FileAccess<T> =
-        //    FileAccess::new(filename, file.stream_position()?, num_suffixes)?;
-        //file.seek_relative(lcp.size as i64)?;
-        //println!("LCP done");
+        file.seek_relative(lcp.size as i64)?;
 
-        //let mut buffer = vec![0u8; num_suffixes * mem::size_of::<T>()];
+        //let mut buffer = vec![0; num_suffixes * mem::size_of::<T>()];
+        //file.read_exact(&mut buffer)?;
+        //let mem_suffix_array: Vec<T> =
+        //    SufrBuilder::slice_u8_to_vec(&buffer, num_suffixes);
+
+        //let mut buffer = vec![0; num_suffixes * mem::size_of::<T>()];
         //file.read_exact(&mut buffer)?;
         //let mem_lcp: Vec<T> = SufrBuilder::slice_u8_to_vec(&buffer, num_suffixes);
-        //dbg!(mem_lcp.len());
 
-        println!("pos = {}", file.stream_position()?);
         // Headers are variable in length so they are at the end
         let mut buffer = vec![];
         file.read_to_end(&mut buffer)?;
         let headers: Vec<String> = bincode::deserialize(&buffer)?;
-        dbg!(&headers);
-        println!("pos = {}", file.stream_position()?);
 
         Ok(SufrFile {
             filename: filename.to_string(),
@@ -1361,41 +1282,7 @@ mod tests {
     use crate::OUTFILE_VERSION;
     use anyhow::Result;
     use std::cmp::Ordering;
-    //use std::path::Path;
-    //use rand::Rng;
     use tempfile::NamedTempFile;
-
-    //#[test]
-    //fn test_write_sufr_file() -> Result<()> {
-    //    let bases = b"ACGT";
-    //    let text_len = 10;
-    //    let rng = &mut rand::thread_rng();
-    //    let text: Vec<u8> = (0..text_len).map(|_| bases[rng.gen_range(0..4)]).collect();
-    //    println!("{text:?}");
-    //    let mut sufr_builder: SufrBuilder<u32> = SufrBuilder {
-    //        version: OUTFILE_VERSION,
-    //        is_dna: true,
-    //        allow_ambiguity: false,
-    //        ignore_softmask: false,
-    //        max_query_len: 0,
-    //        text_len,
-    //        num_suffixes: text_len,
-    //        text,
-    //        num_sequences: 1,
-    //        sequence_starts: vec![0],
-    //        headers: vec!["One sequence".to_string()],
-    //        partitions: vec![],
-    //        sequence_delimiter: b'N',
-    //    };
-    //    sufr_builder.sort(2)?;
-    //    let outfile = "kyc.sufr"; // NamedTempFile::new()?;
-    //    //let outpath = &outfile.path().to_str().unwrap();
-    //    let res = sufr_builder.write(outfile);
-    //    assert!(res.is_ok());
-    //    //assert!(outfile.path().exists());
-    //    assert!(Path::new(outfile).exists());
-    //    Ok(())
-    //}
 
     #[test]
     fn test_slice_u8_to_vec() -> Result<()> {

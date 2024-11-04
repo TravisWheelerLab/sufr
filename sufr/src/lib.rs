@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
-use clap::{builder::PossibleValue, Parser, ValueEnum};
 use chrono::{DateTime, Local};
+use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
     read_sequence_file, read_suffix_length, FromUsize, Int, SufrBuilder,
@@ -19,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
+use tabled::Table;
 //use u4::{AsNibbles, U4x2, U4};
 
 // --------------------------------------------------
@@ -193,23 +194,6 @@ pub fn _check<T>(mut sufr_file: SufrFile<T>, _args: &CheckArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
-    //dbg!(&sufr_file);
-    //println!("text         = {}", sufr_file.get_text()?);
-    //println!("raw text     = {:?}", sufr_file.get_raw_text()?);
-    //println!("suffix_array = {:?}", sufr_file.get_suffix_array()?);
-    //println!("lcp          = {:?}", sufr_file.get_lcp()?);
-
-    //let suffix_array_iter = sufr_file.get_suffix_array_iter();
-    //for i in 0..sufr_file.num_suffixes.to_usize() {
-    //    let val = suffix_array_iter.get(i)?;
-    //    println!("SA {i:3}: {val}");
-    //}
-    ////let r = &suffix_array_iter.get_range(1..5)?;
-    ////dbg!(r);
-    //
-    //for (i, val) in suffix_array_iter.enumerate() {
-    //    println!("suffix_array {i:3}: {val}");
-    //}
     let now = Instant::now();
     let errors = sufr_file.check_suffix_array()?;
     let num_errors = errors.len();
@@ -273,10 +257,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     let sequence_delimiter = if args.is_dna { b'N' } else { b'X' };
     let seq_data = read_sequence_file(&args.input, sequence_delimiter)?;
     let text_len = seq_data.seq.len();
-    println!("First 10: {}", String::from_utf8(seq_data.seq[0..10].to_vec())?);
-    let n = text_len - 10;
-    println!("Last 10 : {}", String::from_utf8(seq_data.seq[n..text_len].to_vec())?);
-    let text_len = seq_data.seq.len() as u64;
     let num_fmt = NumberFormat::new();
     info!(
         "Read input of len {} in {:?}",
@@ -511,30 +491,57 @@ pub fn _summarize<T>(sufr_file: SufrFile<T>, _args: &SummarizeArgs) -> Result<()
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
+    let num_fmt = NumberFormat::new();
+    let mut rows = vec![vec!["Filename".to_string(), sufr_file.filename.to_string()]];
     let metadata = fs::metadata(&sufr_file.filename)?;
     let modified: DateTime<Local> = DateTime::from(metadata.modified()?);
-    let num_fmt = NumberFormat::new();
-    println!("Filename       : {}", sufr_file.filename);
-    println!("Modified       : {}", modified.format("%Y-%m-%d %H:%M"));
-    println!("File Version   : {}", sufr_file.version);
-    println!("DNA            : {:?}", sufr_file.is_dna);
-    println!(
-        "Text len       : {}",
-        num_fmt.format(",.0", sufr_file.len.to_usize() as f64)
-    );
-    println!(
-        "Num suffixes   : {}",
-        num_fmt.format(",.0", sufr_file.num_suffixes.to_usize() as f64)
-    );
-    println!(
-        "Max query len  : {}",
-        num_fmt.format(",.0", sufr_file.max_query_len.to_usize() as f64)
-    );
-    println!(
-        "Num sequences  : {}",
-        num_fmt.format(",.0", sufr_file.num_sequences.to_usize() as f64)
-    );
-    println!("Sequence starts: {:?}", sufr_file.sequence_starts);
-    println!("Headers        : {}", sufr_file.headers.join(", "));
+    rows.push(vec![
+        "Modified".to_string(),
+        modified.format("%Y-%m-%d %H:%M").to_string(),
+    ]);
+    rows.push(vec![
+        "File Size".to_string(),
+        format!("{} bytes", num_fmt.format(",.0", metadata.len().to_usize() as f64)),
+    ]);
+    rows.push(vec![
+        "File Version".to_string(),
+        sufr_file.version.to_string(),
+    ]);
+    rows.push(vec!["DNA".to_string(), sufr_file.is_dna.to_string()]);
+    rows.push(vec![
+        "Text Length".to_string(),
+        num_fmt.format(",.0", sufr_file.len.to_usize() as f64),
+    ]);
+    rows.push(vec![
+        "Num Suffixes".to_string(),
+        num_fmt.format(",.0", sufr_file.num_suffixes.to_usize() as f64),
+    ]);
+    rows.push(vec![
+        "Max query len".to_string(),
+        num_fmt.format(",.0", sufr_file.max_query_len.to_usize() as f64),
+    ]);
+    rows.push(vec![
+        "Num sequences".to_string(),
+        num_fmt.format(",.0", sufr_file.num_sequences.to_usize() as f64),
+    ]);
+    let seq_starts = sufr_file
+        .sequence_starts
+        .into_iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    rows.push(vec![
+        "Sequence starts".to_string(),
+        textwrap::wrap(&seq_starts, 40).join("\n"),
+    ]);
+    let seq_headers = sufr_file.headers.into_iter().collect::<Vec<_>>().join(", ");
+    rows.push(vec![
+        "Headers".to_string(),
+        textwrap::wrap(&seq_headers, 40).join("\n"),
+    ]);
+
+    let table = Table::from_iter(rows);
+    println!("{table}");
+
     Ok(())
 }
