@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::Result;
 use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
@@ -14,13 +14,10 @@ use std::{
     fmt::Debug,
     fs::{self, File},
     io::{self, Write},
-    num::NonZeroUsize,
-    ops::Range,
     path::{Path, PathBuf},
     time::Instant,
 };
 use tabled::Table;
-//use u4::{AsNibbles, U4x2, U4};
 
 // --------------------------------------------------
 #[derive(Parser, Debug)]
@@ -46,11 +43,11 @@ pub enum Command {
     /// Check sufr file for correctness
     Check(CheckArgs),
 
-    /// Extract sequences from a sufr file
+    /// Extract suffixes from a sufr file
     Extract(ExtractArgs),
 
-    /// Search for sequences in a sufr file
-    Search(SearchArgs),
+    /// Locate for sequences in a sufr file
+    Locate(LocateArgs),
 
     /// Summarize sufr file
     Summarize(SummarizeArgs),
@@ -107,45 +104,45 @@ pub struct CreateArgs {
 #[derive(Debug, Parser)]
 #[command(about, alias = "ex")]
 pub struct ExtractArgs {
-    /// Sufr file
-    #[arg(value_name = "SUFR")]
-    pub filename: String,
-
     /// Maximum length of sequence
     #[arg(short, long, value_name = "MAX")]
     pub max_len: Option<usize>,
 
-    /// Extract positions
-    #[arg(short, long, value_name = "EXTRACT", default_value = "1")]
-    pub extract: String,
-
-    /// Number output
-    #[arg(short, long)]
-    pub number: bool,
-
     /// Output
     #[arg(short, long)]
     pub output: Option<String>,
+
+    /// Sufr file
+    #[arg(value_name = "SUFR")]
+    pub filename: String,
+
+    /// Suffixes to extract
+    #[arg(
+        value_name = "SUFFIX", 
+        value_parser = clap::value_parser!(u64).range(0..),
+        num_args(1..),
+    )]
+    pub suffixes: Vec<u64>,
 }
 
 #[derive(Debug, Parser)]
-#[command(about, alias = "se")]
-pub struct SearchArgs {
-    /// Query
-    #[arg(short, long, value_name = "QUERY")]
-    pub query: Vec<String>,
-
+#[command(about, alias = "lo")]
+pub struct LocateArgs {
     /// Maximum query length
     #[arg(short, long, value_name = "LEN")]
     pub max_query_len: Option<usize>,
 
-    /// Sufr file
-    #[arg(short, long, value_name = "SUFR")]
-    pub file: String,
-
     /// Output
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
+
+    /// Sufr file
+    #[arg(value_name = "SUFR")]
+    pub file: String,
+
+    /// Query
+    #[arg(value_name = "QUERY", required = true)]
+    pub query: Vec<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -174,8 +171,6 @@ impl ValueEnum for LogLevel {
         })
     }
 }
-
-type PositionList = Vec<Range<usize>>;
 
 // --------------------------------------------------
 pub fn check(args: &CheckArgs) -> Result<()> {
@@ -312,51 +307,6 @@ where
 }
 
 // --------------------------------------------------
-// Parse an index from a string representation of an integer.
-// Ensures the number is non-zero.
-// Ensures the number does not start with '+'.
-// Returns an index, which is a non-negative integer that is
-// one less than the number represented by the original input.
-fn parse_index(input: &str) -> Result<usize> {
-    let value_error = || anyhow!(r#"illegal list value: "{input}""#);
-    input
-        .starts_with('+')
-        .then(|| Err(value_error()))
-        .unwrap_or_else(|| {
-            input
-                .parse::<NonZeroUsize>()
-                .map(|n| usize::from(n) - 1)
-                .map_err(|_| value_error())
-        })
-}
-
-// --------------------------------------------------
-fn parse_pos(range: &str) -> Result<PositionList> {
-    let range_re = Regex::new(r"^(\d+)-(\d+)$").unwrap();
-    range
-        .split(',')
-        .map(|val| {
-            parse_index(val).map(|n| n..n + 1).or_else(|e| {
-                range_re.captures(val).ok_or(e).and_then(|captures| {
-                    let n1 = parse_index(&captures[1])?;
-                    let n2 = parse_index(&captures[2])?;
-                    if n1 >= n2 {
-                        bail!(
-                            "First number in range ({}) \
-                            must be lower than second number ({})",
-                            n1 + 1,
-                            n2 + 1
-                        );
-                    }
-                    Ok(n1..n2 + 1)
-                })
-            })
-        })
-        .collect::<Result<_, _>>()
-        .map_err(From::from)
-}
-
-// --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
     let len = read_suffix_length(&args.filename)? as u64;
     if len < u32::MAX as u64 {
@@ -373,36 +323,22 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _extract<T>(mut sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
+pub fn _extract<T>(sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
     let now = Instant::now();
-    let positions: Vec<_> = parse_pos(&args.extract)?
-        .into_iter()
-        .flat_map(|r| r.collect::<Vec<_>>())
-        .collect();
 
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
     };
 
-    let text_len = sufr_file.len.to_usize();
-    let width = text_len.to_string().len() + 1;
-    for pos in positions {
-        if let Some(suffix) = sufr_file.suffix_array.get(pos).map(|v| v.to_usize()) {
-            let end = min(args.max_len.map_or(text_len, |len| suffix + len), text_len);
-            let seq = String::from_utf8(sufr_file.text[suffix..end].to_vec())?;
-
-            if args.number {
-                writeln!(output, "{suffix:width$}: {seq}")?;
-            } else {
-                writeln!(output, "{seq}")?;
-            }
-        } else {
-            break;
-        }
+    let text_len = sufr_file.text_len.to_usize();
+    for suffix in args.suffixes.iter().map(|&v| v as usize) {
+        let end = min(args.max_len.map_or(text_len, |len| suffix + len), text_len);
+        let seq = String::from_utf8(sufr_file.text[suffix..end].to_vec())?;
+        writeln!(output, "{seq}")?;
     }
     info!("Extracted suffixes in {:?}", now.elapsed());
 
@@ -410,23 +346,23 @@ where
 }
 
 // --------------------------------------------------
-pub fn search(args: &SearchArgs) -> Result<()> {
+pub fn locate(args: &LocateArgs) -> Result<()> {
     let len = read_suffix_length(&args.file)? as u64;
     if len < u32::MAX as u64 {
         let now = Instant::now();
         let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
         info!("Read sufr file in {:?}", now.elapsed());
-        _search(sa, args)
+        _locate(sa, args)
     } else {
         let now = Instant::now();
         let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
         info!("Read sufr file in {:?}", now.elapsed());
-        _search(sa, args)
+        _locate(sa, args)
     }
 }
 
 // --------------------------------------------------
-pub fn _search<T>(mut sufr_file: SufrFile<T>, args: &SearchArgs) -> Result<()>
+pub fn _locate<T>(mut sufr_file: SufrFile<T>, args: &LocateArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -452,18 +388,17 @@ where
     }
 
     let now = Instant::now();
-    for res in sufr_file.search(&queries, args.max_query_len)? {
-        let loc = match res.found {
-            Some((start, stop)) => {
-                format!("found in range {}..{}", start + 1, stop + 1)
-            }
-            _ => "not found".to_string(),
+    for res in sufr_file.locate(&queries, args.max_query_len)? {
+        let loc = if res.suffixes.is_empty() {
+            "not found".to_string()
+        } else {
+            res.suffixes.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(" ")
         };
-        writeln!(output, "Query '{}' {loc}", res.query)?;
+        writeln!(output, "{}: {loc}", res.query)?;
     }
 
     info!(
-        "Disk search of {} finished in {:?}",
+        "Locate of {} finished in {:?}",
         queries.len(),
         now.elapsed()
     );
@@ -501,7 +436,10 @@ where
     ]);
     rows.push(vec![
         "File Size".to_string(),
-        format!("{} bytes", num_fmt.format(",.0", metadata.len().to_usize() as f64)),
+        format!(
+            "{} bytes",
+            num_fmt.format(",.0", metadata.len().to_usize() as f64)
+        ),
     ]);
     rows.push(vec![
         "File Version".to_string(),
@@ -510,7 +448,7 @@ where
     rows.push(vec!["DNA".to_string(), sufr_file.is_dna.to_string()]);
     rows.push(vec![
         "Text Length".to_string(),
-        num_fmt.format(",.0", sufr_file.len.to_usize() as f64),
+        num_fmt.format(",.0", sufr_file.text_len.to_usize() as f64),
     ]);
     rows.push(vec![
         "Num Suffixes".to_string(),

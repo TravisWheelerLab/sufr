@@ -30,13 +30,6 @@ pub struct Comparison {
 }
 
 // --------------------------------------------------
-#[derive(Debug, PartialEq)]
-pub struct SearchResult {
-    pub query: String,
-    pub found: Option<(usize, usize)>,
-}
-
-// --------------------------------------------------
 #[derive(Debug)]
 pub struct SequenceFileData {
     pub seq: Vec<u8>,
@@ -87,6 +80,17 @@ impl FromUsize<u64> for u64 {
         val as u64
     }
 }
+
+// --------------------------------------------------
+#[derive(Debug, PartialEq)]
+pub struct LocateResult<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    pub query: String,
+    pub suffixes: Vec<T>,
+}
+
 
 // --------------------------------------------------
 #[derive(Debug)]
@@ -909,14 +913,16 @@ where
     pub suffix_array_pos: usize,
     pub lcp_pos: usize,
     pub max_query_len: T,
-    pub len: T,
+    pub text_len: T,
     pub num_suffixes: T,
     pub num_sequences: T,
     pub sequence_starts: Vec<T>,
     pub headers: Vec<String>,
     pub text: Vec<u8>,
-    pub suffix_array: FileAccess<T>,
-    pub lcp: FileAccess<T>,
+    pub suffix_array: Vec<T>,
+    pub lcp: Vec<T>,
+    pub suffix_array_file: FileAccess<T>,
+    pub lcp_file: FileAccess<T>,
 }
 
 impl<T> SufrFile<T>
@@ -979,23 +985,14 @@ where
         file.read_exact(&mut text)?;
 
         // Suffix Array
-        let suffix_array: FileAccess<T> =
+        let suffix_array_file: FileAccess<T> =
             FileAccess::new(filename, suffix_array_pos as u64, num_suffixes)?;
-        file.seek_relative(suffix_array.size as i64)?;
+        file.seek_relative(suffix_array_file.size as i64)?;
 
         // LCP
-        let lcp: FileAccess<T> =
+        let lcp_file: FileAccess<T> =
             FileAccess::new(filename, lcp_pos as u64, num_suffixes)?;
-        file.seek_relative(lcp.size as i64)?;
-
-        //let mut buffer = vec![0; num_suffixes * mem::size_of::<T>()];
-        //file.read_exact(&mut buffer)?;
-        //let mem_suffix_array: Vec<T> =
-        //    SufrBuilder::slice_u8_to_vec(&buffer, num_suffixes);
-
-        //let mut buffer = vec![0; num_suffixes * mem::size_of::<T>()];
-        //file.read_exact(&mut buffer)?;
-        //let mem_lcp: Vec<T> = SufrBuilder::slice_u8_to_vec(&buffer, num_suffixes);
+        file.seek_relative(lcp_file.size as i64)?;
 
         // Headers are variable in length so they are at the end
         let mut buffer = vec![];
@@ -1009,15 +1006,17 @@ where
             text_pos,
             suffix_array_pos,
             lcp_pos,
-            len: T::from_usize(text_len),
+            text_len: T::from_usize(text_len),
             num_suffixes: T::from_usize(num_suffixes),
             max_query_len,
             num_sequences,
             sequence_starts,
             headers,
             text,
-            suffix_array,
-            lcp,
+            suffix_array_file,
+            lcp_file,
+            suffix_array: vec![],
+            lcp: vec![],
         })
     }
 
@@ -1049,7 +1048,7 @@ where
 
     // --------------------------------------------------
     pub fn string_at(&self, pos: usize, len: Option<usize>) -> String {
-        let text_len = self.len.to_usize();
+        let text_len = self.text_len.to_usize();
         let end = len.map_or(text_len, |n| {
             let end = pos + n;
             if end > text_len {
@@ -1065,45 +1064,75 @@ where
     }
 
     // --------------------------------------------------
-    pub fn search(
+    pub fn locate(
         &mut self,
         queries: &[String],
-        _max_query_len: Option<usize>,
-    ) -> Result<Vec<SearchResult>> {
+        max_query_len: Option<usize>,
+    ) -> Result<Vec<LocateResult<T>>> {
+        let now = Instant::now();
+        let max_of_queries = queries.iter().map(|v| v.len()).max().unwrap_or(0);
+        let max_query_len =
+            max_query_len.unwrap_or(if self.max_query_len > T::default() {
+                min(self.max_query_len.to_usize(), max_of_queries)
+            } else {
+                max_of_queries
+            });
+        dbg!(max_query_len);
+        let ranks : Vec<usize> = self
+            .lcp_file
+            .iter()
+            .enumerate()
+            .filter_map(|(rank, lcp)| (lcp.to_usize() < max_query_len).then(|| rank))
+            .collect();
+        //dbg!(&ranks);
+        self.suffix_array = ranks
+            .iter()
+            .filter_map(|&rank| self.suffix_array_file.get(rank))
+            .collect();
+        info!(
+            "Built compressed SA ({}/{}) in {:?}",
+            self.suffix_array.len(),
+            self.num_suffixes,
+            now.elapsed()
+        );
+        //dbg!(&self.suffix_array);
+        //for (rank, start) in ranks.iter().zip(self.suffix_array.iter()) {
+        //    //.step_by(1_000_000) {
+        //    let end = min(start.to_usize() + max_query_len, self.text_len.to_usize());
+        //    eprintln!(
+        //        "{rank:2}: {:2} = {}",
+        //        start,
+        //        String::from_utf8(self.text[start.to_usize()..end].to_vec()).unwrap(),
+        //    );
+        //}
+
         let mut res = vec![];
+        let n = self.suffix_array.len();
         for query in queries {
             let qry = query.as_bytes();
-            let n = self.num_suffixes.to_usize();
-            let found = self.suffix_search_first(qry, 0, n - 1, 0, 0).map(|start| {
+            let mut suffixes = vec![];
+            if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
                 let end = self
                     .suffix_search_last(qry, start, n - 1, n, 0, 0)
                     .unwrap_or(start);
-                (start, end)
-            });
+                let start_rank = ranks[start];
+                let end_rank = if start == end {
+                    ranks[start + 1]
+                } else {
+                    ranks[end] + 1
+                };
+                suffixes = (start_rank..end_rank).filter_map(|rank|
+                    self.suffix_array_file.get(rank)
+                ).collect::<Vec<_>>();
+            }
 
-            res.push(SearchResult {
+            res.push(LocateResult {
                 query: query.to_string(),
-                found,
+                suffixes,
             });
         }
 
         Ok(res)
-
-        //let max_query_len = max_query_len.unwrap_or(query.len());
-        //let mut compressed_sa = vec![];
-        //for (sa, lcp) in self.suffix_array.clone().zip(self.lcp.clone()) {
-        //    if lcp.to_usize() < max_query_len {
-        //        compressed_sa.push(sa);
-        //    }
-        //}
-        //info!(
-        //    "Built compressed SA ({}/{}) in {:?}",
-        //    compressed_sa.len(),
-        //    self.num_suffixes,
-        //    now.elapsed()
-        //);
-        //dbg!(&compressed_sa);
-        //dbg!(&self.suffix_array.clone().into_iter().collect::<Vec<_>>());
     }
 
     // --------------------------------------------------
@@ -1117,7 +1146,6 @@ where
     ) -> Option<usize> {
         if high >= low {
             let mid = low + ((high - low) / 2);
-
             let mid_val = self.suffix_array.get(mid)?.to_usize();
             let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
             let mid_minus_one = if mid > 0 {
@@ -1507,15 +1535,15 @@ mod tests {
         let mut sufr_file = res.unwrap();
         assert_eq!(sufr_file.version, OUTFILE_VERSION);
         assert!(sufr_file.is_dna);
-        assert_eq!(sufr_file.len, 18);
+        assert_eq!(sufr_file.text_len, 18);
         assert_eq!(sufr_file.num_sequences, 2);
         assert_eq!(sufr_file.sequence_starts, [0, 9]);
         assert_eq!(sufr_file.headers, ["ABC", "DEF"]);
         assert_eq!(sufr_file.text, b"ACGTACGTNACGTACGT$");
 
-        let file_sa: Vec<_> = sufr_file.suffix_array.iter().collect();
+        let file_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
         assert_eq!(file_sa, sorted_sa);
-        let file_lcp: Vec<_> = sufr_file.lcp.iter().collect();
+        let file_lcp: Vec<_> = sufr_file.lcp_file.iter().collect();
         assert_eq!(file_lcp, lcp);
         Ok(())
     }
@@ -1552,15 +1580,15 @@ mod tests {
         let mut sufr_file = res.unwrap();
         assert_eq!(sufr_file.version, OUTFILE_VERSION);
         assert!(sufr_file.is_dna);
-        assert_eq!(sufr_file.len, 11);
+        assert_eq!(sufr_file.text_len, 11);
         assert_eq!(sufr_file.num_sequences, 1);
         assert_eq!(sufr_file.sequence_starts, [0]);
         assert_eq!(sufr_file.headers, ["1"]);
         assert_eq!(sufr_file.text, b"ACGTNNACGT$");
 
-        let file_sa: Vec<_> = sufr_file.suffix_array.iter().collect();
+        let file_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
         assert_eq!(file_sa, sorted_sa);
-        let file_lcp: Vec<_> = sufr_file.lcp.iter().collect();
+        let file_lcp: Vec<_> = sufr_file.lcp_file.iter().collect();
         assert_eq!(file_lcp, lcp);
         Ok(())
     }

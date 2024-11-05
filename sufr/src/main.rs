@@ -41,8 +41,8 @@ fn run(args: Cli) -> Result<()> {
             sufr::extract(args)?;
             Ok(())
         }
-        Some(Command::Search(args)) => {
-            sufr::search(args)?;
+        Some(Command::Locate(args)) => {
+            sufr::locate(args)?;
             Ok(())
         }
         Some(Command::Summarize(args)) => {
