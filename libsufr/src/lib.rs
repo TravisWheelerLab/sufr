@@ -850,7 +850,7 @@ where
         } else {
             // Fill the buffer
             if self.file_access.buffer.is_empty()
-                || self.file_access.buffer_pos == self.file_access.buffer_size
+                || self.file_access.buffer_pos == self.file_access.buffer.len()
             {
                 if self.file_access.current_position >= self.file_access.end_position {
                     self.file_access.exhausted = true;
