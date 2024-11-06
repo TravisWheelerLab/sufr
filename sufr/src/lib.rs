@@ -337,8 +337,10 @@ where
     let text_len = sufr_file.text_len.to_usize();
     for suffix in args.suffixes.iter().map(|&v| v as usize) {
         let end = min(args.max_len.map_or(text_len, |len| suffix + len), text_len);
-        let seq = String::from_utf8(sufr_file.text[suffix..end].to_vec())?;
-        writeln!(output, "{seq}")?;
+        if let Some(bytes) = sufr_file.text.get(suffix..end) {
+            let seq = String::from_utf8(bytes.to_vec())?;
+            writeln!(output, "{seq}")?;
+        }
     }
     info!("Extracted suffixes in {:?}", now.elapsed());
 

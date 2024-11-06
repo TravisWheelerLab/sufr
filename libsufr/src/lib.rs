@@ -91,7 +91,6 @@ where
     pub suffixes: Vec<T>,
 }
 
-
 // --------------------------------------------------
 #[derive(Debug)]
 pub struct Partition<T>
@@ -858,14 +857,13 @@ where
         } else {
             // Fill the buffer
             if self.file_access.buffer.is_empty()
-                || self.file_access.buffer_pos == self.file_access.buffer_size
+                || self.file_access.buffer_pos == self.file_access.buffer.len()
             {
                 if self.file_access.current_position >= self.file_access.end_position {
                     self.file_access.exhausted = true;
                     return None;
                 }
 
-                //let mut file = File::open(&self.file_access.filename).unwrap();
                 self.file_access
                     .file
                     .seek(SeekFrom::Start(self.file_access.current_position))
@@ -1078,17 +1076,32 @@ where
                 max_of_queries
             });
         dbg!(max_query_len);
-        let ranks : Vec<usize> = self
+
+        let ranked_suffixes: Vec<(usize, T)> = self
             .lcp_file
             .iter()
+            .zip(self.suffix_array_file.iter())
             .enumerate()
-            .filter_map(|(rank, lcp)| (lcp.to_usize() < max_query_len).then(|| rank))
+            .filter_map(|(rank, (lcp, suffix))| {
+                (lcp.to_usize() < max_query_len).then_some((rank, suffix))
+            })
             .collect();
+        self.suffix_array = ranked_suffixes.iter().map(|(_, s)| *s).collect::<Vec<T>>();
+        //dbg!(&self.suffix_array);
+        let ranks: Vec<usize> = ranked_suffixes.iter().map(|(r, _)| *r).collect();
         //dbg!(&ranks);
-        self.suffix_array = ranks
-            .iter()
-            .filter_map(|&rank| self.suffix_array_file.get(rank))
-            .collect();
+
+        //let ranks: Vec<usize> = self
+        //    .lcp_file
+        //    .iter()
+        //    .enumerate()
+        //    .filter_map(|(rank, lcp)| (lcp.to_usize() < max_query_len).then_some(rank))
+        //    .collect();
+        //dbg!(&ranks.len());
+        //self.suffix_array = ranks
+        //    .iter()
+        //    .filter_map(|&rank| self.suffix_array_file.get(rank))
+        //    .collect();
         info!(
             "Built compressed SA ({}/{}) in {:?}",
             self.suffix_array.len(),
@@ -1096,8 +1109,8 @@ where
             now.elapsed()
         );
         //dbg!(&self.suffix_array);
-        //for (rank, start) in ranks.iter().zip(self.suffix_array.iter()) {
-        //    //.step_by(1_000_000) {
+        //for &rank in &[0, ranks.len() - 1] {
+        //    let start = self.suffix_array[rank];
         //    let end = min(start.to_usize() + max_query_len, self.text_len.to_usize());
         //    eprintln!(
         //        "{rank:2}: {:2} = {}",
@@ -1106,8 +1119,8 @@ where
         //    );
         //}
 
-        let mut res = vec![];
         let n = self.suffix_array.len();
+        let mut res = vec![];
         for query in queries {
             let qry = query.as_bytes();
             let mut suffixes = vec![];
@@ -1121,9 +1134,9 @@ where
                 } else {
                     ranks[end] + 1
                 };
-                suffixes = (start_rank..end_rank).filter_map(|rank|
-                    self.suffix_array_file.get(rank)
-                ).collect::<Vec<_>>();
+                suffixes = (start_rank..end_rank)
+                    .filter_map(|rank| self.suffix_array_file.get(rank))
+                    .collect::<Vec<_>>();
             }
 
             res.push(LocateResult {
