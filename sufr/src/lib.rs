@@ -46,6 +46,9 @@ pub enum Command {
     /// Extract suffixes from a sufr file
     Extract(ExtractArgs),
 
+    /// List the suffix array from a sufr file
+    List(ListArgs),
+
     /// Locate for sequences in a sufr file
     Locate(LocateArgs),
 
@@ -104,12 +107,16 @@ pub struct CreateArgs {
 #[derive(Debug, Parser)]
 #[command(about, alias = "ex")]
 pub struct ExtractArgs {
-    /// Maximum length of sequence
-    #[arg(short, long, value_name = "MAX")]
-    pub max_len: Option<usize>,
+    /// Prefix length
+    #[arg(short, long, value_name = "PREFIX_LEN")]
+    pub prefix_len: Option<usize>,
+
+    /// Suffix length
+    #[arg(short, long, value_name = "SUFFIX_LEN")]
+    pub suffix_len: Option<usize>,
 
     /// Output
-    #[arg(short, long)]
+    #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
 
     /// Sufr file
@@ -123,6 +130,26 @@ pub struct ExtractArgs {
         num_args(1..),
     )]
     pub suffixes: Vec<u64>,
+}
+
+#[derive(Debug, Parser)]
+#[command(about, alias = "li")]
+pub struct ListArgs {
+    /// Number of suffixes to show
+    #[arg(short, long, value_name = "NUM")]
+    pub number: Option<usize>,
+
+    /// Length of suffixes to show
+    #[arg(short, long, value_name = "LEN")]
+    pub len: Option<usize>,
+
+    /// Output
+    #[arg(short, long, value_name = "OUT")]
+    pub output: Option<String>,
+
+    /// Sufr file
+    #[arg(value_name = "SUFR")]
+    pub file: String,
 }
 
 #[derive(Debug, Parser)]
@@ -335,14 +362,74 @@ where
     };
 
     let text_len = sufr_file.text_len.to_usize();
+    let prefix_len = args.prefix_len.unwrap_or(0);
     for suffix in args.suffixes.iter().map(|&v| v as usize) {
-        let end = min(args.max_len.map_or(text_len, |len| suffix + len), text_len);
-        if let Some(bytes) = sufr_file.text.get(suffix..end) {
+        let start = if suffix - prefix_len > 0 {
+            suffix - prefix_len
+        } else {
+            suffix
+        };
+        let end = min(
+            args.suffix_len.map_or(text_len, |len| suffix + len),
+            text_len,
+        );
+        if let Some(bytes) = sufr_file.text.get(start..end) {
             let seq = String::from_utf8(bytes.to_vec())?;
             writeln!(output, "{seq}")?;
         }
     }
     info!("Extracted suffixes in {:?}", now.elapsed());
+
+    Ok(())
+}
+
+// --------------------------------------------------
+pub fn list(args: &ListArgs) -> Result<()> {
+    let len = read_suffix_length(&args.file)? as u64;
+    if len < u32::MAX as u64 {
+        let now = Instant::now();
+        let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
+        info!("Read sufr file in {:?}", now.elapsed());
+        _list(sa, args)
+    } else {
+        let now = Instant::now();
+        let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
+        info!("Read sufr file in {:?}", now.elapsed());
+        _list(sa, args)
+    }
+}
+
+// --------------------------------------------------
+pub fn _list<T>(mut sufr_file: SufrFile<T>, args: &ListArgs) -> Result<()>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+{
+    let mut output: Box<dyn Write> = match &args.output {
+        Some(out_name) => Box::new(File::create(out_name)?),
+        _ => Box::new(io::stdout()),
+    };
+
+    let width = sufr_file.text_len.to_string().len();
+    let text_len = sufr_file.text_len.to_usize();
+    let suffix_len = args.len.unwrap_or(text_len);
+    let stop = args.number.unwrap_or(0);
+    for (i, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
+        let suffix = suffix.to_usize();
+        let end = if suffix + suffix_len > text_len {
+            text_len
+        } else {
+            suffix + suffix_len
+        };
+        writeln!(
+            output,
+            "{suffix:width$}: {}",
+            String::from_utf8(sufr_file.text[suffix..end].to_vec())?
+        )?;
+
+        if stop > 0 && i == stop {
+            break;
+        }
+    }
 
     Ok(())
 }
@@ -394,7 +481,11 @@ where
         let loc = if res.suffixes.is_empty() {
             "not found".to_string()
         } else {
-            res.suffixes.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(" ")
+            res.suffixes
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
         };
         writeln!(output, "{}: {loc}", res.query)?;
     }

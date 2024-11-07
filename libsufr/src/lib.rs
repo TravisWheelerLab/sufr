@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail, Result};
+use home::home_dir;
 use log::info;
 use needletail::parse_fastx_file;
 use rand::Rng;
@@ -12,7 +13,7 @@ use std::{
     io::{BufWriter, Read, Seek, SeekFrom, Write},
     mem,
     ops::{Add, Div, Range, Sub},
-    path::PathBuf,
+    path::{Path, PathBuf},
     slice,
     sync::{Arc, Mutex},
     time::Instant,
@@ -258,7 +259,11 @@ where
     pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
         let start1 = start1.to_usize();
         let start2 = start2.to_usize();
-        let len = len.to_usize();
+        let len = if len == T::default() {
+            self.text_len.to_usize()
+        } else {
+            len.to_usize()
+        };
         let end1 = min(start1 + len, self.text_len.to_usize());
         let end2 = min(start2 + len, self.text_len.to_usize());
         unsafe {
@@ -293,23 +298,20 @@ where
     }
 
     // --------------------------------------------------
-    pub fn upper_bound(&self, target: T, sa: &[T]) -> usize {
+    pub fn upper_bound(&self, target: T, pivots: &[T]) -> usize {
         // See if target is less than the first element
-        if sa.is_empty() || self.is_less(target, sa[0]) {
-            //T::default()
+        if pivots.is_empty() || self.is_less(target, pivots[0]) {
             0
         } else {
             // Find where all the values are less than target
-            let i = sa.partition_point(|&p| self.is_less(p, target));
+            let i = pivots.partition_point(|&p| self.is_less(p, target));
 
             // If the value at the partition is the same as the target
-            if sa.get(i).map_or(false, |&v| v == target) {
+            if pivots.get(i).map_or(false, |&v| v == target) {
                 // Then return the next value, which might be out of range
-                //T::from_usize(i + 1)
                 i + 1
             } else {
                 // Else return the partition point
-                //T::from_usize(i)
                 i
             }
         }
@@ -427,7 +429,8 @@ where
         let mut partitions: Vec<Option<Partition<T>>> =
             (0..num_partitions).map(|_| None).collect();
 
-        partitions.par_iter_mut().enumerate().try_for_each(
+        //partitions.par_iter_mut().enumerate().try_for_each(
+        partitions.iter_mut().enumerate().try_for_each(
             |(partition_num, partition)| -> Result<()> {
                 // Find the suffixes in this partition
                 let mut part_sa = vec![];
@@ -1062,62 +1065,143 @@ where
     }
 
     // --------------------------------------------------
+    fn get_sufr_dir(&self) -> Result<PathBuf> {
+        let home = home_dir().expect("Failed to get home directory");
+        let sufr_dir = home.join(".sufr");
+        if !sufr_dir.is_dir() {
+            fs::create_dir(&sufr_dir)?;
+        }
+        Ok(sufr_dir)
+    }
+
+    // --------------------------------------------------
+    pub fn suffix_array_mem(
+        &mut self,
+        mut max_query_len: usize,
+    ) -> Result<(Vec<T>, Vec<usize>)> {
+        if max_query_len > 0 {
+            // Cannot be greater than built MQL
+            if self.max_query_len > T::default() {
+                max_query_len = min(max_query_len, self.max_query_len.to_usize());
+            }
+
+            let sufr_dir = &self.get_sufr_dir()?;
+            let basename = Path::new(&self.filename)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let cache_file =
+                sufr_dir.join(format!("locate-{max_query_len}-{basename}"));
+
+            if cache_file.is_file() {
+                let now = Instant::now();
+                let mut file = File::open(&cache_file)
+                    .map_err(|e| anyhow!("{}: {e}", cache_file.display()))?;
+
+                let mut buffer = [0; 8];
+                file.read_exact(&mut buffer)?;
+                let num_elements = usize::from_ne_bytes(buffer);
+
+                let mut buffer = vec![0; num_elements * mem::size_of::<T>()];
+                file.read_exact(&mut buffer)?;
+                let suffix_array: Vec<T> =
+                    SufrBuilder::slice_u8_to_vec(&buffer, num_elements);
+
+                let mut buffer = vec![];
+                file.read_to_end(&mut buffer)?;
+                let rank: Vec<usize> = unsafe {
+                    std::slice::from_raw_parts(
+                        buffer.as_ptr() as *const _,
+                        num_elements,
+                    )
+                    .to_vec()
+                };
+
+                info!(
+                    "Read cache file {} in {:?}",
+                    cache_file.display(),
+                    now.elapsed()
+                );
+
+                Ok((suffix_array, rank))
+            } else {
+                let now = Instant::now();
+                let ranked_suffixes: Vec<(usize, T)> = self
+                    .lcp_file
+                    .iter()
+                    .zip(self.suffix_array_file.iter())
+                    .enumerate()
+                    .filter_map(|(rank, (lcp, suffix))| {
+                        (lcp.to_usize() < max_query_len).then_some((rank, suffix))
+                    })
+                    .collect();
+                let suffix_array: Vec<T> =
+                    ranked_suffixes.iter().map(|(_, s)| *s).collect();
+                let rank: Vec<usize> =
+                    ranked_suffixes.into_iter().map(|(r, _)| r).collect();
+                info!(
+                    "Built compressed SA ({}/{}) in {:?}",
+                    self.suffix_array.len(),
+                    self.num_suffixes,
+                    now.elapsed()
+                );
+
+                // Write cache file
+                let mut file = File::create(&cache_file)
+                    .map_err(|e| anyhow!("{}: {e}", cache_file.display()))?;
+                let _ = file.write(&usize_to_bytes(suffix_array.len()))?;
+                let bytes = unsafe {
+                    slice::from_raw_parts(
+                        suffix_array.as_ptr() as *const u8,
+                        suffix_array.len() * std::mem::size_of::<T>(),
+                    )
+                };
+                file.write_all(bytes)?;
+                let bytes = unsafe {
+                    slice::from_raw_parts(
+                        rank.as_ptr() as *const u8,
+                        rank.len() * std::mem::size_of::<usize>(),
+                    )
+                };
+                file.write_all(bytes)?;
+
+                Ok((suffix_array, rank))
+            }
+        } else {
+            Ok((self.suffix_array_file.iter().collect::<Vec<_>>(), vec![]))
+        }
+    }
+
+    // --------------------------------------------------
     pub fn locate(
         &mut self,
         queries: &[String],
         max_query_len: Option<usize>,
     ) -> Result<Vec<LocateResult<T>>> {
-        let now = Instant::now();
         let max_of_queries = queries.iter().map(|v| v.len()).max().unwrap_or(0);
-        let max_query_len =
-            max_query_len.unwrap_or(if self.max_query_len > T::default() {
+        let mut max_query_len = max_query_len.unwrap_or(0);
+        if max_query_len == 0 {
+            max_query_len = if self.max_query_len > T::default() {
                 min(self.max_query_len.to_usize(), max_of_queries)
             } else {
                 max_of_queries
-            });
-        dbg!(max_query_len);
+            };
+        }
 
-        let ranked_suffixes: Vec<(usize, T)> = self
-            .lcp_file
+        let (mut suffix_array, rank) = self.suffix_array_mem(max_query_len)?;
+        self.suffix_array = mem::take(&mut suffix_array);
+        //dbg!(&self.suffix_array);
+        let sufs: Vec<_> = self
+            .suffix_array
             .iter()
-            .zip(self.suffix_array_file.iter())
-            .enumerate()
-            .filter_map(|(rank, (lcp, suffix))| {
-                (lcp.to_usize() < max_query_len).then_some((rank, suffix))
+            .map(|start| {
+                self.text[start.to_usize()] as char
+                //let end = self.text_len.to_usize();
+                //String::from_utf8(self.text[start.to_usize()..end].to_vec()).unwrap()
             })
             .collect();
-        self.suffix_array = ranked_suffixes.iter().map(|(_, s)| *s).collect::<Vec<T>>();
-        //dbg!(&self.suffix_array);
-        let ranks: Vec<usize> = ranked_suffixes.iter().map(|(r, _)| *r).collect();
-        //dbg!(&ranks);
-
-        //let ranks: Vec<usize> = self
-        //    .lcp_file
-        //    .iter()
-        //    .enumerate()
-        //    .filter_map(|(rank, lcp)| (lcp.to_usize() < max_query_len).then_some(rank))
-        //    .collect();
-        //dbg!(&ranks.len());
-        //self.suffix_array = ranks
-        //    .iter()
-        //    .filter_map(|&rank| self.suffix_array_file.get(rank))
-        //    .collect();
-        info!(
-            "Built compressed SA ({}/{}) in {:?}",
-            self.suffix_array.len(),
-            self.num_suffixes,
-            now.elapsed()
-        );
-        //dbg!(&self.suffix_array);
-        //for &rank in &[0, ranks.len() - 1] {
-        //    let start = self.suffix_array[rank];
-        //    let end = min(start.to_usize() + max_query_len, self.text_len.to_usize());
-        //    eprintln!(
-        //        "{rank:2}: {:2} = {}",
-        //        start,
-        //        String::from_utf8(self.text[start.to_usize()..end].to_vec()).unwrap(),
-        //    );
-        //}
+        //dbg!(sufs);
 
         let n = self.suffix_array.len();
         let mut res = vec![];
@@ -1128,12 +1212,26 @@ where
                 let end = self
                     .suffix_search_last(qry, start, n - 1, n, 0, 0)
                     .unwrap_or(start);
-                let start_rank = ranks[start];
-                let end_rank = if start == end {
-                    ranks[start + 1]
+
+                // Rank is empty when we have the full SA
+                let (start_rank, end_rank) = if rank.is_empty() {
+                    (start, end + 1)
                 } else {
-                    ranks[end] + 1
+                    let start_rank = rank[start];
+                    let end_rank = if start == end {
+                        if start == rank.len() - 1 {
+                            // We're on the last rank, so go to end
+                            self.num_suffixes.to_usize()
+                        } else {
+                            // Use the next LCP rank
+                            rank[start + 1]
+                        }
+                    } else {
+                        rank[end] + 1
+                    };
+                    (start_rank, end_rank)
                 };
+
                 suffixes = (start_rank..end_rank)
                     .filter_map(|rank| self.suffix_array_file.get(rank))
                     .collect::<Vec<_>>();
@@ -1321,7 +1419,7 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_sequence_file, read_suffix_length, usize_to_bytes, SearchResult,
+        read_sequence_file, read_suffix_length, usize_to_bytes, LocateResult,
         SufrBuilder, SufrBuilderArgs, SufrFile,
     };
     use crate::OUTFILE_VERSION;
@@ -1437,7 +1535,7 @@ mod tests {
     }
 
     #[test]
-    fn test_search() -> Result<()> {
+    fn test_locate() -> Result<()> {
         //  0  14: #
         //  1   0: AABABABABBABAB#
         //  2  12: AB#
@@ -1453,17 +1551,16 @@ mod tests {
         // 12   4: BABABBABAB#
         // 13   6: BABBABAB#
         // 14   8: BBABAB#
-        //
-        let mut sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
 
-        let res = sufr_file.search(&["B".to_string()], None);
+        let mut sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
+        let res = sufr_file.locate(&["B".to_string()], None);
         assert!(res.is_ok());
 
         assert_eq!(
             res.unwrap(),
-            vec![SearchResult {
+            vec![LocateResult {
                 query: "B".to_string(),
-                found: Some((8, 14))
+                suffixes: vec![13, 11, 9, 2, 4, 6, 8]
             }]
         );
 
@@ -1534,6 +1631,7 @@ mod tests {
             sequence_delimiter,
         };
         let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
+        // 17 13 9 0 4 14 10 1 5 15 11 2 6 16 12 3 7
         let sorted_sa = [17, 13, 9, 0, 4, 14, 10, 1, 5, 15, 11, 2, 6, 16, 12, 3, 7];
         let lcp = [0, 0, 4, 8, 4, 0, 3, 7, 3, 0, 2, 6, 2, 0, 1, 5, 1];
         let outfile = NamedTempFile::new()?;
@@ -1609,7 +1707,7 @@ mod tests {
     #[test]
     fn test_upper_bound() -> Result<()> {
         //          012345
-        let text = "TTTAGC".as_bytes().to_vec();
+        let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
             text,
             max_query_len: None,
@@ -1631,6 +1729,50 @@ mod tests {
 
         // The "C$" is the last value
         assert_eq!(sufr.upper_bound(5, &[3, 5, 4]), 2);
+
+        //           0123456789
+        let text = b"ACGTNNACGT".to_vec();
+        //let text_len = text.len();
+        let args = SufrBuilderArgs {
+            text,
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+        };
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+
+        // ACGTNNACGT$ == ACGTNNACGT$
+        assert_eq!(sufr.upper_bound(0, &[0]), 1);
+
+        // ACGTNNACGT$ > ACGT$
+        assert_eq!(sufr.upper_bound(0, &[6]), 1);
+
+        // ACGT$ < ACGTNNACGT$
+        assert_eq!(sufr.upper_bound(6, &[0]), 0);
+
+        // ACGT$ == ACGT$
+        assert_eq!(sufr.upper_bound(6, &[6]), 1);
+
+        // Pivots = [CGT$, GT$]
+        // ACGTNNACGT$ < CGT$ => p0
+        assert_eq!(sufr.upper_bound(0, &[7, 8]), 0);
+
+        // CGTNNACGT$ > CGT$  => p1
+        assert_eq!(sufr.upper_bound(1, &[7, 8]), 1);
+
+        // GT$ == GT$  => p1
+        assert_eq!(sufr.upper_bound(1, &[7, 8]), 1);
+
+        // T$ > GT$  => p2
+        assert_eq!(sufr.upper_bound(9, &[7, 8]), 2);
+
+        // T$ < TNNACGT$ => p0
+        assert_eq!(sufr.upper_bound(9, &[3]), 0);
 
         Ok(())
     }

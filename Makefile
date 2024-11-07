@@ -27,28 +27,28 @@ testfiles: s1 s1s s1n s2 s2n s2s s2ns s3
 	cp [1-3]*.sufr sufr/tests/expected/
 
 s1:
-	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -m 4 -o 1.sufr
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1.sufr
 
 s1s:
-	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -m 4 -o 1s.sufr --ignore-softmask
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1s.sufr --ignore-softmask
 
 s1n:
-	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -m 4 --allow-ambiguity -o 1n.sufr
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --allow-ambiguity -o 1n.sufr
 
 s2:
-	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna -m 4
+	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna 
 
 s2n:
-	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna -m 4 --allow-ambiguity -o 2n.sufr
+	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --allow-ambiguity -o 2n.sufr
 
 s2s:
-	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna -m 4 --ignore-softmask -o 2s.sufr
+	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --ignore-softmask -o 2s.sufr
 
 s2ns:
-	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna -m 4 --allow-ambiguity --ignore-softmask -o 2ns.sufr
+	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --allow-ambiguity --ignore-softmask -o 2ns.sufr
 
 s3:
-	$(CREATE_DEBUG) $(SEQ3) --dna -m 4
+	$(CREATE_DEBUG) $(SEQ3) --dna
 
 elegans:
 	$(CREATE_RELEASE) --dna -m 12 $(ELEGANS)
