@@ -20,7 +20,7 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
-const OUTFILE_VERSION: u8 = 3;
+const OUTFILE_VERSION: u8 = 4;
 const SENTINEL: u8 = b'$';
 
 // --------------------------------------------------
@@ -80,6 +80,14 @@ impl FromUsize<u64> for u64 {
     fn from_usize(val: usize) -> u64 {
         val as u64
     }
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
+pub struct Locate {
+    pub queries: Vec<String>,
+    pub max_query_len: Option<usize>,
+    pub low_memory: bool,
 }
 
 // --------------------------------------------------
@@ -162,6 +170,14 @@ where
         }
         Ok(())
     }
+}
+
+struct PartitionBuildResult<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    builders: Vec<Arc<Mutex<PartitionBuilder<T>>>>,
+    num_suffixes: usize,
 }
 
 // --------------------------------------------------
@@ -259,11 +275,12 @@ where
     pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
         let start1 = start1.to_usize();
         let start2 = start2.to_usize();
-        let len = if len == T::default() {
-            self.text_len.to_usize()
-        } else {
-            len.to_usize()
-        };
+        let len = len.to_usize();
+        //let len = if len == T::default() {
+        //    self.text_len.to_usize()
+        //} else {
+        //    len.to_usize()
+        //};
         let end1 = min(start1 + len, self.text_len.to_usize());
         let end2 = min(start2 + len, self.text_len.to_usize());
         unsafe {
@@ -284,7 +301,12 @@ where
         if s1 == s2 {
             false
         } else {
-            let len_lcp = self.find_lcp(s1, s2, self.max_query_len).to_usize();
+            let max_query_len = if self.max_query_len > T::default() {
+                self.max_query_len
+            } else {
+                self.text_len
+            };
+            let len_lcp = self.find_lcp(s1, s2, max_query_len).to_usize();
 
             match (
                 self.text.get(s1.to_usize() + len_lcp),
@@ -321,7 +343,8 @@ where
     fn partition(
         &mut self,
         num_partitions: usize,
-    ) -> Result<(Vec<Arc<Mutex<PartitionBuilder<T>>>>, usize)> {
+        //) -> Result<(Vec<Arc<Mutex<PartitionBuilder<T>>>>, usize)> {
+    ) -> Result<PartitionBuildResult<T>> {
         // Create more partitions than requested because
         // we can't know how big they will end up being
         let max_partitions = self.text_len.to_usize() / 4;
@@ -392,27 +415,34 @@ where
             now.elapsed()
         );
 
-        Ok((builders, num_suffixes))
+        //Ok((builders, num_suffixes))
+        Ok(PartitionBuildResult {
+            builders,
+            num_suffixes,
+        })
     }
 
     // --------------------------------------------------
     pub fn sort(&mut self, num_partitions: usize) -> Result<()> {
-        // We will get more partition files than num_partitions
-        let (mut part_files, num_suffixes) = self.partition(num_partitions)?;
-        let num_per_partition = num_suffixes / num_partitions;
+        let mut partition_build = self.partition(num_partitions)?;
+        let num_per_partition = partition_build.num_suffixes / num_partitions;
         let total_sort_time = Instant::now();
         let mut num_taken = 0;
         let mut partition_inputs = vec![vec![]; num_partitions];
 
+        // We (probably) have many more partitions than we need,
+        // so here we accumulate the small partitions from the left
+        // stopping when we reach a boundary like 1M/partition.
+        // This evens out the workload to sort the partitions.
         #[allow(clippy::needless_range_loop)]
-        for part_num in 0..num_partitions {
-            let boundary = num_per_partition * (part_num + 1);
-            while !part_files.is_empty() {
-                let part = part_files.remove(0);
+        for partition_num in 0..num_partitions {
+            let boundary = num_per_partition * (partition_num + 1);
+            while !partition_build.builders.is_empty() {
+                let part = partition_build.builders.remove(0);
                 match part.lock() {
                     Ok(builder) => {
                         if builder.total_len > 0 {
-                            partition_inputs[part_num]
+                            partition_inputs[partition_num]
                                 .push((builder.path.clone(), builder.total_len));
                             num_taken += builder.total_len;
                         }
@@ -429,8 +459,7 @@ where
         let mut partitions: Vec<Option<Partition<T>>> =
             (0..num_partitions).map(|_| None).collect();
 
-        //partitions.par_iter_mut().enumerate().try_for_each(
-        partitions.iter_mut().enumerate().try_for_each(
+        partitions.par_iter_mut().enumerate().try_for_each(
             |(partition_num, partition)| -> Result<()> {
                 // Find the suffixes in this partition
                 let mut part_sa = vec![];
@@ -670,11 +699,15 @@ where
         let mut file = BufWriter::new(
             File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
         );
+
         let mut bytes_out: usize = 0;
 
-        // Header: version/is_dna
+        // Various metadata
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
-        bytes_out += file.write(&[OUTFILE_VERSION, is_dna])?;
+        let allow_ambiguity: u8 = if self.allow_ambiguity { 1 } else { 0 };
+        let ignore_softmask: u8 = if self.ignore_softmask { 1 } else { 0 };
+        bytes_out +=
+            file.write(&[OUTFILE_VERSION, is_dna, allow_ambiguity, ignore_softmask])?;
 
         // Text length
         bytes_out += file.write(&usize_to_bytes(self.text_len.to_usize()))?;
@@ -910,6 +943,9 @@ where
     pub filename: String,
     pub version: u8,
     pub is_dna: bool,
+    pub allow_ambiguity: bool,
+    pub ignore_softmask: bool,
+    pub query_low_memory: bool,
     pub text_pos: usize,
     pub suffix_array_pos: usize,
     pub lcp_pos: usize,
@@ -920,8 +956,8 @@ where
     pub sequence_starts: Vec<T>,
     pub headers: Vec<String>,
     pub text: Vec<u8>,
-    pub suffix_array: Vec<T>,
-    pub lcp: Vec<T>,
+    pub suffix_array_mem: Vec<T>,
+    pub suffix_array_rank_mem: Vec<usize>,
     pub suffix_array_file: FileAccess<T>,
     pub lcp_file: FileAccess<T>,
 }
@@ -934,11 +970,13 @@ where
     pub fn read(filename: &str) -> Result<SufrFile<T>> {
         let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
-        // Meta (version, is_dna)
-        let mut buffer = [0; 2];
+        // Meta
+        let mut buffer = [0u8; 4];
         file.read_exact(&mut buffer)?;
         let version = buffer[0];
         let is_dna = buffer[1] == 1;
+        let allow_ambiguity = buffer[2] == 1;
+        let ignore_softmask = buffer[3] == 1;
 
         // Length of text
         let mut buffer = [0; 8];
@@ -1004,6 +1042,9 @@ where
             filename: filename.to_string(),
             version,
             is_dna,
+            allow_ambiguity,
+            ignore_softmask,
+            query_low_memory: false,
             text_pos,
             suffix_array_pos,
             lcp_pos,
@@ -1016,8 +1057,8 @@ where
             text,
             suffix_array_file,
             lcp_file,
-            suffix_array: vec![],
-            lcp: vec![],
+            suffix_array_mem: vec![],
+            suffix_array_rank_mem: vec![],
         })
     }
 
@@ -1026,7 +1067,8 @@ where
         let mut previous: Option<usize> = None;
         let mut errors = vec![];
 
-        for (cur_sa, len_lcp) in self.suffix_array.iter().zip(self.lcp.iter()) {
+        for (cur_sa, len_lcp) in self.suffix_array_file.iter().zip(self.lcp_file.iter())
+        {
             let cur_sa = cur_sa.to_usize();
             let len_lcp = len_lcp.to_usize();
             if let Some(prev_sa) = previous {
@@ -1075,10 +1117,8 @@ where
     }
 
     // --------------------------------------------------
-    pub fn suffix_array_mem(
-        &mut self,
-        mut max_query_len: usize,
-    ) -> Result<(Vec<T>, Vec<usize>)> {
+    pub fn set_suffix_array_mem(&mut self, mut max_query_len: usize) -> Result<()> {
+        info!("Loading suffix_array_mem");
         if max_query_len > 0 {
             // Cannot be greater than built MQL
             if self.max_query_len > T::default() {
@@ -1091,13 +1131,26 @@ where
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
-            let cache_file =
+            let cache_path =
                 sufr_dir.join(format!("locate-{max_query_len}-{basename}"));
 
-            if cache_file.is_file() {
+            // Check for stale cache
+            if let Ok(cache_meta) = fs::metadata(&cache_path) {
+                let source_meta = fs::metadata(&self.filename)?;
+                if let (Ok(source_modified), Ok(cache_modified)) =
+                    (source_meta.modified(), cache_meta.modified())
+                {
+                    if source_modified > cache_modified {
+                        info!("Removing stale cache {}", cache_path.display());
+                        fs::remove_file(&cache_path)?;
+                    }
+                }
+            }
+
+            if cache_path.is_file() {
                 let now = Instant::now();
-                let mut file = File::open(&cache_file)
-                    .map_err(|e| anyhow!("{}: {e}", cache_file.display()))?;
+                let mut file = File::open(&cache_path)
+                    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
 
                 let mut buffer = [0; 8];
                 file.read_exact(&mut buffer)?;
@@ -1105,12 +1158,12 @@ where
 
                 let mut buffer = vec![0; num_elements * mem::size_of::<T>()];
                 file.read_exact(&mut buffer)?;
-                let suffix_array: Vec<T> =
+                self.suffix_array_mem =
                     SufrBuilder::slice_u8_to_vec(&buffer, num_elements);
 
                 let mut buffer = vec![];
                 file.read_to_end(&mut buffer)?;
-                let rank: Vec<usize> = unsafe {
+                self.suffix_array_rank_mem = unsafe {
                     std::slice::from_raw_parts(
                         buffer.as_ptr() as *const _,
                         num_elements,
@@ -1119,37 +1172,39 @@ where
                 };
 
                 info!(
-                    "Read cache file {} in {:?}",
-                    cache_file.display(),
+                    "Read compressed SA ({}/{}) from cache file {} in {:?}",
+                    self.suffix_array_mem.len(),
+                    self.num_suffixes,
+                    cache_path.display(),
                     now.elapsed()
                 );
-
-                Ok((suffix_array, rank))
             } else {
                 let now = Instant::now();
+                let max_query_len = T::from_usize(max_query_len);
                 let ranked_suffixes: Vec<(usize, T)> = self
                     .lcp_file
                     .iter()
                     .zip(self.suffix_array_file.iter())
                     .enumerate()
                     .filter_map(|(rank, (lcp, suffix))| {
-                        (lcp.to_usize() < max_query_len).then_some((rank, suffix))
+                        (lcp < max_query_len).then_some((rank, suffix))
                     })
                     .collect();
-                let suffix_array: Vec<T> =
+                let mut suffix_array: Vec<T> =
                     ranked_suffixes.iter().map(|(_, s)| *s).collect();
-                let rank: Vec<usize> =
+                let mut rank: Vec<usize> =
                     ranked_suffixes.into_iter().map(|(r, _)| r).collect();
                 info!(
                     "Built compressed SA ({}/{}) in {:?}",
-                    self.suffix_array.len(),
+                    suffix_array.len(),
                     self.num_suffixes,
                     now.elapsed()
                 );
 
                 // Write cache file
-                let mut file = File::create(&cache_file)
-                    .map_err(|e| anyhow!("{}: {e}", cache_file.display()))?;
+                let now = Instant::now();
+                let mut file = File::create(&cache_path)
+                    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
                 let _ = file.write(&usize_to_bytes(suffix_array.len()))?;
                 let bytes = unsafe {
                     slice::from_raw_parts(
@@ -1165,47 +1220,72 @@ where
                     )
                 };
                 file.write_all(bytes)?;
+                info!(
+                    "Wrote to cache {} in {:?}",
+                    cache_path.display(),
+                    now.elapsed()
+                );
 
-                Ok((suffix_array, rank))
+                self.suffix_array_mem = mem::take(&mut suffix_array);
+                self.suffix_array_rank_mem = mem::take(&mut rank);
             }
         } else {
-            Ok((self.suffix_array_file.iter().collect::<Vec<_>>(), vec![]))
+            self.suffix_array_mem = self.suffix_array_file.iter().collect();
+            self.suffix_array_rank_mem = vec![];
+        }
+
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    fn get_suffix(&mut self, pos: usize) -> Option<T> {
+        if self.query_low_memory {
+            self.suffix_array_file.get(pos)
+        } else {
+            self.suffix_array_mem.get(pos).copied()
         }
     }
 
     // --------------------------------------------------
-    pub fn locate(
-        &mut self,
-        queries: &[String],
-        max_query_len: Option<usize>,
-    ) -> Result<Vec<LocateResult<T>>> {
-        let max_of_queries = queries.iter().map(|v| v.len()).max().unwrap_or(0);
-        let mut max_query_len = max_query_len.unwrap_or(0);
-        if max_query_len == 0 {
-            max_query_len = if self.max_query_len > T::default() {
-                min(self.max_query_len.to_usize(), max_of_queries)
-            } else {
-                max_of_queries
-            };
-        }
+    pub fn locate(&mut self, args: Locate) -> Result<Vec<LocateResult<T>>> {
+        self.query_low_memory = args.low_memory;
+        let n = if self.query_low_memory {
+            self.num_suffixes.to_usize()
+        } else {
+            let max_of_queries =
+                args.queries.iter().map(|v| v.len()).max().unwrap_or(0);
+            let mut max_query_len = args.max_query_len.unwrap_or(0);
 
-        let (mut suffix_array, rank) = self.suffix_array_mem(max_query_len)?;
-        self.suffix_array = mem::take(&mut suffix_array);
-        //dbg!(&self.suffix_array);
-        let sufs: Vec<_> = self
-            .suffix_array
-            .iter()
-            .map(|start| {
-                self.text[start.to_usize()] as char
-                //let end = self.text_len.to_usize();
-                //String::from_utf8(self.text[start.to_usize()..end].to_vec()).unwrap()
-            })
-            .collect();
-        //dbg!(sufs);
+            if max_query_len == 0 {
+                max_query_len = if self.max_query_len > T::default() {
+                    min(self.max_query_len.to_usize(), max_of_queries)
+                } else {
+                    max_of_queries
+                };
+            }
+            self.set_suffix_array_mem(max_query_len)?;
 
-        let n = self.suffix_array.len();
+            //println!("Compressed SA");
+            //let text_len = self.text_len.to_usize();
+            //for i in 0..10 {
+            //    let start = self.suffix_array[i].to_usize();
+            //    let end = min(start + 15, text_len);
+            //    let suffix = String::from_utf8(self.text[start..end].to_vec()).unwrap();
+            //    println!("{i:10}: {start:10} = {suffix}");
+            //}
+            //
+            //let last_idx = self.suffix_array.len() - 1;
+            //for i in (last_idx - 10)..=last_idx {
+            //    let start = self.suffix_array[i].to_usize();
+            //    let end = min(start + 15, text_len);
+            //    let suffix = String::from_utf8(self.text[start..end].to_vec()).unwrap();
+            //    println!("{i:10}: {start:10} = {suffix}");
+            //}
+            self.suffix_array_mem.len()
+        };
+
         let mut res = vec![];
-        for query in queries {
+        for query in args.queries {
             let qry = query.as_bytes();
             let mut suffixes = vec![];
             if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
@@ -1214,23 +1294,24 @@ where
                     .unwrap_or(start);
 
                 // Rank is empty when we have the full SA
-                let (start_rank, end_rank) = if rank.is_empty() {
+                let (start_rank, end_rank) = if self.suffix_array_rank_mem.is_empty() {
                     (start, end + 1)
                 } else {
-                    let start_rank = rank[start];
+                    let start_rank = self.suffix_array_rank_mem[start];
                     let end_rank = if start == end {
-                        if start == rank.len() - 1 {
+                        if start == self.suffix_array_rank_mem.len() - 1 {
                             // We're on the last rank, so go to end
                             self.num_suffixes.to_usize()
                         } else {
                             // Use the next LCP rank
-                            rank[start + 1]
+                            self.suffix_array_rank_mem[start + 1]
                         }
                     } else {
-                        rank[end] + 1
+                        self.suffix_array_rank_mem[end] + 1
                     };
                     (start_rank, end_rank)
                 };
+                //println!("start_rank {start_rank} end_rank {end_rank}");
 
                 suffixes = (start_rank..end_rank)
                     .filter_map(|rank| self.suffix_array_file.get(rank))
@@ -1257,10 +1338,26 @@ where
     ) -> Option<usize> {
         if high >= low {
             let mid = low + ((high - low) / 2);
-            let mid_val = self.suffix_array.get(mid)?.to_usize();
+            let mid_val = self.get_suffix(mid)?.to_usize();
+
+            //let low_suffix = self.get_suffix(low)?.to_usize();
+            //let high_suffix = self.get_suffix(high)?.to_usize();
+            //let text_len = self.text_len.to_usize();
+            //let low_str = String::from_utf8(
+            //    self.text[low_suffix..min(low_suffix + qry.len(), text_len)].to_vec(),
+            //)
+            //.unwrap();
+            //let high_str = String::from_utf8(
+            //    self.text[high_suffix..min(high_suffix + qry.len(), text_len)].to_vec(),
+            //)
+            //.unwrap();
+            //let mid_str =
+            //    String::from_utf8(self.text[mid_val..mid_val + qry.len()].to_vec())
+            //        .unwrap();
             let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
+            //println!("low ({low:10}) {low_str:15} mid ({mid:10}) {mid_str:15} high ({high:10}) {high_str:15} cmp {mid_cmp:?}");
             let mid_minus_one = if mid > 0 {
-                self.suffix_array.get(mid - 1)?.to_usize()
+                self.get_suffix(mid - 1)?.to_usize()
             } else {
                 mid_val
             };
@@ -1293,11 +1390,11 @@ where
     ) -> Option<usize> {
         if high >= low {
             let mid = low + ((high - low) / 2);
-            let mid_val = self.suffix_array.get(mid)?.to_usize();
+            let mid_val = self.get_suffix(mid)?.to_usize();
             let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
             // Weird hack because I cannot embed this call in the "if"
             let mid_plus_one = if mid < n - 1 {
-                self.suffix_array.get(mid + 1)?.to_usize()
+                self.get_suffix(mid + 1)?.to_usize()
             } else {
                 mid_val
             };
@@ -1341,18 +1438,18 @@ where
 }
 
 // --------------------------------------------------
-// Utility function to find suffix array length to
+// Utility function to find length of the input text
 // determine whether to build u32 or u64
-pub fn read_suffix_length(filename: &str) -> Result<usize> {
+pub fn read_text_length(filename: &str) -> Result<usize> {
     let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
     // Meta (version, is_dna)
-    let mut buffer = [0; 2];
+    let mut buffer = [0; 4];
     file.read_exact(&mut buffer)?;
 
     let outfile_version = buffer[0];
     if outfile_version == OUTFILE_VERSION {
-        // Length of SA is the next usize
+        // Length of text is the next usize
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
         Ok(usize::from_ne_bytes(buffer))
@@ -1419,7 +1516,7 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_sequence_file, read_suffix_length, usize_to_bytes, LocateResult,
+        read_sequence_file, read_text_length, usize_to_bytes, Locate, LocateResult,
         SufrBuilder, SufrBuilderArgs, SufrFile,
     };
     use crate::OUTFILE_VERSION;
@@ -1553,9 +1650,29 @@ mod tests {
         // 14   8: BBABAB#
 
         let mut sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
-        let res = sufr_file.locate(&["B".to_string()], None);
-        assert!(res.is_ok());
 
+        let args = Locate {
+            queries: vec!["A".to_string()],
+            max_query_len: None,
+            low_memory: false,
+        };
+        let res = sufr_file.locate(args);
+        assert!(res.is_ok());
+        assert_eq!(
+            res.unwrap(),
+            vec![LocateResult {
+                query: "A".to_string(),
+                suffixes: vec![0, 12, 10, 1, 3, 5, 7],
+            }]
+        );
+
+        let args = Locate {
+            queries: vec!["B".to_string()],
+            max_query_len: None,
+            low_memory: false,
+        };
+        let res = sufr_file.locate(args);
+        assert!(res.is_ok());
         assert_eq!(
             res.unwrap(),
             vec![LocateResult {
@@ -1564,17 +1681,54 @@ mod tests {
             }]
         );
 
-        //let res = sufr_file.search(["AB"], None);
-        //assert_eq!(res, Some((2, 7)));
-        //
-        //let res = sufr_file.search(["BABAB"], None);
-        //assert_eq!(res, Some((10, 12)));
-        //
-        //let res = sufr_file.search(["ABAA"], None);
-        //assert_eq!(res, None);
+        let args = Locate {
+            queries: vec!["ABAB".to_string()],
+            max_query_len: None,
+            low_memory: false,
+        };
+        let res = sufr_file.locate(args);
+        assert!(res.is_ok());
+        assert_eq!(
+            res.unwrap(),
+            vec![LocateResult {
+                query: "ABAB".to_string(),
+                suffixes: vec![10, 1, 3, 5],
+            }]
+        );
+
+        let args = Locate {
+            queries: vec!["ABABB".to_string()],
+            max_query_len: None,
+            low_memory: false,
+        };
+        let res = sufr_file.locate(args);
+        assert!(res.is_ok());
+        assert_eq!(
+            res.unwrap(),
+            vec![LocateResult {
+                query: "ABABB".to_string(),
+                suffixes: vec![5],
+            }]
+        );
+
+        let args = Locate {
+            queries: vec!["BBBB".to_string()],
+            max_query_len: None,
+            low_memory: false,
+        };
+        let res = sufr_file.locate(args);
+        assert!(res.is_ok());
+        assert_eq!(
+            res.unwrap(),
+            vec![LocateResult {
+                query: "BBBB".to_string(),
+                suffixes: vec![],
+            }]
+        );
 
         Ok(())
     }
+
     #[test]
     fn test_usize_to_bytes() -> Result<()> {
         assert_eq!(usize_to_bytes(usize::MIN), [0, 0, 0, 0, 0, 0, 0, 0]);
@@ -1605,9 +1759,9 @@ mod tests {
     }
 
     #[test]
-    fn test_read_suffix_length() -> Result<()> {
+    fn test_read_text_length() -> Result<()> {
         let sufr_file = "tests/inputs/2.sufr";
-        let res = read_suffix_length(sufr_file);
+        let res = read_text_length(sufr_file);
         assert!(res.is_ok());
         let len = res.unwrap();
         assert_eq!(len, 18);

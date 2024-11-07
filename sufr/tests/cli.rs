@@ -54,27 +54,6 @@ fn check(filename: &str) -> Result<()> {
 }
 
 // --------------------------------------------------
-//fn read(
-//    seq_file: &str,
-//    sa_file: &str,
-//    extract: &str,
-//    expected_file: &str,
-//) -> Result<()> {
-//    let outfile = NamedTempFile::new()?;
-//    let outpath = &outfile.path().to_str().unwrap();
-//    let args = vec![
-//        "read", "-s", seq_file, "-a", sa_file, "-e", extract, "-o", outpath,
-//    ];
-//    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
-//    assert!(output.status.success());
-//    assert!(outfile.path().exists());
-//    let actual = fs::read(outfile.path())?;
-//    let expected = fs::read(expected_file)?;
-//    assert_eq!(actual, expected);
-//    Ok(())
-//}
-
-// --------------------------------------------------
 #[test]
 fn create_empty_dies() -> Result<()> {
     Command::cargo_bin(PRG)?

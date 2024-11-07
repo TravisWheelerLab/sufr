@@ -1,5 +1,5 @@
 CHR1  = ../data/chr1.fa
-HUMAN = ../data/hs1.fa.gz
+HUMAN = ../data/hs1.fa
 ELEGANS = ../data/elegans.fa
 SEQ1  = sufr/tests/inputs/1.fa
 SEQ2  = sufr/tests/inputs/2.fa

@@ -3,7 +3,7 @@ use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_sequence_file, read_suffix_length, FromUsize, Int, SufrBuilder,
+    read_sequence_file, read_text_length, FromUsize, Int, Locate, SufrBuilder,
     SufrBuilderArgs, SufrFile,
 };
 use log::info;
@@ -163,6 +163,10 @@ pub struct LocateArgs {
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
 
+    /// Low-memory
+    #[arg(short, long)]
+    pub low_memory: bool,
+
     /// Sufr file
     #[arg(value_name = "SUFR")]
     pub file: String,
@@ -201,8 +205,8 @@ impl ValueEnum for LogLevel {
 
 // --------------------------------------------------
 pub fn check(args: &CheckArgs) -> Result<()> {
-    let len = read_suffix_length(&args.filename)? as u64;
-    if len < u32::MAX as u64 {
+    let text_len = read_text_length(&args.filename)? as u64;
+    if text_len < u32::MAX as u64 {
         let sufr_file: SufrFile<u32> = SufrFile::read(&args.filename)?;
         _check(sufr_file, args)
     } else {
@@ -335,8 +339,8 @@ where
 
 // --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
-    let len = read_suffix_length(&args.filename)? as u64;
-    if len < u32::MAX as u64 {
+    let text_len = read_text_length(&args.filename)? as u64;
+    if text_len < u32::MAX as u64 {
         let now = Instant::now();
         let sufr_file: SufrFile<u32> = SufrFile::read(&args.filename)?;
         info!("Read sufr file in {:?}", now.elapsed());
@@ -385,8 +389,8 @@ where
 
 // --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
-    let len = read_suffix_length(&args.file)? as u64;
-    if len < u32::MAX as u64 {
+    let text_len = read_text_length(&args.file)? as u64;
+    if text_len < u32::MAX as u64 {
         let now = Instant::now();
         let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
         info!("Read sufr file in {:?}", now.elapsed());
@@ -436,7 +440,7 @@ where
 
 // --------------------------------------------------
 pub fn locate(args: &LocateArgs) -> Result<()> {
-    let len = read_suffix_length(&args.file)? as u64;
+    let len = read_text_length(&args.file)? as u64;
     if len < u32::MAX as u64 {
         let now = Instant::now();
         let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
@@ -476,23 +480,31 @@ where
         }
     }
 
+    let num_queries = queries.len();
     let now = Instant::now();
-    for res in sufr_file.locate(&queries, args.max_query_len)? {
-        let loc = if res.suffixes.is_empty() {
-            "not found".to_string()
+    let loc_args = Locate {
+        queries,
+        max_query_len: args.max_query_len,
+        low_memory: args.low_memory,
+    };
+
+    for res in sufr_file.locate(loc_args)? {
+        if res.suffixes.is_empty() {
+            eprintln!("{}: not found", res.query);
         } else {
-            res.suffixes
+            let loc = res
+                .suffixes
                 .iter()
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
-                .join(" ")
+                .join(" ");
+            writeln!(output, "{}: {loc}", res.query)?;
         };
-        writeln!(output, "{}: {loc}", res.query)?;
     }
 
     info!(
         "Locate of {} finished in {:?}",
-        queries.len(),
+        num_queries,
         now.elapsed()
     );
     Ok(())
@@ -500,8 +512,8 @@ where
 
 // --------------------------------------------------
 pub fn summarize(args: &SummarizeArgs) -> Result<()> {
-    let len = read_suffix_length(&args.file)? as u64;
-    if len < u32::MAX as u64 {
+    let text_len = read_text_length(&args.file)? as u64;
+    if text_len < u32::MAX as u64 {
         let now = Instant::now();
         let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
         info!("Read sufr file in {:?}", now.elapsed());
@@ -539,6 +551,14 @@ where
         sufr_file.version.to_string(),
     ]);
     rows.push(vec!["DNA".to_string(), sufr_file.is_dna.to_string()]);
+    rows.push(vec![
+        "Allow Ambiguity".to_string(),
+        sufr_file.allow_ambiguity.to_string(),
+    ]);
+    rows.push(vec![
+        "Ignore Softmask".to_string(),
+        sufr_file.ignore_softmask.to_string(),
+    ]);
     rows.push(vec![
         "Text Length".to_string(),
         num_fmt.format(",.0", sufr_file.text_len.to_usize() as f64),
