@@ -4,6 +4,7 @@ ELEGANS = ../data/elegans.fa
 SEQ1  = sufr/tests/inputs/1.fa
 SEQ2  = sufr/tests/inputs/2.fa
 SEQ3  = sufr/tests/inputs/3.fa
+ABBA  = libsufr/tests/inputs/abba.fa
 SUFR  = ./target/release/sufr
 
 #CREATE = cargo run -- create --log info
@@ -23,8 +24,9 @@ perf:
 r1:
 	$(SEARCH) C 1.sufr
 
-testfiles: s1 s1s s1n s2 s2n s2s s2ns s3
+testfiles: s1 s1s s1n s2 s2n s2s s2ns s3 abba
 	cp [1-3]*.sufr sufr/tests/expected/
+	cp abba.sufr libsufr/tests/inputs/
 
 s1:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1.sufr
@@ -50,6 +52,9 @@ s2ns:
 s3:
 	$(CREATE_DEBUG) $(SEQ3) --dna
 
+abba:
+	$(CREATE_DEBUG) $(ABBA)
+
 elegans:
 	$(CREATE_RELEASE) --dna -m 12 $(ELEGANS)
 
@@ -60,7 +65,7 @@ chr1:
 	$(CREATE_RELEASE) --dna -m 15 -n 64 $(CHR1)
 
 human:
-	$(CREATE_RELEASE) -t 8 --dna -m 15 -n 800 $(HUMAN)
+	$(CREATE_RELEASE) -t 8 --dna -n 800 $(HUMAN)
 
 valcache:
 	valgrind --tool=cachegrind ./target/release/sufr create ../data/chr1.fa --ignore-start-n -o chr1.sa --log info

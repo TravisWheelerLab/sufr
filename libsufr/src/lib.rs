@@ -98,6 +98,7 @@ where
 {
     pub query: String,
     pub suffixes: Vec<T>,
+    pub ranks: Vec<usize>,
 }
 
 // --------------------------------------------------
@@ -276,11 +277,6 @@ where
         let start1 = start1.to_usize();
         let start2 = start2.to_usize();
         let len = len.to_usize();
-        //let len = if len == T::default() {
-        //    self.text_len.to_usize()
-        //} else {
-        //    len.to_usize()
-        //};
         let end1 = min(start1 + len, self.text_len.to_usize());
         let end2 = min(start2 + len, self.text_len.to_usize());
         unsafe {
@@ -759,7 +755,7 @@ where
                     *val = self.find_lcp(
                         self.partitions[i - 1].last_suffix,
                         partition.first_suffix,
-                        self.max_query_len,
+                        self.text_len,
                     );
                 }
                 file.write_all(Self::vec_to_slice_u8(&lcp))?;
@@ -829,6 +825,13 @@ where
             end_position: start + size as u64,
             exhausted: false,
         })
+    }
+
+    pub fn reset(&mut self) {
+        self.buffer = vec![];
+        self.buffer_pos = 0;
+        self.current_position = self.start_position;
+        self.exhausted = false;
     }
 
     pub fn iter(&mut self) -> FileAccessIter<T> {
@@ -957,6 +960,7 @@ where
     pub headers: Vec<String>,
     pub text: Vec<u8>,
     pub suffix_array_mem: Vec<T>,
+    pub suffix_array_mem_mql: Option<usize>,
     pub suffix_array_rank_mem: Vec<usize>,
     pub suffix_array_file: FileAccess<T>,
     pub lcp_file: FileAccess<T>,
@@ -1058,30 +1062,63 @@ where
             suffix_array_file,
             lcp_file,
             suffix_array_mem: vec![],
+            suffix_array_mem_mql: None,
             suffix_array_rank_mem: vec![],
         })
     }
 
     // --------------------------------------------------
-    pub fn check_suffix_array(&mut self) -> Result<Vec<usize>> {
-        let mut previous: Option<usize> = None;
-        let mut errors = vec![];
+    pub fn find_lcp(&self, start1: usize, start2: usize, len: usize) -> usize {
+        let end1 = min(start1 + len, len);
+        let end2 = min(start2 + len, len);
+        unsafe {
+            (start1..end1)
+                .zip(start2..end2)
+                .take_while(|(a, b)| {
+                    self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+                })
+                .count()
+        }
+    }
 
-        for (cur_sa, len_lcp) in self.suffix_array_file.iter().zip(self.lcp_file.iter())
-        {
-            let cur_sa = cur_sa.to_usize();
-            let len_lcp = len_lcp.to_usize();
+    // --------------------------------------------------
+    pub fn check(&mut self) -> Result<Vec<String>> {
+        let mut previous: Option<usize> = None;
+        let mut errors: Vec<String> = vec![];
+        let text_len = self.text_len.to_usize();
+        let num_suffixes = self.num_suffixes.to_usize();
+
+        for i in 0..num_suffixes {
+            if i > 0 && i % 1_000_000 == 0 {
+                info!("Checked {i}");
+            }
+            let cur_sa = self.suffix_array_file.get(i).expect("sa").to_usize();
+            let cur_lcp = self.lcp_file.get(i).expect("lcp").to_usize();
+
             if let Some(prev_sa) = previous {
+                let check_lcp = self.find_lcp(cur_sa, prev_sa, text_len);
+                if check_lcp != cur_lcp {
+                    errors.push(format!(
+                        "{cur_sa} (r. {i}): LCP {cur_lcp} should be {check_lcp}"
+                    ));
+                }
+
                 let is_less = match (
-                    self.text.get(prev_sa + len_lcp),
-                    self.text.get(cur_sa + len_lcp),
+                    self.text.get(prev_sa + cur_lcp),
+                    self.text.get(cur_sa + cur_lcp),
                 ) {
                     (Some(a), Some(b)) => a < b,
                     (None, Some(_)) => true,
                     _ => false,
                 };
+
                 if !is_less {
-                    errors.push(cur_sa);
+                    errors.push(format!("{cur_sa} (r. {i}): greater than previous"));
+                }
+
+                if !errors.is_empty() {
+                    dbg!(errors);
+                    panic!("blah");
                 }
             }
             previous = Some(cur_sa);
@@ -1118,117 +1155,177 @@ where
 
     // --------------------------------------------------
     pub fn set_suffix_array_mem(&mut self, mut max_query_len: usize) -> Result<()> {
-        info!("Loading suffix_array_mem");
+        println!("Loading suffix_array_mem using max_query_len {max_query_len}");
+        info!("Loading suffix_array_mem using max_query_len {max_query_len}");
+        //dbg!(max_query_len);
+        //dbg!(self.suffix_array_mem_mql);
         if max_query_len > 0 {
             // Cannot be greater than built MQL
             if self.max_query_len > T::default() {
                 max_query_len = min(max_query_len, self.max_query_len.to_usize());
             }
 
-            let sufr_dir = &self.get_sufr_dir()?;
-            let basename = Path::new(&self.filename)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned();
-            let cache_path =
-                sufr_dir.join(format!("locate-{max_query_len}-{basename}"));
+            //// We've already loaded the correct SA
+            //if let Some(cur_mql) = self.suffix_array_mem_mql {
+            //    if cur_mql == max_query_len {
+            //        return Ok(());
+            //    }
+            //}
 
-            // Check for stale cache
-            if let Ok(cache_meta) = fs::metadata(&cache_path) {
-                let source_meta = fs::metadata(&self.filename)?;
-                if let (Ok(source_modified), Ok(cache_modified)) =
-                    (source_meta.modified(), cache_meta.modified())
-                {
-                    if source_modified > cache_modified {
-                        info!("Removing stale cache {}", cache_path.display());
-                        fs::remove_file(&cache_path)?;
-                    }
+            //let sufr_dir = &self.get_sufr_dir()?;
+            //let basename = Path::new(&self.filename)
+            //    .file_name()
+            //    .unwrap()
+            //    .to_string_lossy()
+            //    .into_owned();
+            //let cache_path =
+            //    sufr_dir.join(format!("locate-{max_query_len}-{basename}"));
+            //
+            //// TODO: Remove
+            //let _ = fs::remove_file(&cache_path);
+            //
+            //// Check for stale cache
+            //if let Ok(cache_meta) = fs::metadata(&cache_path) {
+            //    let source_meta = fs::metadata(&self.filename)?;
+            //    if let (Ok(source_modified), Ok(cache_modified)) =
+            //        (source_meta.modified(), cache_meta.modified())
+            //    {
+            //        if source_modified > cache_modified {
+            //            info!("Removing stale cache {}", cache_path.display());
+            //            fs::remove_file(&cache_path)?;
+            //        }
+            //    }
+            //}
+
+            //if cache_path.is_file() {
+            //    let now = Instant::now();
+            //    let mut file = File::open(&cache_path)
+            //        .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
+            //
+            //    let mut buffer = [0; 8];
+            //    file.read_exact(&mut buffer)?;
+            //    let num_elements = usize::from_ne_bytes(buffer);
+            //
+            //    let mut buffer = vec![0; num_elements * mem::size_of::<T>()];
+            //    file.read_exact(&mut buffer)?;
+            //    self.suffix_array_mem =
+            //        SufrBuilder::slice_u8_to_vec(&buffer, num_elements);
+            //
+            //    let mut buffer = vec![];
+            //    file.read_to_end(&mut buffer)?;
+            //    self.suffix_array_rank_mem = unsafe {
+            //        std::slice::from_raw_parts(
+            //            buffer.as_ptr() as *const _,
+            //            num_elements,
+            //        )
+            //        .to_vec()
+            //    };
+            //
+            //    info!(
+            //        "Read compressed SA ({}/{}) from cache file {} in {:?}",
+            //        self.suffix_array_mem.len(),
+            //        self.num_suffixes,
+            //        cache_path.display(),
+            //        now.elapsed()
+            //    );
+            //} else {
+            let now = Instant::now();
+            let mql = T::from_usize(max_query_len);
+
+            //let text_len = self.text_len.to_usize();
+            //for (rank, (lcp, suffix)) in self
+            //    .lcp_file
+            //    .iter()
+            //    .zip(self.suffix_array_file.iter())
+            //    .enumerate()
+            //{
+            //    let start = suffix.to_usize();
+            //    //let end = min(start + max_query_len, text_len);
+            //    let end = text_len;
+            //    let s = String::from_utf8(self.text[start..end].to_vec()).unwrap();
+            //    println!(
+            //        "rank {rank:2} lcp {lcp:2} mql {mql:2} suffix {suffix:2}: {s}"
+            //    );
+            //}
+            //self.lcp_file.reset();
+            //self.suffix_array_file.reset();
+
+            self.lcp_file.reset();
+            self.suffix_array_file.reset();
+            //let ranked_suffixes: Vec<(usize, T)> = self
+            //    .lcp_file
+            //    .iter()
+            //    .zip(self.suffix_array_file.iter())
+            //    .enumerate()
+            //    .filter_map(|(rank, (lcp, suffix))| {
+            //        (lcp < mql).then_some((rank, suffix))
+            //    })
+            //    .collect();
+            //let mut suffix_array: Vec<T> =
+            //    ranked_suffixes.iter().map(|(_, s)| *s).collect();
+            //let mut rank: Vec<usize> =
+            //    ranked_suffixes.into_iter().map(|(r, _)| r).collect();
+
+            let mut suffix_array: Vec<T> = vec![];
+            let mut rank: Vec<usize> = vec![];
+            for (i, (lcp, suffix)) in self
+                .lcp_file
+                .iter()
+                .zip(self.suffix_array_file.iter())
+                .enumerate()
+            {
+                if lcp <= mql {
+                    suffix_array.push(suffix);
+                    rank.push(i);
                 }
             }
 
-            if cache_path.is_file() {
-                let now = Instant::now();
-                let mut file = File::open(&cache_path)
-                    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
+            //let text_len = self.text_len.to_usize();
+            //for start in &suffix_array {
+            //    let start = start.to_usize();
+            //    let end = min(start + max_query_len, text_len);
+            //    let suffix =
+            //        String::from_utf8(self.text[start..end].to_vec()).unwrap();
+            //    eprintln!("{start:10} {suffix}");
+            //}
+            info!(
+                "Built compressed SA ({}/{}) in {:?}",
+                suffix_array.len(),
+                self.num_suffixes,
+                now.elapsed()
+            );
 
-                let mut buffer = [0; 8];
-                file.read_exact(&mut buffer)?;
-                let num_elements = usize::from_ne_bytes(buffer);
+            //// Write cache file
+            //let now = Instant::now();
+            //let mut file = File::create(&cache_path)
+            //    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
+            //let _ = file.write(&usize_to_bytes(suffix_array.len()))?;
+            //let bytes = unsafe {
+            //    slice::from_raw_parts(
+            //        suffix_array.as_ptr() as *const u8,
+            //        suffix_array.len() * std::mem::size_of::<T>(),
+            //    )
+            //};
+            //file.write_all(bytes)?;
+            //let bytes = unsafe {
+            //    slice::from_raw_parts(
+            //        rank.as_ptr() as *const u8,
+            //        rank.len() * std::mem::size_of::<usize>(),
+            //    )
+            //};
+            //file.write_all(bytes)?;
+            //info!(
+            //    "Wrote to cache {} in {:?}",
+            //    cache_path.display(),
+            //    now.elapsed()
+            //);
 
-                let mut buffer = vec![0; num_elements * mem::size_of::<T>()];
-                file.read_exact(&mut buffer)?;
-                self.suffix_array_mem =
-                    SufrBuilder::slice_u8_to_vec(&buffer, num_elements);
-
-                let mut buffer = vec![];
-                file.read_to_end(&mut buffer)?;
-                self.suffix_array_rank_mem = unsafe {
-                    std::slice::from_raw_parts(
-                        buffer.as_ptr() as *const _,
-                        num_elements,
-                    )
-                    .to_vec()
-                };
-
-                info!(
-                    "Read compressed SA ({}/{}) from cache file {} in {:?}",
-                    self.suffix_array_mem.len(),
-                    self.num_suffixes,
-                    cache_path.display(),
-                    now.elapsed()
-                );
-            } else {
-                let now = Instant::now();
-                let max_query_len = T::from_usize(max_query_len);
-                let ranked_suffixes: Vec<(usize, T)> = self
-                    .lcp_file
-                    .iter()
-                    .zip(self.suffix_array_file.iter())
-                    .enumerate()
-                    .filter_map(|(rank, (lcp, suffix))| {
-                        (lcp < max_query_len).then_some((rank, suffix))
-                    })
-                    .collect();
-                let mut suffix_array: Vec<T> =
-                    ranked_suffixes.iter().map(|(_, s)| *s).collect();
-                let mut rank: Vec<usize> =
-                    ranked_suffixes.into_iter().map(|(r, _)| r).collect();
-                info!(
-                    "Built compressed SA ({}/{}) in {:?}",
-                    suffix_array.len(),
-                    self.num_suffixes,
-                    now.elapsed()
-                );
-
-                // Write cache file
-                let now = Instant::now();
-                let mut file = File::create(&cache_path)
-                    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
-                let _ = file.write(&usize_to_bytes(suffix_array.len()))?;
-                let bytes = unsafe {
-                    slice::from_raw_parts(
-                        suffix_array.as_ptr() as *const u8,
-                        suffix_array.len() * std::mem::size_of::<T>(),
-                    )
-                };
-                file.write_all(bytes)?;
-                let bytes = unsafe {
-                    slice::from_raw_parts(
-                        rank.as_ptr() as *const u8,
-                        rank.len() * std::mem::size_of::<usize>(),
-                    )
-                };
-                file.write_all(bytes)?;
-                info!(
-                    "Wrote to cache {} in {:?}",
-                    cache_path.display(),
-                    now.elapsed()
-                );
-
-                self.suffix_array_mem = mem::take(&mut suffix_array);
-                self.suffix_array_rank_mem = mem::take(&mut rank);
-            }
+            self.suffix_array_mem_mql = Some(max_query_len);
+            //self.suffix_array_mem = mem::take(&mut suffix_array);
+            //self.suffix_array_rank_mem = mem::take(&mut rank);
+            self.suffix_array_mem = suffix_array;
+            self.suffix_array_rank_mem = rank;
+            //}
         } else {
             self.suffix_array_mem = self.suffix_array_file.iter().collect();
             self.suffix_array_rank_mem = vec![];
@@ -1254,26 +1351,28 @@ where
         } else {
             let max_of_queries =
                 args.queries.iter().map(|v| v.len()).max().unwrap_or(0);
-            let mut max_query_len = args.max_query_len.unwrap_or(0);
+            let max_query_len = match args.max_query_len {
+                Some(val) => val,
+                _ => {
+                    if self.max_query_len > T::default() {
+                        min(self.max_query_len.to_usize(), max_of_queries)
+                    } else {
+                        max_of_queries
+                    }
+                }
+            };
 
-            if max_query_len == 0 {
-                max_query_len = if self.max_query_len > T::default() {
-                    min(self.max_query_len.to_usize(), max_of_queries)
-                } else {
-                    max_of_queries
-                };
-            }
             self.set_suffix_array_mem(max_query_len)?;
 
-            //println!("Compressed SA");
+            //println!("Compressed SA ({max_query_len})");
             //let text_len = self.text_len.to_usize();
-            //for i in 0..10 {
-            //    let start = self.suffix_array[i].to_usize();
+            //for start in self.suffix_array_mem.iter().map(|v| v.to_usize()) {
+            //    //let start = self.suffix_array[i].to_usize();
             //    let end = min(start + 15, text_len);
             //    let suffix = String::from_utf8(self.text[start..end].to_vec()).unwrap();
-            //    println!("{i:10}: {start:10} = {suffix}");
+            //    println!("{start:10}: {suffix}");
             //}
-            //
+
             //let last_idx = self.suffix_array.len() - 1;
             //for i in (last_idx - 10)..=last_idx {
             //    let start = self.suffix_array[i].to_usize();
@@ -1283,44 +1382,54 @@ where
             //}
             self.suffix_array_mem.len()
         };
+        println!(">>> SUFFIX LENGTH {n}");
+
+        //dbg!(&self.suffix_array_mem);
+        //dbg!(&self.suffix_array_rank_mem);
 
         let mut res = vec![];
         for query in args.queries {
+            //dbg!(&query);
             let qry = query.as_bytes();
             let mut suffixes = vec![];
+            let mut ranks = vec![];
             if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
                 let end = self
                     .suffix_search_last(qry, start, n - 1, n, 0, 0)
                     .unwrap_or(start);
 
                 // Rank is empty when we have the full SA
-                let (start_rank, end_rank) = if self.suffix_array_rank_mem.is_empty() {
-                    (start, end + 1)
-                } else {
-                    let start_rank = self.suffix_array_rank_mem[start];
-                    let end_rank = if start == end {
-                        if start == self.suffix_array_rank_mem.len() - 1 {
-                            // We're on the last rank, so go to end
-                            self.num_suffixes.to_usize()
-                        } else {
-                            // Use the next LCP rank
-                            self.suffix_array_rank_mem[start + 1]
-                        }
+                let (start_rank, end_rank) =
+                    if self.query_low_memory || self.suffix_array_rank_mem.is_empty() {
+                        (start, end + 1)
                     } else {
-                        self.suffix_array_rank_mem[end] + 1
+                        //dbg!(&self.suffix_array_mem);
+                        //dbg!(&self.suffix_array_rank_mem);
+                        let start_rank = self.suffix_array_rank_mem[start];
+                        let end_rank = if start == end {
+                            if start == self.suffix_array_rank_mem.len() - 1 {
+                                // We're on the last rank, so go to end
+                                self.num_suffixes.to_usize()
+                            } else {
+                                // Use the next LCP rank
+                                self.suffix_array_rank_mem[start + 1]
+                            }
+                        } else {
+                            self.suffix_array_rank_mem[end] + 1
+                        };
+                        (start_rank, end_rank)
                     };
-                    (start_rank, end_rank)
-                };
-                //println!("start_rank {start_rank} end_rank {end_rank}");
 
                 suffixes = (start_rank..end_rank)
                     .filter_map(|rank| self.suffix_array_file.get(rank))
                     .collect::<Vec<_>>();
+                ranks = (start_rank..end_rank).collect();
             }
 
             res.push(LocateResult {
                 query: query.to_string(),
                 suffixes,
+                ranks,
             });
         }
 
@@ -1336,26 +1445,36 @@ where
         left_lcp: usize,
         right_lcp: usize,
     ) -> Option<usize> {
+        //println!(
+        //    "qry {} low {low} high {high}",
+        //    String::from_utf8(qry.to_vec()).unwrap()
+        //);
         if high >= low {
             let mid = low + ((high - low) / 2);
             let mid_val = self.get_suffix(mid)?.to_usize();
+            //println!(
+            //    "qry {} low {low} mid {mid} high {high}",
+            //    String::from_utf8(qry.to_vec()).unwrap()
+            //);
 
-            //let low_suffix = self.get_suffix(low)?.to_usize();
-            //let high_suffix = self.get_suffix(high)?.to_usize();
-            //let text_len = self.text_len.to_usize();
-            //let low_str = String::from_utf8(
-            //    self.text[low_suffix..min(low_suffix + qry.len(), text_len)].to_vec(),
-            //)
-            //.unwrap();
-            //let high_str = String::from_utf8(
-            //    self.text[high_suffix..min(high_suffix + qry.len(), text_len)].to_vec(),
-            //)
-            //.unwrap();
-            //let mid_str =
-            //    String::from_utf8(self.text[mid_val..mid_val + qry.len()].to_vec())
-            //        .unwrap();
+            let low_suffix = self.get_suffix(low)?.to_usize();
+            let high_suffix = self.get_suffix(high)?.to_usize();
+            let text_len = self.text_len.to_usize();
+            let low_str = String::from_utf8(
+                self.text[low_suffix..min(low_suffix + qry.len(), text_len)].to_vec(),
+            )
+            .unwrap();
+
+            // TODO: Is get_suffix the problem?
+            let high_str = String::from_utf8(
+                self.text[high_suffix..min(high_suffix + qry.len(), text_len)].to_vec(),
+            )
+            .unwrap();
+            let mid_str =
+                String::from_utf8(self.text[mid_val..mid_val + qry.len()].to_vec())
+                    .unwrap();
             let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
-            //println!("low ({low:10}) {low_str:15} mid ({mid:10}) {mid_str:15} high ({high:10}) {high_str:15} cmp {mid_cmp:?}");
+            println!("low ({low:10}) {low_str:15} mid ({mid:10}) {mid_str:15} high ({high:10}) {high_str:15} cmp {mid_cmp:?}");
             let mid_minus_one = if mid > 0 {
                 self.get_suffix(mid - 1)?.to_usize()
             } else {
@@ -1651,80 +1770,95 @@ mod tests {
 
         let mut sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
 
-        let args = Locate {
-            queries: vec!["A".to_string()],
-            max_query_len: None,
-            low_memory: false,
-        };
-        let res = sufr_file.locate(args);
-        assert!(res.is_ok());
-        assert_eq!(
-            res.unwrap(),
-            vec![LocateResult {
-                query: "A".to_string(),
-                suffixes: vec![0, 12, 10, 1, 3, 5, 7],
-            }]
-        );
+        for val in &[true, false] {
+            let args = Locate {
+                queries: vec!["A".to_string()],
+                max_query_len: None,
+                low_memory: *val,
+            };
+            let res = sufr_file.locate(args);
+            assert!(res.is_ok());
+            assert_eq!(
+                res.unwrap(),
+                vec![LocateResult {
+                    query: "A".to_string(),
+                    suffixes: vec![0, 12, 10, 1, 3, 5, 7],
+                    ranks: (1..=7).collect::<Vec<_>>(),
+                }]
+            );
+        }
 
-        let args = Locate {
-            queries: vec!["B".to_string()],
-            max_query_len: None,
-            low_memory: false,
-        };
-        let res = sufr_file.locate(args);
-        assert!(res.is_ok());
-        assert_eq!(
-            res.unwrap(),
-            vec![LocateResult {
-                query: "B".to_string(),
-                suffixes: vec![13, 11, 9, 2, 4, 6, 8]
-            }]
-        );
+        for val in &[true, false] {
+            let args = Locate {
+                queries: vec!["B".to_string()],
+                max_query_len: None,
+                low_memory: *val,
+            };
+            let res = sufr_file.locate(args);
+            assert!(res.is_ok());
+            assert_eq!(
+                res.unwrap(),
+                vec![LocateResult {
+                    query: "B".to_string(),
+                    suffixes: vec![13, 11, 9, 2, 4, 6, 8],
+                    ranks: (8..=14).collect::<Vec<_>>(),
+                }]
+            );
+        }
 
-        let args = Locate {
-            queries: vec!["ABAB".to_string()],
-            max_query_len: None,
-            low_memory: false,
-        };
-        let res = sufr_file.locate(args);
-        assert!(res.is_ok());
-        assert_eq!(
-            res.unwrap(),
-            vec![LocateResult {
-                query: "ABAB".to_string(),
-                suffixes: vec![10, 1, 3, 5],
-            }]
-        );
+        for val in &[true, false] {
+            let args = Locate {
+                queries: vec!["ABAB".to_string()],
+                max_query_len: None,
+                low_memory: *val,
+            };
+            let res = sufr_file.locate(args);
+            assert!(res.is_ok());
+            assert_eq!(
+                res.unwrap(),
+                vec![LocateResult {
+                    query: "ABAB".to_string(),
+                    suffixes: vec![10, 1, 3, 5],
+                    ranks: (3..=6).collect::<Vec<_>>(),
+                }]
+            );
+        }
 
-        let args = Locate {
-            queries: vec!["ABABB".to_string()],
-            max_query_len: None,
-            low_memory: false,
-        };
-        let res = sufr_file.locate(args);
-        assert!(res.is_ok());
-        assert_eq!(
-            res.unwrap(),
-            vec![LocateResult {
-                query: "ABABB".to_string(),
-                suffixes: vec![5],
-            }]
-        );
+        for val in &[true, false] {
+            let args = Locate {
+                queries: vec!["ABABB".to_string()],
+                max_query_len: None,
+                low_memory: *val,
+            };
+            let res = sufr_file.locate(args);
+            assert!(res.is_ok());
+            assert_eq!(
+                res.unwrap(),
+                vec![LocateResult {
+                    query: "ABABB".to_string(),
+                    suffixes: vec![5],
+                    ranks: vec![6],
+                }]
+            );
+        }
 
-        let args = Locate {
-            queries: vec!["BBBB".to_string()],
-            max_query_len: None,
-            low_memory: false,
-        };
-        let res = sufr_file.locate(args);
-        assert!(res.is_ok());
-        assert_eq!(
-            res.unwrap(),
-            vec![LocateResult {
-                query: "BBBB".to_string(),
-                suffixes: vec![],
-            }]
-        );
+        for val in &[true, false] {
+            let args = Locate {
+                queries: vec!["BBBB".to_string()],
+                max_query_len: None,
+                low_memory: *val,
+            };
+            let res = sufr_file.locate(args);
+            assert!(res.is_ok());
+            assert_eq!(
+                res.unwrap(),
+                vec![LocateResult {
+                    query: "BBBB".to_string(),
+                    suffixes: vec![],
+                    ranks: vec![],
+                }]
+            );
+        }
 
         Ok(())
     }

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
@@ -14,10 +14,13 @@ use std::{
     fmt::Debug,
     fs::{self, File},
     io::{self, Write},
+    ops::Range,
     path::{Path, PathBuf},
     time::Instant,
 };
 use tabled::Table;
+
+type PositionList = Vec<Range<usize>>;
 
 // --------------------------------------------------
 #[derive(Parser, Debug)]
@@ -115,6 +118,10 @@ pub struct ExtractArgs {
     #[arg(short, long, value_name = "SUFFIX_LEN")]
     pub suffix_len: Option<usize>,
 
+    /// Show LCP
+    #[arg(short, long)]
+    pub lcp: bool,
+
     /// Output
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
@@ -124,21 +131,13 @@ pub struct ExtractArgs {
     pub filename: String,
 
     /// Suffixes to extract
-    #[arg(
-        value_name = "SUFFIX", 
-        value_parser = clap::value_parser!(u64).range(0..),
-        num_args(1..),
-    )]
-    pub suffixes: Vec<u64>,
+    #[arg(value_name = "SUFFIX", num_args(1..))]
+    pub suffixes: Vec<String>,
 }
 
 #[derive(Debug, Parser)]
-#[command(about, alias = "li")]
+#[command(about, alias = "ls")]
 pub struct ListArgs {
-    /// Number of suffixes to show
-    #[arg(short, long, value_name = "NUM")]
-    pub number: Option<usize>,
-
     /// Length of suffixes to show
     #[arg(short, long, value_name = "LEN")]
     pub len: Option<usize>,
@@ -150,6 +149,10 @@ pub struct ListArgs {
     /// Sufr file
     #[arg(value_name = "SUFR")]
     pub file: String,
+
+    /// Ranks of suffixes to show
+    #[arg(value_name = "POS")]
+    pub ranks: Vec<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -162,6 +165,10 @@ pub struct LocateArgs {
     /// Output
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
+
+    /// Show count of suffixes
+    #[arg(short, long)]
+    pub count: bool,
 
     /// Low-memory
     #[arg(short, long)]
@@ -216,12 +223,12 @@ pub fn check(args: &CheckArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _check<T>(mut sufr_file: SufrFile<T>, _args: &CheckArgs) -> Result<()>
+pub fn _check<T>(mut sufr_file: SufrFile<T>, args: &CheckArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
     let now = Instant::now();
-    let errors = sufr_file.check_suffix_array()?;
+    let errors = sufr_file.check()?;
     let num_errors = errors.len();
     let num_fmt = NumberFormat::new();
     println!(
@@ -236,18 +243,11 @@ where
         if num_errors == 1 { "" } else { "s" },
     );
 
-    //let errors = sa.check_order();
-    //let num_errors = errors.len();
-    //
-    //if args.verbose {
-    //    for (i, pos) in errors.iter().enumerate() {
-    //        println!(
-    //            "{:3}: pos {pos:5} {}",
-    //            i + 1,
-    //            sa.string_at(pos.to_usize())
-    //        );
-    //    }
-    //}
+    if args.verbose {
+        for err in errors {
+            println!("{err}");
+        }
+    }
     //
     //let lcp_errors = sa.check_lcp();
     //let num_errors = lcp_errors.len();
@@ -354,20 +354,28 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _extract<T>(sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
+pub fn _extract<T>(mut sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
-    let now = Instant::now();
+    let mut suffixes: Vec<usize> = vec![];
+    for suffix in &args.suffixes {
+        let mut positions: Vec<_> = parse_pos(suffix)?
+            .into_iter()
+            .flat_map(|r| r.collect::<Vec<_>>())
+            .collect();
+        suffixes.append(&mut positions);
+    }
 
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
     };
 
+    let now = Instant::now();
     let text_len = sufr_file.text_len.to_usize();
     let prefix_len = args.prefix_len.unwrap_or(0);
-    for suffix in args.suffixes.iter().map(|&v| v as usize) {
+    for suffix in suffixes {
         let start = if suffix - prefix_len > 0 {
             suffix - prefix_len
         } else {
@@ -378,8 +386,16 @@ where
             text_len,
         );
         if let Some(bytes) = sufr_file.text.get(start..end) {
+            let lcp = if args.lcp {
+                sufr_file
+                    .lcp_file
+                    .get(suffix)
+                    .map_or("NA".to_string(), |v| format!("\t{v}"))
+            } else {
+                "".to_string()
+            };
             let seq = String::from_utf8(bytes.to_vec())?;
-            writeln!(output, "{seq}")?;
+            writeln!(output, "{seq}{lcp}")?;
         }
     }
     info!("Extracted suffixes in {:?}", now.elapsed());
@@ -408,6 +424,15 @@ pub fn _list<T>(mut sufr_file: SufrFile<T>, args: &ListArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
+    let mut ranks: Vec<usize> = vec![];
+    for val in &args.ranks {
+        let mut parsed: Vec<_> = parse_pos(val)?
+            .into_iter()
+            .flat_map(|r| r.collect::<Vec<_>>())
+            .collect();
+        ranks.append(&mut parsed);
+    }
+
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
@@ -416,9 +441,10 @@ where
     let width = sufr_file.text_len.to_string().len();
     let text_len = sufr_file.text_len.to_usize();
     let suffix_len = args.len.unwrap_or(text_len);
-    let stop = args.number.unwrap_or(0);
-    for (i, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
-        let suffix = suffix.to_usize();
+
+    writeln!(output, "{:>width$} {:>width$} {:>width$}", "R", "S", "L")?;
+
+    let mut print = |rank: usize, suffix: usize, lcp: usize| -> Result<()> {
         let end = if suffix + suffix_len > text_len {
             text_len
         } else {
@@ -426,12 +452,31 @@ where
         };
         writeln!(
             output,
-            "{suffix:width$}: {}",
+            "{rank:width$} {suffix:width$} {lcp:width$}: {}",
             String::from_utf8(sufr_file.text[suffix..end].to_vec())?
         )?;
+        Ok(())
+    };
 
-        if stop > 0 && i == stop {
-            break;
+    if ranks.is_empty() {
+        for (rank, (suffix, lcp)) in sufr_file
+            .suffix_array_file
+            .iter()
+            .zip(sufr_file.lcp_file.iter())
+            .enumerate()
+        {
+            print(rank, suffix.to_usize(), lcp.to_usize())?;
+        }
+    } else {
+        for rank in ranks {
+            if let (Some(suffix), Some(lcp)) = (
+                sufr_file.suffix_array_file.get(rank),
+                sufr_file.lcp_file.get(rank),
+            ) {
+                print(rank, suffix.to_usize(), lcp.to_usize())?;
+            } else {
+                eprintln!("Invalid rank: {rank}");
+            }
         }
     }
 
@@ -492,22 +537,60 @@ where
         if res.suffixes.is_empty() {
             eprintln!("{}: not found", res.query);
         } else {
-            let loc = res
-                .suffixes
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .join(" ");
-            writeln!(output, "{}: {loc}", res.query)?;
+            let show = if args.count {
+                res.suffixes.len().to_string()
+            } else {
+                format!("{} ({}-{})", 
+                    res.suffixes
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                    res.ranks[0], res.ranks[res.ranks.len() - 1]
+                )
+            };
+            writeln!(output, "{}: {show}", res.query)?;
         };
     }
 
-    info!(
-        "Locate of {} finished in {:?}",
-        num_queries,
-        now.elapsed()
-    );
+    info!("Locate of {} finished in {:?}", num_queries, now.elapsed());
+
     Ok(())
+}
+
+// --------------------------------------------------
+// Parse an index from a string representation of an integer.
+// Ensures the number does not start with '+'.
+fn parse_index(input: &str) -> Result<usize> {
+    let value_error = || anyhow!(r#"illegal list value: "{input}""#);
+    input
+        .starts_with('+')
+        .then(|| Err(value_error()))
+        .unwrap_or_else(|| input.parse::<usize>().map_err(|_| value_error()))
+}
+
+// --------------------------------------------------
+fn parse_pos(range: &str) -> Result<PositionList> {
+    let range_re = Regex::new(r"^(\d+)-(\d+)$").unwrap();
+    range
+        .split(',')
+        .map(|val| {
+            parse_index(val).map(|n| n..n + 1).or_else(|e| {
+                range_re.captures(val).ok_or(e).and_then(|captures| {
+                    let n1 = parse_index(&captures[1])?;
+                    let n2 = parse_index(&captures[2])?;
+                    if n1 >= n2 {
+                        bail!(
+                            "First number in range ({n1}) \
+                            must be lower than second number ({n2})"
+                        )
+                    }
+                    Ok(n1..n2 + 1)
+                })
+            })
+        })
+        .collect::<Result<_, _>>()
+        .map_err(From::from)
 }
 
 // --------------------------------------------------
@@ -595,4 +678,162 @@ where
     println!("{table}");
 
     Ok(())
+}
+
+// --------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::{parse_index, parse_pos};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_parse_index() {
+        let res = parse_index("0");
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), 0);
+
+        let res = parse_index("1");
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), 1);
+
+        let res = parse_index("10");
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), 10);
+
+        let res = parse_index(&usize::MAX.to_string());
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), usize::MAX);
+
+        let res = parse_index("+1");
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            r#"illegal list value: "+1""#.to_string()
+        );
+
+        let res = parse_index("-1");
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            r#"illegal list value: "-1""#.to_string()
+        );
+    }
+
+    #[test]
+    fn test_parse_pos() {
+        // The empty string is an error
+        assert!(parse_pos("").is_err());
+
+        // Zero is OK
+        let res = parse_pos("0");
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), vec![0..1]);
+
+        //let res = parse_pos("0-1".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "0""#);
+        //
+        //// A leading "+" is an error
+        //let res = parse_pos("+1".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "+1""#,);
+        //
+        //let res = parse_pos("+1-2".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(
+        //    res.unwrap_err().to_string(),
+        //    r#"illegal list value: "+1-2""#,
+        //);
+        //
+        //let res = parse_pos("1-+2".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(
+        //    res.unwrap_err().to_string(),
+        //    r#"illegal list value: "1-+2""#,
+        //);
+        //
+        //// Any non-number is an error
+        //let res = parse_pos("a".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a""#);
+        //
+        //let res = parse_pos("1,a".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a""#);
+        //
+        //let res = parse_pos("1-a".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "1-a""#,);
+        //
+        //let res = parse_pos("a-1".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a-1""#,);
+        //
+        //// Wonky ranges
+        //let res = parse_pos("-".to_string());
+        //assert!(res.is_err());
+        //
+        //let res = parse_pos(",".to_string());
+        //assert!(res.is_err());
+        //
+        //let res = parse_pos("1,".to_string());
+        //assert!(res.is_err());
+        //
+        //let res = parse_pos("1-".to_string());
+        //assert!(res.is_err());
+        //
+        //let res = parse_pos("1-1-1".to_string());
+        //assert!(res.is_err());
+        //
+        //let res = parse_pos("1-1-a".to_string());
+        //assert!(res.is_err());
+        //
+        //// First number must be less than second
+        //let res = parse_pos("1-1".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(
+        //    res.unwrap_err().to_string(),
+        //    "First number in range (1) must be lower than second number (1)"
+        //);
+        //
+        //let res = parse_pos("2-1".to_string());
+        //assert!(res.is_err());
+        //assert_eq!(
+        //    res.unwrap_err().to_string(),
+        //    "First number in range (2) must be lower than second number (1)"
+        //);
+        //
+        //// All the following are acceptable
+        //let res = parse_pos("1".to_string());
+        //assert!(res.is_ok());
+        //assert_eq!(res.unwrap(), vec![0..1]);
+        //
+        //let res = parse_pos("01".to_string());
+        //assert!(res.is_ok());
+        //assert_eq!(res.unwrap(), vec![0..1]);
+        //
+        //let res = parse_pos("1,3".to_string());
+        //assert!(res.is_ok());
+        //assert_eq!(res.unwrap(), vec![0..1, 2..3]);
+        //
+        //let res = parse_pos("001,0003".to_string());
+        //assert!(res.is_ok());
+        //assert_eq!(res.unwrap(), vec![0..1, 2..3]);
+        //
+        //let res = parse_pos("1-3".to_string());
+        //assert!(res.is_ok());
+        //assert_eq!(res.unwrap(), vec![0..3]);
+        //
+        //let res = parse_pos("0001-03".to_string());
+        //assert!(res.is_ok());
+        //assert_eq!(res.unwrap(), vec![0..3]);
+        //
+        //let res = parse_pos("1,7,3-5".to_string());
+        //assert!(res.is_ok());
+        //assert_eq!(res.unwrap(), vec![0..1, 6..7, 2..5]);
+        //
+        //let res = parse_pos("15,19-20".to_string());
+        //assert!(res.is_ok());
+        //assert_eq!(res.unwrap(), vec![14..15, 18..20]);
+    }
 }
