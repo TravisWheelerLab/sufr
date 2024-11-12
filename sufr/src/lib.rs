@@ -289,6 +289,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         num_fmt.format(",.0", text_len as f64),
         now.elapsed()
     );
+    //println!("{}", String::from_utf8(seq_data.seq.to_vec())?);
     let builder_args = SufrBuilderArgs {
         text: seq_data.seq,
         max_query_len: args.max_query_len,
