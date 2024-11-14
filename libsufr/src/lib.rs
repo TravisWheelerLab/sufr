@@ -98,7 +98,7 @@ where
 {
     pub query: String,
     pub suffixes: Vec<T>,
-    pub ranks: Option<Range<usize>>,
+    pub ranks: Range<usize>,
 }
 
 // --------------------------------------------------
@@ -854,7 +854,6 @@ where
     // --------------------------------------------------
     // TODO: Ignoring lots of Results to return Option
     pub fn get(&mut self, pos: usize) -> Option<T> {
-        println!("disk! get()");
         // Don't bother looking for something beyond the end
         let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
         if seek < self.end_position {
@@ -874,7 +873,6 @@ where
 
     // --------------------------------------------------
     pub fn get_range(&mut self, range: Range<usize>) -> Result<Vec<T>> {
-        println!("disk! get_range()");
         let start = self.start_position as usize + (range.start * mem::size_of::<T>());
         let end = self.start_position as usize + (range.end * mem::size_of::<T>());
         let valid = self.start_position as usize..self.end_position as usize;
@@ -1376,7 +1374,7 @@ where
     }
 
     // --------------------------------------------------
-    pub fn locate(&mut self, args: Locate) -> Result<Vec<LocateResult<T>>> {
+    pub fn locate(&mut self, args: Locate) -> Result<Vec<Result<LocateResult<T>>>> {
         self.query_low_memory = args.low_memory;
         let n = if self.query_low_memory {
             self.num_suffixes.to_usize()
@@ -1400,11 +1398,8 @@ where
         };
 
         let now = Instant::now();
-        let mut res = vec![];
-        for query in args.queries {
+        let res: Vec<_> = args.queries.into_iter().map(|query| -> Result<LocateResult<T>> {
             let qry = query.as_bytes();
-            let mut suffixes: Vec<T> = vec![];
-            let mut ranks: Option<Range<usize>> = None;
 
             if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
                 let end = self
@@ -1413,12 +1408,10 @@ where
 
                 // Rank is empty when we have the full SA in memory
                 // AND when doing low-memory searches
-                if self.suffix_array_rank_mem.is_empty() {
+                let (suffixes, ranks) = if self.suffix_array_rank_mem.is_empty() {
                     let (start_rank, end_rank) = (start, end + 1);
-                    ranks = Some(start_rank..end_rank);
-
                     // For low-memory, go to disk
-                    suffixes = if self.suffix_array_mem.is_empty() {
+                    let suffixes = if self.suffix_array_mem.is_empty() {
                         (start_rank..end_rank)
                             .filter_map(|rank| self.suffix_array_file.get(rank))
                             .collect::<Vec<_>>()
@@ -1426,6 +1419,7 @@ where
                         // Otherwise, get from memory
                         self.suffix_array_mem[start_rank..end_rank].to_vec()
                     };
+                    (suffixes, start_rank..end_rank)
                 } else {
                     // This is the case for the compressed/in-memory SA
                     let start_rank = self.suffix_array_rank_mem[start];
@@ -1442,23 +1436,23 @@ where
                     };
 
                     // I have to go to disk to get the actual suffixes
-                    //suffixes = (start_rank..end_rank)
-                    //    .filter_map(|rank| self.suffix_array_file.get(rank))
-                    //    .collect::<Vec<_>>();
-                    suffixes = self.suffix_array_file.get_range(start_rank..end_rank)?;
-                    ranks = Some(start_rank..end_rank);
-                }
-            }
+                    let suffixes =
+                        self.suffix_array_file.get_range(start_rank..end_rank)?;
+                    (suffixes, start_rank..end_rank)
+                };
 
-            res.push(LocateResult {
-                query: query.to_string(),
-                suffixes,
-                ranks,
-            });
-        }
+                Ok(LocateResult {
+                    query: query.to_string(),
+                    suffixes,
+                    ranks,
+                })
+            }
+            else {
+                Err(anyhow!("{query}"))
+            }
+        }).collect();
 
         info!("Search finished in {:?}", now.elapsed());
-
         Ok(res)
     }
 
@@ -1666,7 +1660,7 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 mod tests {
     use super::{
         read_sequence_file, read_text_length, usize_to_bytes, Locate, LocateResult,
-        SufrBuilder, SufrBuilderArgs, SufrFile
+        SufrBuilder, SufrBuilderArgs, SufrFile,
     };
     use crate::OUTFILE_VERSION;
     use anyhow::Result;
@@ -1679,20 +1673,20 @@ mod tests {
         let mut sufr_file: SufrFile<u32> = SufrFile::read(input_file)?;
         let suf_by_rank = [
             14, //  0: #
-             0, //  1: AABABABABBABAB#
+            0,  //  1: AABABABABBABAB#
             12, //  2: AB#
             10, //  3: ABAB#
-             1, //  4: ABABABABBABAB#
-             3, //  5: ABABABBABAB#
-             5, //  6: ABABBABAB#
-             7, //  7: ABBABAB#
+            1,  //  4: ABABABABBABAB#
+            3,  //  5: ABABABBABAB#
+            5,  //  6: ABABBABAB#
+            7,  //  7: ABBABAB#
             13, //  8: B#
             11, //  9: BAB#
-             9, // 10: BABAB#
-             2, // 11: BABABABBABAB#
-             4, // 12: BABABBABAB#
-             6, // 13: BABBABAB#
-             8, // 14: BBABAB#
+            9,  // 10: BABAB#
+            2,  // 11: BABABABBABAB#
+            4,  // 12: BABABBABAB#
+            6,  // 13: BABBABAB#
+            8,  // 14: BBABAB#
         ];
 
         for (rank, &suffix) in suf_by_rank.iter().enumerate() {
@@ -1703,7 +1697,10 @@ mod tests {
 
         let res = sufr_file.suffix_array_file.get_range(1..100);
         assert!(res.is_err());
-        assert_eq!(res.as_ref().unwrap_err().to_string(), "Invalid range: 1..100");
+        assert_eq!(
+            res.as_ref().unwrap_err().to_string(),
+            "Invalid range: 1..100"
+        );
 
         let res = sufr_file.suffix_array_file.get_range(8..9);
         assert!(res.is_ok());
@@ -1724,7 +1721,7 @@ mod tests {
             assert_eq!(suf_by_rank[i], suffix);
         }
 
-        Ok(()) 
+        Ok(())
     }
 
     #[test]
@@ -1862,13 +1859,18 @@ mod tests {
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
+            let res = res.unwrap();
+            assert_eq!(res.len(), 1);
+            let val = &res[0];
+            assert!(val.is_ok());
+            let res = val.as_ref().unwrap();
             assert_eq!(
-                res.unwrap(),
-                vec![LocateResult {
+                res,
+                &LocateResult {
                     query: "A".to_string(),
                     suffixes: vec![0, 12, 10, 1, 3, 5, 7],
-                    ranks: Some(1..8),
-                }]
+                    ranks: 1..8,
+                }
             );
         }
 
@@ -1880,13 +1882,18 @@ mod tests {
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
+            let res = res.unwrap();
+            assert_eq!(res.len(), 1);
+            let val = &res[0];
+            assert!(val.is_ok());
+            let res = val.as_ref().unwrap();
             assert_eq!(
-                res.unwrap(),
-                vec![LocateResult {
+                res,
+                &LocateResult {
                     query: "B".to_string(),
                     suffixes: vec![13, 11, 9, 2, 4, 6, 8],
-                    ranks: Some(8..15),
-                }]
+                    ranks: 8..15,
+                }
             );
         }
 
@@ -1898,13 +1905,18 @@ mod tests {
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
+            let res = res.unwrap();
+            assert_eq!(res.len(), 1);
+            let val = &res[0];
+            assert!(val.is_ok());
+            let res = val.as_ref().unwrap();
             assert_eq!(
-                res.unwrap(),
-                vec![LocateResult {
+                res,
+                &LocateResult {
                     query: "ABAB".to_string(),
                     suffixes: vec![10, 1, 3, 5],
-                    ranks: Some(3..7),
-                }]
+                    ranks: 3..7,
+                }
             );
         }
 
@@ -1916,13 +1928,18 @@ mod tests {
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
+            let res = res.unwrap();
+            assert_eq!(res.len(), 1);
+            let val = &res[0];
+            assert!(val.is_ok());
+            let res = val.as_ref().unwrap();
             assert_eq!(
-                res.unwrap(),
-                vec![LocateResult {
+                res,
+                &LocateResult {
                     query: "ABABB".to_string(),
                     suffixes: vec![5],
-                    ranks: Some(6..6)
-                }]
+                    ranks: 6..7
+                }
             );
         }
 
@@ -1934,14 +1951,12 @@ mod tests {
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
-            assert_eq!(
-                res.unwrap(),
-                vec![LocateResult {
-                    query: "BBBB".to_string(),
-                    suffixes: vec![],
-                    ranks: None,
-                }]
-            );
+            assert!(res.is_ok());
+            let res = res.unwrap();
+            assert_eq!(res.len(), 1);
+            let val = &res[0];
+            assert!(val.is_err());
+            assert_eq!(val.as_ref().unwrap_err().to_string(), "BBBB".to_string());
         }
 
         Ok(())

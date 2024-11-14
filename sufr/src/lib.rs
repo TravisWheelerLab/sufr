@@ -535,23 +535,24 @@ where
     };
 
     for res in sufr_file.locate(loc_args)? {
-        if res.suffixes.is_empty() {
-            eprintln!("{}: not found", res.query);
-        } else {
-            let show = if args.count {
-                res.suffixes.len().to_string()
-            } else {
-                //let (start, end) = res
-                //    .ranks
-                //    .map_or(("", ""), |r| (&r.start.to_string(), &r.end.to_string()));
-                res.suffixes
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            };
-            writeln!(output, "{}: {show}", res.query)?;
-        };
+        match res {
+            Err(e) => eprintln!("{e}: not found"),
+            Ok(res) => {
+                let show = if args.count {
+                    res.suffixes.len().to_string()
+                } else {
+                    //let (start, end) = res
+                    //    .ranks
+                    //    .map_or(("", ""), |r| (&r.start.to_string(), &r.end.to_string()));
+                    res.suffixes
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                writeln!(output, "{}: {show}", res.query)?;
+            }
+        }
     }
 
     info!("Locate of {} finished in {:?}", num_queries, now.elapsed());
