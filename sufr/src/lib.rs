@@ -541,14 +541,14 @@ where
             let show = if args.count {
                 res.suffixes.len().to_string()
             } else {
-                format!("{} ({}-{})", 
-                    res.suffixes
+                //let (start, end) = res
+                //    .ranks
+                //    .map_or(("", ""), |r| (&r.start.to_string(), &r.end.to_string()));
+                res.suffixes
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>()
-                    .join(" "),
-                    res.ranks[0], res.ranks[res.ranks.len() - 1]
-                )
+                    .join(" ")
             };
             writeln!(output, "{}: {show}", res.query)?;
         };

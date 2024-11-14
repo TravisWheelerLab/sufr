@@ -98,7 +98,7 @@ where
 {
     pub query: String,
     pub suffixes: Vec<T>,
-    pub ranks: Vec<usize>,
+    pub ranks: Option<Range<usize>>,
 }
 
 // --------------------------------------------------
@@ -854,6 +854,7 @@ where
     // --------------------------------------------------
     // TODO: Ignoring lots of Results to return Option
     pub fn get(&mut self, pos: usize) -> Option<T> {
+        //println!("disk! get()");
         // Don't bother looking for something beyond the end
         let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
         if seek < self.end_position {
@@ -873,6 +874,7 @@ where
 
     // --------------------------------------------------
     pub fn get_range(&mut self, range: Range<usize>) -> Result<Vec<T>> {
+        //println!("disk! get_range()");
         let start = self.start_position as usize + (range.start * mem::size_of::<T>());
         let end = self.start_position as usize + (range.end * mem::size_of::<T>());
         let valid = self.start_position as usize..self.end_position as usize;
@@ -911,6 +913,7 @@ where
             if self.file_access.buffer.is_empty()
                 || self.file_access.buffer_pos == self.file_access.buffer.len()
             {
+                println!("disk! next() buffer");
                 if self.file_access.current_position >= self.file_access.end_position {
                     self.file_access.exhausted = true;
                     return None;
@@ -923,7 +926,8 @@ where
 
                 let bytes_wanted = min(
                     self.file_access.buffer_size * mem::size_of::<T>(),
-                    (self.file_access.end_position - self.file_access.current_position) as usize
+                    (self.file_access.end_position - self.file_access.current_position)
+                        as usize,
                 );
 
                 let mut buffer: Vec<u8> = vec![0; bytes_wanted];
@@ -1175,186 +1179,188 @@ where
         // Ensure we start from the beginning of the SA/LCP files
         self.lcp_file.reset();
         self.suffix_array_file.reset();
-        let now = Instant::now();
 
+        // 37s to process 15/hs1
+        let max_len = self.num_suffixes.to_usize();
+        let mut suffix_array: Vec<T> = Vec::with_capacity(max_len);
+        let mut rank: Vec<usize> = Vec::with_capacity(max_len);
+
+        //for (i, suffix) in self
+        //    .lcp_file
+        //    .iter()
+        //    .zip(self.suffix_array_file.iter())
+        //    .enumerate()
+        //    .filter_map(|(i, (lcp, suffix))| {
+        //        (lcp < max_query_len).then_some((i, suffix))
+        //    })
+        //{
+        //    suffix_array.push(suffix);
+        //    rank.push(i);
+        //}
+
+        for (i, (lcp, suffix)) in self
+            .lcp_file
+            .iter()
+            .zip(self.suffix_array_file.iter())
+            .enumerate()
+        {
+            if lcp < max_query_len {
+                suffix_array.push(suffix);
+                //rank.push(T::from_usize(i));
+                rank.push(i);
+            }
+        }
+
+        // 78s to process 15/hs1
         //let ranked_suffixes: Vec<(usize, T)> = self
         //    .lcp_file
         //    .iter()
         //    .zip(self.suffix_array_file.iter())
         //    .enumerate()
-        //    .filter_map(|(rank, (lcp, suffix))| (lcp < mql).then_some((rank, suffix)))
+        //    .filter_map(|(rank, (lcp, suffix))| {
+        //        (lcp < max_query_len).then_some((rank, suffix))
+        //    })
         //    .collect();
-        //let mut suffix_array: Vec<T> =
-        //    ranked_suffixes.iter().map(|(_, s)| *s).collect();
-        //let mut rank: Vec<usize> =
-        //    ranked_suffixes.into_iter().map(|(r, _)| r).collect();
-
-        let mut suffix_array: Vec<T> = vec![];
-        let mut rank: Vec<usize> = vec![];
-        //for (i, (lcp, suffix)) in self
-        //    .lcp_file
-        //    .iter()
-        //    .zip(self.suffix_array_file.iter())
-        //    .enumerate()
-        //{
-        //    if lcp < max_query_len {
-        //        suffix_array.push(suffix);
-        //        rank.push(i);
-        //    }
+        //let mut suffix_array: Vec<T> = Vec::with_capacity(ranked_suffixes.len());
+        //let mut rank: Vec<usize> = Vec::with_capacity(ranked_suffixes.len());
+        //for (suffix_rank, suffix) in ranked_suffixes {
+        //    suffix_array.push(suffix);
+        //    rank.push(suffix_rank);
         //}
-
-        for (i, (_lcp, suffix)) in self
-            .lcp_file
-            .iter()
-            .zip(self.suffix_array_file.iter())
-            .enumerate()
-            .filter(|(_i, (lcp, _suffix))| *lcp < max_query_len)
-        {
-            suffix_array.push(suffix);
-            rank.push(i);
-        }
-
-        info!(
-            "Built compressed SA ({}/{}) in {:?}",
-            suffix_array.len(),
-            self.num_suffixes,
-            now.elapsed()
-        );
 
         (suffix_array, rank)
     }
 
     // --------------------------------------------------
     pub fn set_suffix_array_mem(&mut self, mut max_query_len: usize) -> Result<()> {
-        info!("Loading suffix_array_mem using max_query_len {max_query_len}");
+        // If ".sufr" file was built with a nonzero (T::default) max_query_len
+        // Then this is the value we must use
+        if self.max_query_len > T::default() {
+            if max_query_len > 0 {
+                max_query_len = min(max_query_len, self.max_query_len.to_usize());
+            } else {
+                max_query_len = self.max_query_len.to_usize();
+            }
+        }
 
-        if max_query_len == 0 {
+        if max_query_len == self.max_query_len.to_usize() {
             // Stuff entire SA into memory
+            let now = Instant::now();
             self.suffix_array_file.reset();
             self.suffix_array_mem = self.suffix_array_file.iter().collect();
+            info!("Read entire SA from disk in {:?}", now.elapsed());
 
             // There will be no ranks
             self.suffix_array_rank_mem = vec![];
         } else {
-            // Cannot be greater than built MQL
-            if self.max_query_len > T::default() {
-                max_query_len = min(max_query_len, self.max_query_len.to_usize());
+            // Do nothing if we've already loaded the correct SA/MQL
+            if !self.suffix_array_mem.is_empty()
+                && self
+                    .suffix_array_mem_mql
+                    .map_or(false, |cur_mql| cur_mql == max_query_len)
+            {
+                info!("Using existing suffix_array_mem");
+                return Ok(());
             }
 
-            //// We've already loaded the correct SA
-            //if let Some(cur_mql) = self.suffix_array_mem_mql {
-            //    if cur_mql == max_query_len {
-            //        return Ok(());
-            //    }
-            //}
+            info!("Loading suffix_array_mem using max_query_len {max_query_len}");
 
-            //let sufr_dir = &self.get_sufr_dir()?;
-            //let basename = Path::new(&self.filename)
-            //    .file_name()
-            //    .unwrap()
-            //    .to_string_lossy()
-            //    .into_owned();
-            //let cache_path =
-            //    sufr_dir.join(format!("locate-{max_query_len}-{basename}"));
-            //
-            //// TODO: Remove
-            //let _ = fs::remove_file(&cache_path);
-            //
-            //// Check for stale cache
-            //if let Ok(cache_meta) = fs::metadata(&cache_path) {
-            //    let source_meta = fs::metadata(&self.filename)?;
-            //    if let (Ok(source_modified), Ok(cache_modified)) =
-            //        (source_meta.modified(), cache_meta.modified())
-            //    {
-            //        if source_modified > cache_modified {
-            //            info!("Removing stale cache {}", cache_path.display());
-            //            fs::remove_file(&cache_path)?;
-            //        }
-            //    }
-            //}
+            let sufr_dir = &self.get_sufr_dir()?;
+            let basename = Path::new(&self.filename)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let cache_path =
+                sufr_dir.join(format!("locate-{max_query_len}-{basename}"));
 
-            //if cache_path.is_file() {
-            //    let now = Instant::now();
-            //    let mut file = File::open(&cache_path)
-            //        .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
-            //
-            //    let mut buffer = [0; 8];
-            //    file.read_exact(&mut buffer)?;
-            //    let num_elements = usize::from_ne_bytes(buffer);
-            //
-            //    let mut buffer = vec![0; num_elements * mem::size_of::<T>()];
-            //    file.read_exact(&mut buffer)?;
-            //    self.suffix_array_mem =
-            //        SufrBuilder::slice_u8_to_vec(&buffer, num_elements);
-            //
-            //    let mut buffer = vec![];
-            //    file.read_to_end(&mut buffer)?;
-            //    self.suffix_array_rank_mem = unsafe {
-            //        std::slice::from_raw_parts(
-            //            buffer.as_ptr() as *const _,
-            //            num_elements,
-            //        )
-            //        .to_vec()
-            //    };
-            //
-            //    info!(
-            //        "Read compressed SA ({}/{}) from cache file {} in {:?}",
-            //        self.suffix_array_mem.len(),
-            //        self.num_suffixes,
-            //        cache_path.display(),
-            //        now.elapsed()
-            //    );
-            //} else {
-            let (sub_sa, sub_rank) = &self.subsample_suffix_array(max_query_len);
-            self.suffix_array_mem_mql = Some(max_query_len);
-            self.suffix_array_mem = sub_sa.to_vec();
-            self.suffix_array_rank_mem = sub_rank.to_vec();
+            // Check for stale cache
+            if let Ok(cache_meta) = fs::metadata(&cache_path) {
+                let source_meta = fs::metadata(&self.filename)?;
+                if let (Ok(source_modified), Ok(cache_modified)) =
+                    (source_meta.modified(), cache_meta.modified())
+                {
+                    if source_modified > cache_modified {
+                        info!("Removing stale cache {}", cache_path.display());
+                        fs::remove_file(&cache_path)?;
+                    }
+                }
+            }
 
-            //let text_len = self.text_len.to_usize();
-            //for i in 0..self.suffix_array_mem.len() {
-            //    let rank = self.suffix_array_rank_mem[i];
-            //    let start = self.suffix_array_mem[i].to_usize();
-            //    //let end = min(start + max_query_len, text_len);
-            //    let end = text_len;
-            //    let s = String::from_utf8(self.text[start..end].to_vec()).unwrap();
-            //    println!("rank {rank:2} start {start:2}: {s}");
-            //}
+            if cache_path.is_file() {
+                let now = Instant::now();
+                let mut file = File::open(&cache_path)
+                    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
 
-            //let text_len = self.text_len.to_usize();
-            //for start in &suffix_array {
-            //    let start = start.to_usize();
-            //    let end = min(start + max_query_len, text_len);
-            //    let suffix =
-            //        String::from_utf8(self.text[start..end].to_vec()).unwrap();
-            //    eprintln!("{start:10} {suffix}");
-            //}
+                let mut buffer = [0; 8];
+                file.read_exact(&mut buffer)?;
+                let num_elements = usize::from_ne_bytes(buffer);
 
-            //// Write cache file
-            //let now = Instant::now();
-            //let mut file = File::create(&cache_path)
-            //    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
-            //let _ = file.write(&usize_to_bytes(suffix_array.len()))?;
-            //let bytes = unsafe {
-            //    slice::from_raw_parts(
-            //        suffix_array.as_ptr() as *const u8,
-            //        suffix_array.len() * std::mem::size_of::<T>(),
-            //    )
-            //};
-            //file.write_all(bytes)?;
-            //let bytes = unsafe {
-            //    slice::from_raw_parts(
-            //        rank.as_ptr() as *const u8,
-            //        rank.len() * std::mem::size_of::<usize>(),
-            //    )
-            //};
-            //file.write_all(bytes)?;
-            //info!(
-            //    "Wrote to cache {} in {:?}",
-            //    cache_path.display(),
-            //    now.elapsed()
-            //);
+                let mut buffer = vec![0; num_elements * mem::size_of::<T>()];
+                file.read_exact(&mut buffer)?;
+                self.suffix_array_mem =
+                    SufrBuilder::slice_u8_to_vec(&buffer, num_elements);
 
-            //}
+                let mut buffer = vec![];
+                file.read_to_end(&mut buffer)?;
+                //self.suffix_array_rank_mem =
+                //    SufrBuilder::slice_u8_to_vec(&buffer, num_elements);
+                self.suffix_array_rank_mem = unsafe {
+                    std::slice::from_raw_parts(
+                        buffer.as_ptr() as *const _,
+                        num_elements,
+                    )
+                    .to_vec()
+                };
+
+                info!(
+                    "Read compressed SA ({}/{}) from cache file {} in {:?}",
+                    self.suffix_array_mem.len(),
+                    self.num_suffixes,
+                    cache_path.display(),
+                    now.elapsed()
+                );
+            } else {
+                let now = Instant::now();
+                let (sub_sa, sub_rank) = &self.subsample_suffix_array(max_query_len);
+                self.suffix_array_mem_mql = Some(max_query_len);
+                self.suffix_array_mem = sub_sa.to_vec();
+                self.suffix_array_rank_mem = sub_rank.to_vec();
+
+                info!(
+                    "Loaded compressed SA ({}/{}) in {:?}",
+                    sub_sa.len(),
+                    self.num_suffixes,
+                    now.elapsed()
+                );
+
+                // Write cache file
+                let now = Instant::now();
+                let mut file = File::create(&cache_path)
+                    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
+                let _ = file.write(&usize_to_bytes(self.suffix_array_mem.len()))?;
+                let bytes = unsafe {
+                    slice::from_raw_parts(
+                        self.suffix_array_mem.as_ptr() as *const u8,
+                        self.suffix_array_mem.len() * std::mem::size_of::<T>(),
+                    )
+                };
+                file.write_all(bytes)?;
+
+                let bytes = unsafe {
+                    slice::from_raw_parts(
+                        self.suffix_array_rank_mem.as_ptr() as *const u8,
+                        self.suffix_array_rank_mem.len() * std::mem::size_of::<usize>(),
+                    )
+                };
+                file.write_all(bytes)?;
+
+                info!(
+                    "Wrote to cache {} in {:?}",
+                    cache_path.display(),
+                    now.elapsed()
+                );
+            }
         }
 
         Ok(())
@@ -1375,19 +1381,20 @@ where
         let n = if self.query_low_memory {
             self.num_suffixes.to_usize()
         } else {
-            let max_of_queries =
-                args.queries.iter().map(|v| v.len()).max().unwrap_or(0);
-            let max_query_len = match args.max_query_len {
-                Some(val) => val,
-                _ => {
-                    if self.max_query_len > T::default() {
-                        min(self.max_query_len.to_usize(), max_of_queries)
-                    } else {
-                        max_of_queries
-                    }
-                }
-            };
-
+            //let max_of_queries =
+            //    args.queries.iter().map(|v| v.len()).max().unwrap_or(0);
+            //let max_query_len = match args.max_query_len {
+            //    Some(val) => val,
+            //    _ => {
+            //        if self.max_query_len > T::default() {
+            //            min(self.max_query_len.to_usize(), max_of_queries)
+            //        } else {
+            //            max_of_queries
+            //        }
+            //    }
+            //};
+            let max_query_len =
+                args.max_query_len.unwrap_or(self.max_query_len.to_usize());
             self.set_suffix_array_mem(max_query_len)?;
             self.suffix_array_mem.len()
         };
@@ -1396,37 +1403,50 @@ where
         let mut res = vec![];
         for query in args.queries {
             let qry = query.as_bytes();
-            let mut suffixes = vec![];
-            let mut ranks = vec![];
+            let mut suffixes: Vec<T> = vec![];
+            let mut ranks: Option<Range<usize>> = None;
+
             if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
                 let end = self
                     .suffix_search_last(qry, start, n - 1, n, 0, 0)
                     .unwrap_or(start);
 
-                // Rank is empty when we have the full SA
-                let (start_rank, end_rank) =
-                    if self.query_low_memory || self.suffix_array_rank_mem.is_empty() {
-                        (start, end + 1)
+                // Rank is empty when we have the full SA in memory
+                // AND when doing low-memory searches
+                if self.suffix_array_rank_mem.is_empty() {
+                    let (start_rank, end_rank) = (start, end + 1);
+                    ranks = Some(start_rank..end_rank);
+
+                    // For low-memory, go to disk
+                    if self.suffix_array_mem.is_empty() {
+                        suffixes = (start_rank..end_rank)
+                            .filter_map(|rank| self.suffix_array_file.get(rank))
+                            .collect::<Vec<_>>();
                     } else {
-                        let start_rank = self.suffix_array_rank_mem[start];
-                        let end_rank = if start == end {
-                            if start == self.suffix_array_rank_mem.len() - 1 {
-                                // We're on the last rank, so go to end
-                                self.num_suffixes.to_usize()
-                            } else {
-                                // Use the next LCP rank
-                                self.suffix_array_rank_mem[start + 1]
-                            }
+                        // Otherwise, get from memory
+                        suffixes = self.suffix_array_mem[start_rank..end_rank].to_vec();
+                    }
+                } else {
+                    // This is the case for the compressed/in-memory SA
+                    let start_rank = self.suffix_array_rank_mem[start];
+                    let end_rank = if start == end {
+                        if start == self.suffix_array_rank_mem.len() - 1 {
+                            // We're on the last rank, so go to end
+                            self.num_suffixes.to_usize()
                         } else {
-                            self.suffix_array_rank_mem[end] + 1
-                        };
-                        (start_rank, end_rank)
+                            // Use the next LCP rank
+                            self.suffix_array_rank_mem[start + 1]
+                        }
+                    } else {
+                        self.suffix_array_rank_mem[end] + 1
                     };
 
-                suffixes = (start_rank..end_rank)
-                    .filter_map(|rank| self.suffix_array_file.get(rank))
-                    .collect::<Vec<_>>();
-                ranks = (start_rank..end_rank).collect();
+                    // I have to go to disk to get the actual suffixes
+                    suffixes = (start_rank..end_rank)
+                        .filter_map(|rank| self.suffix_array_file.get(rank))
+                        .collect::<Vec<_>>();
+                    ranks = Some(start_rank..end_rank);
+                }
             }
 
             res.push(LocateResult {
@@ -1792,7 +1812,7 @@ mod tests {
                 vec![LocateResult {
                     query: "A".to_string(),
                     suffixes: vec![0, 12, 10, 1, 3, 5, 7],
-                    ranks: (1..=7).collect::<Vec<_>>(),
+                    ranks: Some(1..8),
                 }]
             );
         }
@@ -1810,7 +1830,7 @@ mod tests {
                 vec![LocateResult {
                     query: "B".to_string(),
                     suffixes: vec![13, 11, 9, 2, 4, 6, 8],
-                    ranks: (8..=14).collect::<Vec<_>>(),
+                    ranks: Some(8..15),
                 }]
             );
         }
@@ -1828,7 +1848,7 @@ mod tests {
                 vec![LocateResult {
                     query: "ABAB".to_string(),
                     suffixes: vec![10, 1, 3, 5],
-                    ranks: (3..=6).collect::<Vec<_>>(),
+                    ranks: Some(3..7),
                 }]
             );
         }
@@ -1846,7 +1866,7 @@ mod tests {
                 vec![LocateResult {
                     query: "ABABB".to_string(),
                     suffixes: vec![5],
-                    ranks: vec![6],
+                    ranks: Some(6..6)
                 }]
             );
         }
@@ -1864,7 +1884,7 @@ mod tests {
                 vec![LocateResult {
                     query: "BBBB".to_string(),
                     suffixes: vec![],
-                    ranks: vec![],
+                    ranks: None,
                 }]
             );
         }

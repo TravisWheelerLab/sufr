@@ -62,7 +62,7 @@ ecoli:
 	$(CREATE_RELEASE) --dna -m 16 ../data/ecoli.fa 
 
 chr1:
-	$(CREATE_RELEASE) --dna -m 15 -n 64 $(CHR1)
+	$(CREATE_RELEASE) --dna -n 64 $(CHR1)
 
 human:
 	$(CREATE_RELEASE) -t 8 --dna -n 800 $(HUMAN)
