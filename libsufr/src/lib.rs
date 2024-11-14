@@ -854,7 +854,7 @@ where
     // --------------------------------------------------
     // TODO: Ignoring lots of Results to return Option
     pub fn get(&mut self, pos: usize) -> Option<T> {
-        //println!("disk! get()");
+        println!("disk! get()");
         // Don't bother looking for something beyond the end
         let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
         if seek < self.end_position {
@@ -874,7 +874,7 @@ where
 
     // --------------------------------------------------
     pub fn get_range(&mut self, range: Range<usize>) -> Result<Vec<T>> {
-        //println!("disk! get_range()");
+        println!("disk! get_range()");
         let start = self.start_position as usize + (range.start * mem::size_of::<T>());
         let end = self.start_position as usize + (range.end * mem::size_of::<T>());
         let valid = self.start_position as usize..self.end_position as usize;
@@ -913,12 +913,12 @@ where
             if self.file_access.buffer.is_empty()
                 || self.file_access.buffer_pos == self.file_access.buffer.len()
             {
-                println!("disk! next() buffer");
                 if self.file_access.current_position >= self.file_access.end_position {
                     self.file_access.exhausted = true;
                     return None;
                 }
 
+                println!("disk! next() buffer");
                 self.file_access
                     .file
                     .seek(SeekFrom::Start(self.file_access.current_position))
@@ -1418,14 +1418,14 @@ where
                     ranks = Some(start_rank..end_rank);
 
                     // For low-memory, go to disk
-                    if self.suffix_array_mem.is_empty() {
-                        suffixes = (start_rank..end_rank)
+                    suffixes = if self.suffix_array_mem.is_empty() {
+                        (start_rank..end_rank)
                             .filter_map(|rank| self.suffix_array_file.get(rank))
-                            .collect::<Vec<_>>();
+                            .collect::<Vec<_>>()
                     } else {
                         // Otherwise, get from memory
-                        suffixes = self.suffix_array_mem[start_rank..end_rank].to_vec();
-                    }
+                        self.suffix_array_mem[start_rank..end_rank].to_vec()
+                    };
                 } else {
                     // This is the case for the compressed/in-memory SA
                     let start_rank = self.suffix_array_rank_mem[start];
@@ -1442,9 +1442,10 @@ where
                     };
 
                     // I have to go to disk to get the actual suffixes
-                    suffixes = (start_rank..end_rank)
-                        .filter_map(|rank| self.suffix_array_file.get(rank))
-                        .collect::<Vec<_>>();
+                    //suffixes = (start_rank..end_rank)
+                    //    .filter_map(|rank| self.suffix_array_file.get(rank))
+                    //    .collect::<Vec<_>>();
+                    suffixes = self.suffix_array_file.get_range(start_rank..end_rank)?;
                     ranks = Some(start_rank..end_rank);
                 }
             }
@@ -1665,12 +1666,66 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 mod tests {
     use super::{
         read_sequence_file, read_text_length, usize_to_bytes, Locate, LocateResult,
-        SufrBuilder, SufrBuilderArgs, SufrFile,
+        SufrBuilder, SufrBuilderArgs, SufrFile
     };
     use crate::OUTFILE_VERSION;
     use anyhow::Result;
     use std::cmp::Ordering;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_file_access() -> Result<()> {
+        let input_file = "tests/inputs/abba.sufr";
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(input_file)?;
+        let suf_by_rank = [
+            14, //  0: #
+             0, //  1: AABABABABBABAB#
+            12, //  2: AB#
+            10, //  3: ABAB#
+             1, //  4: ABABABABBABAB#
+             3, //  5: ABABABBABAB#
+             5, //  6: ABABBABAB#
+             7, //  7: ABBABAB#
+            13, //  8: B#
+            11, //  9: BAB#
+             9, // 10: BABAB#
+             2, // 11: BABABABBABAB#
+             4, // 12: BABABBABAB#
+             6, // 13: BABBABAB#
+             8, // 14: BBABAB#
+        ];
+
+        for (rank, &suffix) in suf_by_rank.iter().enumerate() {
+            let res = sufr_file.suffix_array_file.get(rank);
+            assert!(res.is_some());
+            assert_eq!(res.unwrap(), suffix);
+        }
+
+        let res = sufr_file.suffix_array_file.get_range(1..100);
+        assert!(res.is_err());
+        assert_eq!(res.as_ref().unwrap_err().to_string(), "Invalid range: 1..100");
+
+        let res = sufr_file.suffix_array_file.get_range(8..9);
+        assert!(res.is_ok());
+        assert_eq!(res.as_ref().unwrap(), &[13]);
+
+        let res = sufr_file.suffix_array_file.get_range(8..13);
+        assert!(res.is_ok());
+        assert_eq!(res.as_ref().unwrap(), &[13, 11, 9, 2, 4]);
+
+        let res = sufr_file.suffix_array_file.get_range(1..8);
+        assert!(res.is_ok());
+        assert_eq!(res.as_ref().unwrap(), &[0, 12, 10, 1, 3, 5, 7]);
+
+        let all: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        assert_eq!(all, &[14, 0, 12, 10, 1, 3, 5, 7, 13, 11, 9, 2, 4, 6, 8]);
+
+        for (i, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
+            assert_eq!(suf_by_rank[i], suffix);
+        }
+
+        Ok(()) 
+    }
 
     #[test]
     fn test_slice_u8_to_vec() -> Result<()> {
