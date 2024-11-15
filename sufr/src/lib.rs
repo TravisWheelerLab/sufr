@@ -248,20 +248,6 @@ where
             println!("{err}");
         }
     }
-    //
-    //let lcp_errors = sa.check_lcp();
-    //let num_errors = lcp_errors.len();
-    //println!(
-    //    "Found {num_errors} error{} in LCP",
-    //    if num_errors == 1 { "" } else { "s" },
-    //);
-    //
-    //if args.verbose {
-    //    for (i, pos) in lcp_errors.iter().enumerate() {
-    //        println!("{:3}: pos {pos:5}", i + 1,);
-    //    }
-    //}
-    //
     println!("Finished checking in {:?}.", now.elapsed());
     Ok(())
 }
@@ -289,7 +275,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         num_fmt.format(",.0", text_len as f64),
         now.elapsed()
     );
-    //println!("{}", String::from_utf8(seq_data.seq.to_vec())?);
+
     let builder_args = SufrBuilderArgs {
         text: seq_data.seq,
         max_query_len: args.max_query_len,

@@ -479,7 +479,6 @@ where
 
                 let len = part_sa.len();
                 if len > 0 {
-                    //let now = Instant::now();
                     let mut sa_w = part_sa.clone();
                     let mut lcp = vec![T::default(); len];
                     let mut lcp_w = vec![T::default(); len];
@@ -501,10 +500,6 @@ where
                         sa_path,
                         lcp_path,
                     });
-                    //info!(
-                    //    "Partition {partition_num:4}: Sorted/wrote {len:8} in {:?}",
-                    //    now.elapsed()
-                    //);
                 }
                 Ok(())
             },
@@ -916,7 +911,6 @@ where
                     return None;
                 }
 
-                println!("disk! next() buffer");
                 self.file_access
                     .file
                     .seek(SeekFrom::Start(self.file_access.current_position))
@@ -1398,59 +1392,62 @@ where
         };
 
         let now = Instant::now();
-        let res: Vec<_> = args.queries.into_iter().map(|query| -> Result<LocateResult<T>> {
-            let qry = query.as_bytes();
+        let res: Vec<_> = args
+            .queries
+            .into_iter()
+            .map(|query| -> Result<LocateResult<T>> {
+                let qry = query.as_bytes();
 
-            if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
-                let end = self
-                    .suffix_search_last(qry, start, n - 1, n, 0, 0)
-                    .unwrap_or(start);
+                if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
+                    let end = self
+                        .suffix_search_last(qry, start, n - 1, n, 0, 0)
+                        .unwrap_or(start);
 
-                // Rank is empty when we have the full SA in memory
-                // AND when doing low-memory searches
-                let (suffixes, ranks) = if self.suffix_array_rank_mem.is_empty() {
-                    let (start_rank, end_rank) = (start, end + 1);
-                    // For low-memory, go to disk
-                    let suffixes = if self.suffix_array_mem.is_empty() {
-                        (start_rank..end_rank)
-                            .filter_map(|rank| self.suffix_array_file.get(rank))
-                            .collect::<Vec<_>>()
-                    } else {
-                        // Otherwise, get from memory
-                        self.suffix_array_mem[start_rank..end_rank].to_vec()
-                    };
-                    (suffixes, start_rank..end_rank)
-                } else {
-                    // This is the case for the compressed/in-memory SA
-                    let start_rank = self.suffix_array_rank_mem[start];
-                    let end_rank = if start == end {
-                        if start == self.suffix_array_rank_mem.len() - 1 {
-                            // We're on the last rank, so go to end
-                            self.num_suffixes.to_usize()
+                    // Rank is empty when we have the full SA in memory
+                    // AND when doing low-memory searches
+                    let (suffixes, ranks) = if self.suffix_array_rank_mem.is_empty() {
+                        let (start_rank, end_rank) = (start, end + 1);
+                        // For low-memory, go to disk
+                        let suffixes = if self.suffix_array_mem.is_empty() {
+                            (start_rank..end_rank)
+                                .filter_map(|rank| self.suffix_array_file.get(rank))
+                                .collect::<Vec<_>>()
                         } else {
-                            // Use the next LCP rank
-                            self.suffix_array_rank_mem[start + 1]
-                        }
+                            // Otherwise, get from memory
+                            self.suffix_array_mem[start_rank..end_rank].to_vec()
+                        };
+                        (suffixes, start_rank..end_rank)
                     } else {
-                        self.suffix_array_rank_mem[end] + 1
+                        // This is the case for the compressed/in-memory SA
+                        let start_rank = self.suffix_array_rank_mem[start];
+                        let end_rank = if start == end {
+                            if start == self.suffix_array_rank_mem.len() - 1 {
+                                // We're on the last rank, so go to end
+                                self.num_suffixes.to_usize()
+                            } else {
+                                // Use the next LCP rank
+                                self.suffix_array_rank_mem[start + 1]
+                            }
+                        } else {
+                            self.suffix_array_rank_mem[end] + 1
+                        };
+
+                        // I have to go to disk to get the actual suffixes
+                        let suffixes =
+                            self.suffix_array_file.get_range(start_rank..end_rank)?;
+                        (suffixes, start_rank..end_rank)
                     };
 
-                    // I have to go to disk to get the actual suffixes
-                    let suffixes =
-                        self.suffix_array_file.get_range(start_rank..end_rank)?;
-                    (suffixes, start_rank..end_rank)
-                };
-
-                Ok(LocateResult {
-                    query: query.to_string(),
-                    suffixes,
-                    ranks,
-                })
-            }
-            else {
-                Err(anyhow!("{query}"))
-            }
-        }).collect();
+                    Ok(LocateResult {
+                        query: query.to_string(),
+                        suffixes,
+                        ranks,
+                    })
+                } else {
+                    Err(anyhow!("{query}"))
+                }
+            })
+            .collect();
 
         info!("Search finished in {:?}", now.elapsed());
         Ok(res)
@@ -1465,39 +1462,10 @@ where
         left_lcp: usize,
         right_lcp: usize,
     ) -> Option<usize> {
-        //println!(
-        //    "qry {} low {low} high {high}",
-        //    String::from_utf8(qry.to_vec()).unwrap()
-        //);
         if high >= low {
             let mid = low + ((high - low) / 2);
             let mid_val = self.get_suffix(mid)?.to_usize();
-            //println!(">>> mid {mid} -> {mid_val}");
-            //println!(
-            //    "qry {} low {low} mid {mid} high {high}",
-            //    String::from_utf8(qry.to_vec()).unwrap()
-            //);
-            //
-            //let low_suffix = self.get_suffix(low)?.to_usize();
-            //let high_suffix = self.get_suffix(high)?.to_usize();
-            //let text_len = self.text_len.to_usize();
-            //let low_str = String::from_utf8(
-            //    self.text[low_suffix..min(low_suffix + qry.len(), text_len)].to_vec(),
-            //)
-            //.unwrap();
-            //
-            //// TODO: Is get_suffix the problem?
-            //let high_str = String::from_utf8(
-            //    self.text[high_suffix..min(high_suffix + qry.len(), text_len)].to_vec(),
-            //)
-            //.unwrap();
-            //
-            //let mid_end = min(mid_val + qry.len(), text_len);
-            //let mid_str =
-            //    String::from_utf8(self.text[mid_val..mid_end].to_vec())
-            //        .unwrap();
             let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
-            //println!("low ({low:10}) {low_str:15} mid ({mid:10}) {mid_str:15} high ({high:10}) {high_str:15} cmp {mid_cmp:?}");
 
             let mid_minus_one = if mid > 0 {
                 self.get_suffix(mid - 1)?.to_usize()
@@ -1535,6 +1503,7 @@ where
             let mid = low + ((high - low) / 2);
             let mid_val = self.get_suffix(mid)?.to_usize();
             let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
+
             // Weird hack because I cannot embed this call in the "if"
             let mid_plus_one = if mid < n - 1 {
                 self.get_suffix(mid + 1)?.to_usize()
