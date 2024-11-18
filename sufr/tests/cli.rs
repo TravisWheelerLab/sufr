@@ -91,17 +91,6 @@ fn create_seq1() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn create_seq1_sequence_delimiter() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: false,
-        ignore_softmask: false,
-        sequence_delimiter: Some('N'),
-    };
-    create(SEQ1, "tests/expected/1d.sufr", args)
-}
-
-// --------------------------------------------------
-#[test]
 fn create_seq1_allow_ambiguity() -> Result<()> {
     let args = CreateArgs {
         allow_ambiguity: true,
@@ -121,6 +110,18 @@ fn create_seq2() -> Result<()> {
     };
     create(SEQ2, "tests/expected/2.sufr", args)
 }
+
+// --------------------------------------------------
+#[test]
+fn create_seq2_sequence_delimiter() -> Result<()> {
+    let args = CreateArgs {
+        allow_ambiguity: false,
+        ignore_softmask: false,
+        sequence_delimiter: Some('N'),
+    };
+    create(SEQ2, "tests/expected/2d.sufr", args)
+}
+
 
 // --------------------------------------------------
 #[test]
