@@ -24,12 +24,15 @@ perf:
 r1:
 	$(SEARCH) C 1.sufr
 
-testfiles: s1 s1s s1n s2 s2n s2s s2ns s3 abba
+testfiles: s1 s1d s1s s1n s2 s2n s2s s2ns s3 abba
 	cp [1-3]*.sufr sufr/tests/expected/
 	cp abba.sufr libsufr/tests/inputs/
 
 s1:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1.sufr
+
+s1d:
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --sequence-delimiter 'N' -o 1d.sufr
 
 s1s:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1s.sufr --ignore-softmask

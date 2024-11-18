@@ -11,18 +11,33 @@ const SEQ3: &str = "tests/inputs/3.fa";
 struct CreateArgs {
     allow_ambiguity: bool,
     ignore_softmask: bool,
+    sequence_delimiter: Option<char>,
 }
 
 // --------------------------------------------------
-fn create(input_file: &str, expected_file: &str, create_args: CreateArgs) -> Result<()> {
+fn create(
+    input_file: &str,
+    expected_file: &str,
+    create_args: CreateArgs,
+) -> Result<()> {
     let outfile = NamedTempFile::new()?;
-    let outpath = &outfile.path().to_str().unwrap();
-    let mut args = vec!["create", "--dna", "-o", outpath, input_file];
+    let outpath = &outfile.path().to_string_lossy();
+    let mut args = vec![
+        "create".to_string(),
+        "--dna".to_string(),
+        "-o".to_string(),
+        outpath.to_string(),
+        input_file.to_string(),
+    ];
     if create_args.allow_ambiguity {
-        args.push("--allow-ambiguity");
+        args.push("--allow-ambiguity".to_string());
     }
     if create_args.ignore_softmask {
-        args.push("--ignore-softmask");
+        args.push("--ignore-softmask".to_string());
+    }
+    if let Some(delim) = create_args.sequence_delimiter {
+        let mut tmp = vec!["--sequence-delimiter".to_string(), delim.to_string()];
+        args.append(&mut tmp);
     }
     let output = Command::cargo_bin(PRG)?.args(args).output().expect("fail");
 
@@ -40,7 +55,7 @@ fn create(input_file: &str, expected_file: &str, create_args: CreateArgs) -> Res
 // --------------------------------------------------
 fn check(filename: &str) -> Result<()> {
     let output = Command::cargo_bin(PRG)?
-        .args(&["check", filename])
+        .args(["check", filename])
         .output()
         .expect("fail");
 
@@ -66,49 +81,88 @@ fn create_empty_dies() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn create_seq1() -> Result<()> {
-    let args = CreateArgs { allow_ambiguity: false, ignore_softmask: false };
+    let args = CreateArgs {
+        allow_ambiguity: false,
+        ignore_softmask: false,
+        sequence_delimiter: None,
+    };
     create(SEQ1, "tests/expected/1.sufr", args)
 }
 
 // --------------------------------------------------
 #[test]
+fn create_seq1_sequence_delimiter() -> Result<()> {
+    let args = CreateArgs {
+        allow_ambiguity: false,
+        ignore_softmask: false,
+        sequence_delimiter: Some('N'),
+    };
+    create(SEQ1, "tests/expected/1d.sufr", args)
+}
+
+// --------------------------------------------------
+#[test]
 fn create_seq1_allow_ambiguity() -> Result<()> {
-    let args = CreateArgs { allow_ambiguity: true, ignore_softmask: false };
+    let args = CreateArgs {
+        allow_ambiguity: true,
+        ignore_softmask: false,
+        sequence_delimiter: None,
+    };
     create(SEQ1, "tests/expected/1n.sufr", args)
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2() -> Result<()> {
-    let args = CreateArgs { allow_ambiguity: false, ignore_softmask: false };
+    let args = CreateArgs {
+        allow_ambiguity: false,
+        ignore_softmask: false,
+        sequence_delimiter: None,
+    };
     create(SEQ2, "tests/expected/2.sufr", args)
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2_allow_ambiguity() -> Result<()> {
-    let args = CreateArgs { allow_ambiguity: true, ignore_softmask: false };
+    let args = CreateArgs {
+        allow_ambiguity: true,
+        ignore_softmask: false,
+        sequence_delimiter: None,
+    };
     create(SEQ2, "tests/expected/2n.sufr", args)
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2_ignore_softmask() -> Result<()> {
-    let args = CreateArgs { allow_ambiguity: false, ignore_softmask: true };
+    let args = CreateArgs {
+        allow_ambiguity: false,
+        ignore_softmask: true,
+        sequence_delimiter: None,
+    };
     create(SEQ2, "tests/expected/2s.sufr", args)
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2_allow_ambiguity_ignore_softmask() -> Result<()> {
-    let args = CreateArgs { allow_ambiguity: true, ignore_softmask: true };
+    let args = CreateArgs {
+        allow_ambiguity: true,
+        ignore_softmask: true,
+        sequence_delimiter: None,
+    };
     create(SEQ2, "tests/expected/2ns.sufr", args)
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq3() -> Result<()> {
-    let args = CreateArgs { allow_ambiguity: false, ignore_softmask: false };
+    let args = CreateArgs {
+        allow_ambiguity: false,
+        ignore_softmask: false,
+        sequence_delimiter: None,
+    };
     create(SEQ3, "tests/expected/3.sufr", args)
 }
 

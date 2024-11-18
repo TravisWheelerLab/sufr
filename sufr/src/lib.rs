@@ -105,6 +105,10 @@ pub struct CreateArgs {
     /// Ignore suffixes in soft-mask/lowercase regions
     #[arg(short, long)]
     pub ignore_softmask: bool,
+
+    /// Character to separate sequences
+    #[arg(short('D'), long, default_value = "%", value_name = "DELIM")]
+    pub sequence_delimiter: char,
 }
 
 #[derive(Debug, Parser)]
@@ -266,7 +270,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     // Read sequence input
     let now = Instant::now();
-    let sequence_delimiter = if args.is_dna { b'N' } else { b'X' };
+    let sequence_delimiter = args.sequence_delimiter as u8;
     let seq_data = read_sequence_file(&args.input, sequence_delimiter)?;
     let text_len = seq_data.seq.len();
     let num_fmt = NumberFormat::new();

@@ -267,7 +267,7 @@ $ sufr ls 1.sufr 2-3 -l 3
  3  7  0: CGT
 ```
 
-### Locate a suffix's positions
+### Locate/count a suffix's positions
 
 Use the `locate` command to find the positions of a given suffix:
 
@@ -295,6 +295,28 @@ For instance, the suffix `GT` is found at positions 6 and 0:
 $ sufr lo 1.sufr GT
 GT: 8 2
 ```
+
+Use the `-c|--count` option to show the count of suffix:
+
+```
+$ sufr lo 1.sufr GT -c
+GT: 2
+```
+
+Suffixes not found will be printed to `STDERR`:
+
+```
+$ sufr lo 1.sufr AC XX GT 2>err
+AC: 6 0
+GT: 8 2
+
+$ cat err
+XX: not found
+```
+
+By default, the entire suffix array will be loaded into memory.
+If your machine lacks suffixient resources, you can use the `-m|--max-query-len` option to create a down-sampled suffix array.
+Or use the `-l|--low-memory` option to search the suffix array on disk, which is slower but requires only enough memory to hold the original text/sequences.
 
 ### Extract suffixes from a sufr file
 
