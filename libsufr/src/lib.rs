@@ -88,6 +88,7 @@ pub struct Locate {
     pub queries: Vec<String>,
     pub max_query_len: Option<usize>,
     pub low_memory: bool,
+    //pub count_only: bool,
 }
 
 // --------------------------------------------------
@@ -97,6 +98,7 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     pub query: String,
+    //pub count: usize,
     pub suffixes: Vec<T>,
     pub ranks: Range<usize>,
 }
@@ -1373,18 +1375,6 @@ where
         let n = if self.query_low_memory {
             self.num_suffixes.to_usize()
         } else {
-            //let max_of_queries =
-            //    args.queries.iter().map(|v| v.len()).max().unwrap_or(0);
-            //let max_query_len = match args.max_query_len {
-            //    Some(val) => val,
-            //    _ => {
-            //        if self.max_query_len > T::default() {
-            //            min(self.max_query_len.to_usize(), max_of_queries)
-            //        } else {
-            //            max_of_queries
-            //        }
-            //    }
-            //};
             let max_query_len =
                 args.max_query_len.unwrap_or(self.max_query_len.to_usize());
             self.set_suffix_array_mem(max_query_len)?;

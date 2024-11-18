@@ -52,7 +52,10 @@ pub enum Command {
     /// List the suffix array from a sufr file
     List(ListArgs),
 
-    /// Locate for sequences in a sufr file
+    /// Count occurrences of sequences in a sufr file
+    Count(CountArgs),
+
+    /// Locate sequences in a sufr file
     Locate(LocateArgs),
 
     /// Summarize sufr file
@@ -64,7 +67,7 @@ pub enum Command {
 pub struct CheckArgs {
     /// Sufr file
     #[arg(value_name = "SUFR")]
-    pub filename: String,
+    pub file: String,
 
     /// List errors
     #[arg(short, long)]
@@ -132,7 +135,7 @@ pub struct ExtractArgs {
 
     /// Sufr file
     #[arg(value_name = "SUFR")]
-    pub filename: String,
+    pub file: String,
 
     /// Suffixes to extract
     #[arg(value_name = "SUFFIX", num_args(1..))]
@@ -160,6 +163,30 @@ pub struct ListArgs {
 }
 
 #[derive(Debug, Parser)]
+#[command(about, alias = "co")]
+pub struct CountArgs {
+    /// Maximum query length
+    #[arg(short, long, value_name = "LEN")]
+    pub max_query_len: Option<usize>,
+
+    /// Output
+    #[arg(short, long, value_name = "OUT")]
+    pub output: Option<String>,
+
+    /// Low-memory
+    #[arg(short, long)]
+    pub low_memory: bool,
+
+    /// Sufr file
+    #[arg(value_name = "SUFR")]
+    pub file: String,
+
+    /// Query
+    #[arg(value_name = "QUERY", required = true)]
+    pub query: Vec<String>,
+}
+
+#[derive(Debug, Parser)]
 #[command(about, alias = "lo")]
 pub struct LocateArgs {
     /// Maximum query length
@@ -170,13 +197,13 @@ pub struct LocateArgs {
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
 
-    /// Show count of suffixes
-    #[arg(short, long)]
-    pub count: bool,
-
     /// Low-memory
     #[arg(short, long)]
     pub low_memory: bool,
+
+    /// Show absolute position in text
+    #[arg(short, long)]
+    pub abs: bool,
 
     /// Sufr file
     #[arg(value_name = "SUFR")]
@@ -216,12 +243,12 @@ impl ValueEnum for LogLevel {
 
 // --------------------------------------------------
 pub fn check(args: &CheckArgs) -> Result<()> {
-    let text_len = read_text_length(&args.filename)? as u64;
+    let text_len = read_text_length(&args.file)? as u64;
     if text_len < u32::MAX as u64 {
-        let sufr_file: SufrFile<u32> = SufrFile::read(&args.filename)?;
+        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file)?;
         _check(sufr_file, args)
     } else {
-        let sufr_file: SufrFile<u64> = SufrFile::read(&args.filename)?;
+        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file)?;
         _check(sufr_file, args)
     }
 }
@@ -253,6 +280,50 @@ where
         }
     }
     println!("Finished checking in {:?}.", now.elapsed());
+    Ok(())
+}
+
+// --------------------------------------------------
+pub fn count(args: &CountArgs) -> Result<()> {
+    let text_len = read_text_length(&args.file)? as u64;
+    if text_len < u32::MAX as u64 {
+        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file)?;
+        _count(sufr_file, args)
+    } else {
+        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file)?;
+        _count(sufr_file, args)
+    }
+}
+
+// --------------------------------------------------
+pub fn _count<T>(mut sufr_file: SufrFile<T>, args: &CountArgs) -> Result<()>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+{
+    let mut output: Box<dyn Write> = match &args.output {
+        Some(out_name) => Box::new(File::create(out_name)?),
+        _ => Box::new(io::stdout()),
+    };
+
+    let queries = parse_queries(&args.query)?;
+    let num_queries = queries.len();
+    let now = Instant::now();
+    let loc_args = Locate {
+        queries,
+        max_query_len: args.max_query_len,
+        low_memory: args.low_memory,
+    };
+
+    for res in sufr_file.locate(loc_args)? {
+        match res {
+            Err(e) => eprintln!("{e}: not found"),
+            Ok(res) => {
+                writeln!(output, "{}: {}", res.query, res.suffixes.len())?;
+            }
+        }
+    }
+
+    info!("Locate of {} finished in {:?}", num_queries, now.elapsed());
     Ok(())
 }
 
@@ -330,15 +401,15 @@ where
 
 // --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
-    let text_len = read_text_length(&args.filename)? as u64;
+    let text_len = read_text_length(&args.file)? as u64;
     if text_len < u32::MAX as u64 {
         let now = Instant::now();
-        let sufr_file: SufrFile<u32> = SufrFile::read(&args.filename)?;
+        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _extract(sufr_file, args)
     } else {
         let now = Instant::now();
-        let sufr_file: SufrFile<u64> = SufrFile::read(&args.filename)?;
+        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _extract(sufr_file, args)
     }
@@ -491,6 +562,27 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
+fn parse_queries(queries: &[String]) -> Result<Vec<String>> {
+    let whitespace = Regex::new(r"\s+").unwrap();
+    let mut ret = vec![];
+    for query in queries {
+        if Path::new(&query).exists() {
+            let contents = fs::read_to_string(query)?;
+            let mut vals: Vec<String> = whitespace
+                .split(&contents)
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string())
+                .collect();
+            ret.append(&mut vals);
+        } else {
+            ret.push(query.to_string());
+        }
+    }
+
+    Ok(ret)
+}
+
+// --------------------------------------------------
 pub fn _locate<T>(mut sufr_file: SufrFile<T>, args: &LocateArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
@@ -500,22 +592,7 @@ where
         _ => Box::new(io::stdout()),
     };
 
-    let whitespace = Regex::new(r"\s+").unwrap();
-    let mut queries = vec![];
-    for query in &args.query {
-        if Path::new(&query).exists() {
-            let contents = fs::read_to_string(query)?;
-            let mut vals: Vec<String> = whitespace
-                .split(&contents)
-                .filter(|v| !v.is_empty())
-                .map(|v| v.to_string())
-                .collect();
-            queries.append(&mut vals);
-        } else {
-            queries.push(query.to_string());
-        }
-    }
-
+    let queries = parse_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
     let loc_args = Locate {
@@ -523,24 +600,58 @@ where
         max_query_len: args.max_query_len,
         low_memory: args.low_memory,
     };
+    let seq_starts = sufr_file.sequence_starts.clone();
+    let seq_names = sufr_file.headers.clone();
 
     for res in sufr_file.locate(loc_args)? {
         match res {
             Err(e) => eprintln!("{e}: not found"),
             Ok(res) => {
-                let show = if args.count {
-                    res.suffixes.len().to_string()
+                if args.abs {
+                    writeln!(
+                        output,
+                        "{}: {}",
+                        res.query,
+                        res.suffixes
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )?;
                 } else {
-                    //let (start, end) = res
-                    //    .ranks
-                    //    .map_or(("", ""), |r| (&r.start.to_string(), &r.end.to_string()));
-                    res.suffixes
+                    let mut locs: Vec<(String, usize)> = res
+                        .suffixes
                         .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ")
+                        .map(|&suf| {
+                            let i = seq_starts.partition_point(|&val| val <= suf) - 1;
+                            (seq_names[i].clone(), (suf - seq_starts[i]).to_usize())
+                        })
+                        .collect();
+
+                    // Sort by name then position
+                    locs.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+                    writeln!(output, "{}", res.query)?;
+                    let mut prev_seq = "".to_string();
+                    let mut buffer = vec![];
+                    for (seq, pos) in locs {
+                        if seq != prev_seq {
+                            if !buffer.is_empty() {
+                                writeln!(output, "{prev_seq} {}", buffer.join(", "))?;
+                            }
+
+                            prev_seq = seq;
+                            buffer = vec![];
+                        }
+                        buffer.push(pos.to_string());
+                    }
+
+                    if !buffer.is_empty() {
+                        writeln!(output, "{prev_seq} {}", buffer.join(", "))?;
+                    }
+
+                    writeln!(output, "//")?;
                 };
-                writeln!(output, "{}: {show}", res.query)?;
             }
         }
     }

@@ -29,12 +29,16 @@ fn run(args: Cli) -> Result<()> {
         .init();
 
     match &args.command {
-        Some(Command::Create(args)) => {
-            sufr::create(args)?;
-            Ok(())
-        }
         Some(Command::Check(args)) => {
             sufr::check(args)?;
+            Ok(())
+        }
+        Some(Command::Count(args)) => {
+            sufr::count(args)?;
+            Ok(())
+        }
+        Some(Command::Create(args)) => {
+            sufr::create(args)?;
             Ok(())
         }
         Some(Command::Extract(args)) => {

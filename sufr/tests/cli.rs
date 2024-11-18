@@ -7,6 +7,8 @@ const PRG: &str = "sufr";
 const SEQ1: &str = "tests/inputs/1.fa";
 const SEQ2: &str = "tests/inputs/2.fa";
 const SEQ3: &str = "tests/inputs/3.fa";
+const SUFR1: &str = "tests/inputs/1.sufr";
+const SUFR2: &str = "tests/inputs/2.sufr";
 
 struct CreateArgs {
     allow_ambiguity: bool,
@@ -171,6 +173,28 @@ fn create_seq3() -> Result<()> {
 #[test]
 fn check_seq1() -> Result<()> {
     check("tests/expected/1.sufr")
+}
+
+// --------------------------------------------------
+fn locate(filename: &str, val: &str, expected: &str) -> Result<()> {
+    let output = Command::cargo_bin(PRG)?
+        .args(["locate", filename, val])
+        .output()
+        .expect("fail");
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+
+    assert_eq!(stdout, expected);
+
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_seq1() -> Result<()> {
+    locate(SEQ2, "AC", "AC: 13 4 9 0")
 }
 
 // --------------------------------------------------
