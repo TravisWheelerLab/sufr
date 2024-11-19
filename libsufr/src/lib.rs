@@ -962,16 +962,6 @@ pub struct SufrFile<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
-    pub suffix_array_mem: Vec<T>,
-
-}
-
-// --------------------------------------------------
-#[derive(Debug)]
-pub struct SufrFile<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
     pub filename: String,
     pub version: u8,
     pub is_dna: bool,
