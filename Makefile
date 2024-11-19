@@ -4,6 +4,7 @@ ELEGANS = ../data/elegans.fa
 SEQ1  = sufr/tests/inputs/1.fa
 SEQ2  = sufr/tests/inputs/2.fa
 SEQ3  = sufr/tests/inputs/3.fa
+SMOL  = libsufr/tests/inputs/smol.fa
 ABBA  = libsufr/tests/inputs/abba.fa
 SUFR  = ./target/release/sufr
 
@@ -27,6 +28,10 @@ r1:
 testfiles: s1 s1s s1n s2 s2d s2n s2s s2ns s3 abba
 	cp [1-3]*.sufr sufr/tests/expected/
 	cp abba.sufr libsufr/tests/inputs/
+
+
+smol:
+	$(CREATE_DEBUG) $(SMOL) --dna
 
 s1:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1.sufr

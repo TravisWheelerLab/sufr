@@ -962,6 +962,16 @@ pub struct SufrFile<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    pub suffix_array_mem: Vec<T>,
+
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
+pub struct SufrFile<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
     pub filename: String,
     pub version: u8,
     pub is_dna: bool,
@@ -1410,9 +1420,7 @@ where
                         let (start_rank, end_rank) = (start, end + 1);
                         // For low-memory, go to disk
                         let suffixes = if self.suffix_array_mem.is_empty() {
-                            (start_rank..end_rank)
-                                .filter_map(|rank| self.suffix_array_file.get(rank))
-                                .collect::<Vec<_>>()
+                            self.suffix_array_file.get_range(start_rank..end_rank)?
                         } else {
                             // Otherwise, get from memory
                             self.suffix_array_mem[start_rank..end_rank].to_vec()
