@@ -1,5 +1,6 @@
 use anyhow::Result;
 use assert_cmd::Command;
+use pretty_assertions::assert_eq;
 use std::fs;
 use tempfile::NamedTempFile;
 
@@ -7,21 +8,21 @@ const PRG: &str = "sufr";
 const SEQ1: &str = "tests/inputs/1.fa";
 const SEQ2: &str = "tests/inputs/2.fa";
 const SEQ3: &str = "tests/inputs/3.fa";
-const SUFR1: &str = "tests/inputs/1.sufr";
-const SUFR2: &str = "tests/inputs/2.sufr";
+const SUFR2: &str = "tests/expected/2.sufr";
 
-struct CreateArgs {
+struct CreateOptions {
     allow_ambiguity: bool,
     ignore_softmask: bool,
     sequence_delimiter: Option<char>,
 }
 
+struct LocateOptions {
+    queries: Vec<String>,
+    absolute: bool,
+}
+
 // --------------------------------------------------
-fn create(
-    input_file: &str,
-    expected_file: &str,
-    create_args: CreateArgs,
-) -> Result<()> {
+fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<()> {
     let outfile = NamedTempFile::new()?;
     let outpath = &outfile.path().to_string_lossy();
     let mut args = vec![
@@ -31,16 +32,20 @@ fn create(
         outpath.to_string(),
         input_file.to_string(),
     ];
-    if create_args.allow_ambiguity {
+
+    if opts.allow_ambiguity {
         args.push("--allow-ambiguity".to_string());
     }
-    if create_args.ignore_softmask {
+
+    if opts.ignore_softmask {
         args.push("--ignore-softmask".to_string());
     }
-    if let Some(delim) = create_args.sequence_delimiter {
+
+    if let Some(delim) = opts.sequence_delimiter {
         let mut tmp = vec!["--sequence-delimiter".to_string(), delim.to_string()];
         args.append(&mut tmp);
     }
+
     let output = Command::cargo_bin(PRG)?.args(args).output().expect("fail");
 
     assert!(output.status.success());
@@ -83,90 +88,113 @@ fn create_empty_dies() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn create_seq1() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: false,
-        ignore_softmask: false,
-        sequence_delimiter: None,
-    };
-    create(SEQ1, "tests/expected/1.sufr", args)
+    create(
+        SEQ1,
+        "tests/expected/1.sufr",
+        CreateOptions {
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+        },
+    )
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq1_allow_ambiguity() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: true,
-        ignore_softmask: false,
-        sequence_delimiter: None,
-    };
-    create(SEQ1, "tests/expected/1n.sufr", args)
+    create(
+        SEQ1,
+        "tests/expected/1n.sufr",
+        CreateOptions {
+            allow_ambiguity: true,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+        },
+    )
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: false,
-        ignore_softmask: false,
-        sequence_delimiter: None,
-    };
-    create(SEQ2, "tests/expected/2.sufr", args)
+    create(
+        SEQ2,
+        "tests/expected/2.sufr",
+        CreateOptions {
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+        },
+    )
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2_sequence_delimiter() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: false,
-        ignore_softmask: false,
-        sequence_delimiter: Some('N'),
-    };
-    create(SEQ2, "tests/expected/2d.sufr", args)
+    create(
+        SEQ2,
+        "tests/expected/2d.sufr",
+        CreateOptions {
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_delimiter: Some('N'),
+        },
+    )
 }
-
 
 // --------------------------------------------------
 #[test]
 fn create_seq2_allow_ambiguity() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: true,
-        ignore_softmask: false,
-        sequence_delimiter: None,
-    };
-    create(SEQ2, "tests/expected/2n.sufr", args)
+    create(
+        SEQ2,
+        "tests/expected/2n.sufr",
+        CreateOptions {
+            allow_ambiguity: true,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+        },
+    )
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2_ignore_softmask() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: false,
-        ignore_softmask: true,
-        sequence_delimiter: None,
-    };
-    create(SEQ2, "tests/expected/2s.sufr", args)
+    create(
+        SEQ2,
+        "tests/expected/2s.sufr",
+        CreateOptions {
+            allow_ambiguity: false,
+            ignore_softmask: true,
+            sequence_delimiter: None,
+        },
+    )
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq2_allow_ambiguity_ignore_softmask() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: true,
-        ignore_softmask: true,
-        sequence_delimiter: None,
-    };
-    create(SEQ2, "tests/expected/2ns.sufr", args)
+    create(
+        SEQ2,
+        "tests/expected/2ns.sufr",
+        CreateOptions {
+            allow_ambiguity: true,
+            ignore_softmask: true,
+            sequence_delimiter: None,
+        },
+    )
 }
 
 // --------------------------------------------------
 #[test]
 fn create_seq3() -> Result<()> {
-    let args = CreateArgs {
-        allow_ambiguity: false,
-        ignore_softmask: false,
-        sequence_delimiter: None,
-    };
-    create(SEQ3, "tests/expected/3.sufr", args)
+    create(
+        SEQ3,
+        "tests/expected/3.sufr",
+        CreateOptions {
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+        },
+    )
 }
 
 // --------------------------------------------------
@@ -176,11 +204,18 @@ fn check_seq1() -> Result<()> {
 }
 
 // --------------------------------------------------
-fn locate(filename: &str, val: &str, expected: &str) -> Result<()> {
-    let output = Command::cargo_bin(PRG)?
-        .args(["locate", filename, val])
-        .output()
-        .expect("fail");
+fn locate(filename: &str, opts: LocateOptions, expected: &str) -> Result<()> {
+    let mut args = vec!["locate".to_string(), filename.to_string()];
+
+    if opts.absolute {
+        args.push("-a".to_string());
+    }
+
+    for query in opts.queries {
+        args.push(query.to_string());
+    }
+
+    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
 
     assert!(output.status.success());
 
@@ -193,30 +228,26 @@ fn locate(filename: &str, val: &str, expected: &str) -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn locate_seq1() -> Result<()> {
-    locate(SEQ2, "AC", "AC: 13 4 9 0")
+fn locate_seq1_relative() -> Result<()> {
+    locate(
+        SUFR2,
+        LocateOptions {
+            queries: vec!["AC".to_string(), "GT".to_string()],
+            absolute: false,
+        },
+        "AC\nABC 0,4\nDEF 0,4\n//\nGT\nABC 2,6\nDEF 2,6\n//\n",
+    )
 }
 
 // --------------------------------------------------
-//#[test]
-//fn read_input1_1_10() -> Result<()> {
-//    read(SEQ1, SEQ1_SA, "1-10", "tests/expected/seq1.read.1-10.out")
-//}
-
-// --------------------------------------------------
-//#[test]
-//fn read_input1_1_5() -> Result<()> {
-//    read(SEQ1, SEQ1_SA, "1-5", "tests/expected/seq1.read.1-5.out")
-//}
-
-// --------------------------------------------------
-//#[test]
-//fn read_input1_5_10() -> Result<()> {
-//    read(SEQ1, SEQ1_SA, "5-10", "tests/expected/seq1.read.5-10.out")
-//}
-
-// --------------------------------------------------
-//#[test]
-//fn check_input1() -> Result<()> {
-//    check(SEQ1, SEQ1_SA)
-//}
+#[test]
+fn locate_seq1_absolute() -> Result<()> {
+    locate(
+        SUFR2,
+        LocateOptions {
+            queries: vec!["AC".to_string(), "GT".to_string()],
+            absolute: true,
+        },
+        "AC 13 4 9 0\nGT 15 6 11 2\n",
+    )
+}

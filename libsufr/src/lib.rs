@@ -88,7 +88,6 @@ pub struct Locate {
     pub queries: Vec<String>,
     pub max_query_len: Option<usize>,
     pub low_memory: bool,
-    //pub count_only: bool,
 }
 
 // --------------------------------------------------
@@ -98,9 +97,18 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     pub query: String,
-    //pub count: usize,
-    pub suffixes: Vec<T>,
+    pub positions: Vec<LocateResultPosition<T>>,
     pub ranks: Range<usize>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct LocateResultPosition<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    pub suffix: T,
+    pub sequence_name: String,
+    pub sequence_position: T,
 }
 
 // --------------------------------------------------
@@ -1380,6 +1388,8 @@ where
             self.set_suffix_array_mem(max_query_len)?;
             self.suffix_array_mem.len()
         };
+        let seq_starts = self.sequence_starts.clone();
+        let seq_names = self.headers.clone();
 
         let now = Instant::now();
         let res: Vec<_> = args
@@ -1428,9 +1438,22 @@ where
                         (suffixes, start_rank..end_rank)
                     };
 
+                    let positions: Vec<_> = suffixes
+                        .iter()
+                        .map(|&suffix| {
+                            let i =
+                                seq_starts.partition_point(|&val| val <= suffix) - 1;
+                            LocateResultPosition {
+                                suffix,
+                                sequence_name: seq_names[i].clone(),
+                                sequence_position: suffix - seq_starts[i],
+                            }
+                        })
+                        .collect();
+
                     Ok(LocateResult {
                         query: query.to_string(),
-                        suffixes,
+                        positions,
                         ranks,
                     })
                 } else {
@@ -1619,7 +1642,7 @@ fn usize_to_bytes(value: usize) -> Vec<u8> {
 mod tests {
     use super::{
         read_sequence_file, read_text_length, usize_to_bytes, Locate, LocateResult,
-        SufrBuilder, SufrBuilderArgs, SufrFile,
+        LocateResultPosition, SufrBuilder, SufrBuilderArgs, SufrFile,
     };
     use crate::OUTFILE_VERSION;
     use anyhow::Result;
@@ -1827,8 +1850,44 @@ mod tests {
                 res,
                 &LocateResult {
                     query: "A".to_string(),
-                    suffixes: vec![0, 12, 10, 1, 3, 5, 7],
                     ranks: 1..8,
+                    positions: vec![
+                        LocateResultPosition {
+                            suffix: 0,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 0,
+                        },
+                        LocateResultPosition {
+                            suffix: 12,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 12,
+                        },
+                        LocateResultPosition {
+                            suffix: 10,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 10,
+                        },
+                        LocateResultPosition {
+                            suffix: 1,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 1,
+                        },
+                        LocateResultPosition {
+                            suffix: 3,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 3,
+                        },
+                        LocateResultPosition {
+                            suffix: 5,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 5,
+                        },
+                        LocateResultPosition {
+                            suffix: 7,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 7,
+                        },
+                    ]
                 }
             );
         }
@@ -1850,8 +1909,44 @@ mod tests {
                 res,
                 &LocateResult {
                     query: "B".to_string(),
-                    suffixes: vec![13, 11, 9, 2, 4, 6, 8],
                     ranks: 8..15,
+                    positions: vec![
+                        LocateResultPosition {
+                            suffix: 13,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 13,
+                        },
+                        LocateResultPosition {
+                            suffix: 11,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 11,
+                        },
+                        LocateResultPosition {
+                            suffix: 9,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 9,
+                        },
+                        LocateResultPosition {
+                            suffix: 2,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 2,
+                        },
+                        LocateResultPosition {
+                            suffix: 4,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 4,
+                        },
+                        LocateResultPosition {
+                            suffix: 6,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 6,
+                        },
+                        LocateResultPosition {
+                            suffix: 8,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 8,
+                        },
+                    ]
                 }
             );
         }
@@ -1873,8 +1968,29 @@ mod tests {
                 res,
                 &LocateResult {
                     query: "ABAB".to_string(),
-                    suffixes: vec![10, 1, 3, 5],
                     ranks: 3..7,
+                    positions: vec![
+                        LocateResultPosition {
+                            suffix: 10,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 10,
+                        },
+                        LocateResultPosition {
+                            suffix: 1,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 1,
+                        },
+                        LocateResultPosition {
+                            suffix: 3,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 3,
+                        },
+                        LocateResultPosition {
+                            suffix: 5,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 5,
+                        },
+                    ]
                 }
             );
         }
@@ -1896,8 +2012,14 @@ mod tests {
                 res,
                 &LocateResult {
                     query: "ABABB".to_string(),
-                    suffixes: vec![5],
-                    ranks: 6..7
+                    ranks: 6..7,
+                    positions: vec![
+                        LocateResultPosition {
+                            suffix: 5,
+                            sequence_name: "1".to_string(),
+                            sequence_position: 5,
+                        },
+                    ]
                 }
             );
         }

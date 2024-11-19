@@ -305,7 +305,7 @@ where
         _ => Box::new(io::stdout()),
     };
 
-    let queries = parse_queries(&args.query)?;
+    let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
     let loc_args = Locate {
@@ -318,7 +318,7 @@ where
         match res {
             Err(e) => eprintln!("{e}: not found"),
             Ok(res) => {
-                writeln!(output, "{}: {}", res.query, res.suffixes.len())?;
+                writeln!(output, "{}: {}", res.query, res.positions.len())?;
             }
         }
     }
@@ -562,7 +562,7 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-fn parse_queries(queries: &[String]) -> Result<Vec<String>> {
+fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
     let whitespace = Regex::new(r"\s+").unwrap();
     let mut ret = vec![];
     for query in queries {
@@ -592,7 +592,7 @@ where
         _ => Box::new(io::stdout()),
     };
 
-    let queries = parse_queries(&args.query)?;
+    let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
     let loc_args = Locate {
@@ -600,54 +600,47 @@ where
         max_query_len: args.max_query_len,
         low_memory: args.low_memory,
     };
-    let seq_starts = sufr_file.sequence_starts.clone();
-    let seq_names = sufr_file.headers.clone();
 
     for res in sufr_file.locate(loc_args)? {
         match res {
             Err(e) => eprintln!("{e}: not found"),
-            Ok(res) => {
+            Ok(mut res) => {
                 if args.abs {
                     writeln!(
                         output,
-                        "{}: {}",
+                        "{} {}",
                         res.query,
-                        res.suffixes
-                            .iter()
-                            .map(|s| s.to_string())
+                        res.positions
+                            .into_iter()
+                            .map(|p| p.suffix.to_string())
                             .collect::<Vec<_>>()
                             .join(" ")
                     )?;
                 } else {
-                    let mut locs: Vec<(String, usize)> = res
-                        .suffixes
-                        .iter()
-                        .map(|&suf| {
-                            let i = seq_starts.partition_point(|&val| val <= suf) - 1;
-                            (seq_names[i].clone(), (suf - seq_starts[i]).to_usize())
-                        })
-                        .collect();
-
                     // Sort by name then position
-                    locs.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+                    res.positions.sort_by(|a, b| {
+                        a.sequence_name
+                            .cmp(&b.sequence_name)
+                            .then(a.sequence_position.cmp(&b.sequence_position))
+                    });
 
                     writeln!(output, "{}", res.query)?;
                     let mut prev_seq = "".to_string();
                     let mut buffer = vec![];
-                    for (seq, pos) in locs {
-                        if seq != prev_seq {
+                    for pos in res.positions {
+                        if pos.sequence_name != prev_seq {
                             if !buffer.is_empty() {
-                                writeln!(output, "{prev_seq} {}", buffer.join(", "))?;
+                                writeln!(output, "{prev_seq} {}", buffer.join(","))?;
                             }
 
-                            prev_seq = seq;
+                            prev_seq = pos.sequence_name;
                             buffer = vec![];
                         }
-                        buffer.push(pos.to_string());
+                        buffer.push(pos.sequence_position.to_string());
                     }
 
                     if !buffer.is_empty() {
-                        writeln!(output, "{prev_seq} {}", buffer.join(", "))?;
+                        writeln!(output, "{prev_seq} {}", buffer.join(","))?;
                     }
 
                     writeln!(output, "//")?;
