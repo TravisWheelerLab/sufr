@@ -20,7 +20,8 @@ Commands:
   check      Check sufr file for correctness
   extract    Extract suffixes from a sufr file
   list       List the suffix array from a sufr file
-  locate     Locate for sequences in a sufr file
+  count      Count occurrences of sequences in a sufr file
+  locate     Locate sequences in a sufr file
   summarize  Summarize sufr file
   help       Print this message or the help of the given subcommand(s)
 
@@ -46,7 +47,8 @@ Commands:
   check      Check sufr file for correctness
   extract    Extract suffixes from a sufr file
   list       List the suffix array from a sufr file
-  locate     Locate for sequences in a sufr file
+  count      Count occurrences of sequences in a sufr file
+  locate     Locate sequences in a sufr file
   summarize  Summarize sufr file
   help       Print this message or the help of the given subcommand(s)
 
@@ -81,6 +83,7 @@ Options:
   -d, --dna                         Input is DNA
   -a, --allow-ambiguity             Allow suffixes starting with ambiguity codes
   -i, --ignore-softmask             Ignore suffixes in soft-mask/lowercase regions
+  -D, --sequence-delimiter <DELIM>  Character to separate sequences [default: %]
   -h, --help                        Print help
 ```
 
@@ -103,7 +106,7 @@ acgtacgt
 
 The algorithm works as follows.
 First, read the input sequences into a string of `u8` bytes and uppercase the characters.
-Each sequence is separated by a character (`N` for DNA and `X` otherwise).
+Each sequence is separated by a specified character (`%` by default).
 A final dollar sign (`$`) is appended to the end of the input text.
 For instance, the preceding sequence has the following bytes and suffix positions:
 

@@ -101,6 +101,7 @@ where
     pub ranks: Range<usize>,
 }
 
+// --------------------------------------------------
 #[derive(Debug, PartialEq)]
 pub struct LocateResultPosition<T>
 where
