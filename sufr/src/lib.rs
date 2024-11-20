@@ -3,8 +3,8 @@ use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_sequence_file, read_text_length, FromUsize, Int, Locate, SufrBuilder,
-    SufrBuilderArgs, SufrFile,
+    read_sequence_file, read_text_length, suffix_search::SearchOptions, FromUsize, Int,
+    SufrBuilder, SufrBuilderArgs, SufrFile,
 };
 use log::info;
 use regex::Regex;
@@ -308,18 +308,20 @@ where
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
-    let loc_args = Locate {
+    let loc_args = SearchOptions {
         queries,
         max_query_len: args.max_query_len,
         low_memory: args.low_memory,
+        find_suffixes: false,
     };
 
-    for res in sufr_file.locate(loc_args)? {
-        match res {
-            Err(e) => eprintln!("{e}: not found"),
-            Ok(res) => {
-                writeln!(output, "{}: {}", res.query, res.positions.len())?;
-            }
+    for res in sufr_file.suffix_search(loc_args)? {
+        match res.locations {
+            Some(locs) => {
+                let ranks = locs.ranks;
+                writeln!(output, "{}: {}", res.query, ranks.end - ranks.start)?;
+            },
+            _ => eprintln!("{}: not found", res.query),
         }
     }
 
@@ -546,22 +548,6 @@ where
 }
 
 // --------------------------------------------------
-pub fn locate(args: &LocateArgs) -> Result<()> {
-    let len = read_text_length(&args.file)? as u64;
-    if len < u32::MAX as u64 {
-        let now = Instant::now();
-        let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _locate(sa, args)
-    } else {
-        let now = Instant::now();
-        let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _locate(sa, args)
-    }
-}
-
-// --------------------------------------------------
 fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
     let whitespace = Regex::new(r"\s+").unwrap();
     let mut ret = vec![];
@@ -583,6 +569,22 @@ fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
 }
 
 // --------------------------------------------------
+pub fn locate(args: &LocateArgs) -> Result<()> {
+    let len = read_text_length(&args.file)? as u64;
+    if len < u32::MAX as u64 {
+        let now = Instant::now();
+        let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
+        info!("Read sufr file in {:?}", now.elapsed());
+        _locate(sa, args)
+    } else {
+        let now = Instant::now();
+        let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
+        info!("Read sufr file in {:?}", now.elapsed());
+        _locate(sa, args)
+    }
+}
+
+// --------------------------------------------------
 pub fn _locate<T>(mut sufr_file: SufrFile<T>, args: &LocateArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
@@ -595,57 +597,58 @@ where
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
-    let loc_args = Locate {
+    let loc_args = SearchOptions {
         queries,
         max_query_len: args.max_query_len,
         low_memory: args.low_memory,
+        find_suffixes: true,
     };
 
-    for res in sufr_file.locate(loc_args)? {
-        match res {
-            Err(e) => eprintln!("{e}: not found"),
-            Ok(mut res) => {
-                if args.abs {
-                    writeln!(
-                        output,
-                        "{} {}",
-                        res.query,
-                        res.positions
-                            .into_iter()
-                            .map(|p| p.suffix.to_string())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    )?;
-                } else {
-                    // Sort by name then position
-                    res.positions.sort_by(|a, b| {
-                        a.sequence_name
-                            .cmp(&b.sequence_name)
-                            .then(a.sequence_position.cmp(&b.sequence_position))
-                    });
+    for mut res in sufr_file.locate(loc_args)? {
+        if res.positions.is_empty() {
+            eprintln!("{} not found", res.query);
+            continue;
+        }
 
-                    writeln!(output, "{}", res.query)?;
-                    let mut prev_seq = "".to_string();
-                    let mut buffer = vec![];
-                    for pos in res.positions {
-                        if pos.sequence_name != prev_seq {
-                            if !buffer.is_empty() {
-                                writeln!(output, "{prev_seq} {}", buffer.join(","))?;
-                            }
+        if args.abs {
+            writeln!(
+                output,
+                "{} {}",
+                res.query,
+                res.positions
+                    .into_iter()
+                    .map(|p| p.suffix.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )?;
+        } else {
+            // Sort by name then position
+            res.positions.sort_by(|a, b| {
+                a.sequence_name
+                    .cmp(&b.sequence_name)
+                    .then(a.sequence_position.cmp(&b.sequence_position))
+            });
 
-                            prev_seq = pos.sequence_name;
-                            buffer = vec![];
-                        }
-                        buffer.push(pos.sequence_position.to_string());
-                    }
-
+            writeln!(output, "{}", res.query)?;
+            let mut prev_seq = "".to_string();
+            let mut buffer = vec![];
+            for pos in res.positions {
+                if pos.sequence_name != prev_seq {
                     if !buffer.is_empty() {
                         writeln!(output, "{prev_seq} {}", buffer.join(","))?;
                     }
 
-                    writeln!(output, "//")?;
-                };
+                    prev_seq = pos.sequence_name;
+                    buffer = vec![];
+                }
+                buffer.push(pos.sequence_position.to_string());
             }
+
+            if !buffer.is_empty() {
+                writeln!(output, "{prev_seq} {}", buffer.join(","))?;
+            }
+
+            writeln!(output, "//")?;
         }
     }
 

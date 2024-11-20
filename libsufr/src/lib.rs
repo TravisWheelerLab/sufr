@@ -1,4 +1,8 @@
+mod file_access;
+pub mod suffix_search;
+
 use anyhow::{anyhow, bail, Result};
+use file_access::FileAccess;
 use home::home_dir;
 use log::info;
 use needletail::parse_fastx_file;
@@ -12,12 +16,13 @@ use std::{
     hash::Hash,
     io::{BufWriter, Read, Seek, SeekFrom, Write},
     mem,
-    ops::{Add, Div, Range, Sub},
+    ops::{Add, Div, Sub},
     path::{Path, PathBuf},
     slice,
     sync::{Arc, Mutex},
     time::Instant,
 };
+use suffix_search::{SearchOptions, SearchResult, SuffixSearch};
 use tempfile::NamedTempFile;
 
 const OUTFILE_VERSION: u8 = 4;
@@ -83,22 +88,14 @@ impl FromUsize<u64> for u64 {
 }
 
 // --------------------------------------------------
-#[derive(Debug)]
-pub struct Locate {
-    pub queries: Vec<String>,
-    pub max_query_len: Option<usize>,
-    pub low_memory: bool,
-}
-
-// --------------------------------------------------
 #[derive(Debug, PartialEq)]
 pub struct LocateResult<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    pub query_num: usize,
     pub query: String,
     pub positions: Vec<LocateResultPosition<T>>,
-    pub ranks: Range<usize>,
 }
 
 // --------------------------------------------------
@@ -108,6 +105,7 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     pub suffix: T,
+    pub rank: usize,
     pub sequence_name: String,
     pub sequence_position: T,
 }
@@ -811,153 +809,6 @@ where
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct FileAccess<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    file: File,
-    buffer: Vec<T>,
-    buffer_size: usize,
-    buffer_pos: usize,
-    size: usize,
-    start_position: u64,
-    current_position: u64,
-    end_position: u64,
-    exhausted: bool,
-}
-
-impl<T> FileAccess<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    pub fn new(filename: &str, start: u64, num_elements: usize) -> Result<Self> {
-        let file = File::open(filename)?;
-        let size = num_elements * mem::size_of::<T>();
-        Ok(FileAccess {
-            file,
-            buffer: vec![],
-            buffer_size: 2usize.pow(30),
-            buffer_pos: 0,
-            size,
-            start_position: start,
-            current_position: start,
-            end_position: start + size as u64,
-            exhausted: false,
-        })
-    }
-
-    pub fn reset(&mut self) {
-        self.buffer = vec![];
-        self.buffer_pos = 0;
-        self.current_position = self.start_position;
-        self.exhausted = false;
-    }
-
-    pub fn iter(&mut self) -> FileAccessIter<T> {
-        FileAccessIter { file_access: self }
-    }
-
-    // --------------------------------------------------
-    // TODO: Ignoring lots of Results to return Option
-    pub fn get(&mut self, pos: usize) -> Option<T> {
-        // Don't bother looking for something beyond the end
-        let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
-        if seek < self.end_position {
-            let _ = self.file.seek(SeekFrom::Start(seek));
-            let mut buffer: Vec<u8> = vec![0; mem::size_of::<T>()];
-            let bytes_read = self.file.read(&mut buffer).unwrap();
-            (bytes_read == mem::size_of::<T>()).then(|| {
-                let res = unsafe {
-                    std::slice::from_raw_parts(buffer.as_ptr() as *const _, 1)
-                };
-                res[0]
-            })
-        } else {
-            None
-        }
-    }
-
-    // --------------------------------------------------
-    pub fn get_range(&mut self, range: Range<usize>) -> Result<Vec<T>> {
-        let start = self.start_position as usize + (range.start * mem::size_of::<T>());
-        let end = self.start_position as usize + (range.end * mem::size_of::<T>());
-        let valid = self.start_position as usize..self.end_position as usize;
-        if valid.contains(&start) && valid.contains(&end) {
-            self.file.seek(SeekFrom::Start(start as u64))?;
-            let mut buffer: Vec<u8> = vec![0; end - start];
-            let bytes_read = self.file.read(&mut buffer)?;
-            let num_vals = bytes_read / mem::size_of::<T>();
-            Ok(SufrBuilder::slice_u8_to_vec(&buffer, num_vals))
-        } else {
-            bail!("Invalid range: {range:?}")
-        }
-    }
-}
-
-// --------------------------------------------------
-#[derive(Debug)]
-pub struct FileAccessIter<'a, T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    file_access: &'a mut FileAccess<T>,
-}
-
-impl<T> Iterator for FileAccessIter<'_, T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.file_access.exhausted {
-            None
-        } else {
-            // Fill the buffer
-            if self.file_access.buffer.is_empty()
-                || self.file_access.buffer_pos == self.file_access.buffer.len()
-            {
-                if self.file_access.current_position >= self.file_access.end_position {
-                    self.file_access.exhausted = true;
-                    return None;
-                }
-
-                self.file_access
-                    .file
-                    .seek(SeekFrom::Start(self.file_access.current_position))
-                    .unwrap();
-
-                let bytes_wanted = min(
-                    self.file_access.buffer_size * mem::size_of::<T>(),
-                    (self.file_access.end_position - self.file_access.current_position)
-                        as usize,
-                );
-
-                let mut buffer: Vec<u8> = vec![0; bytes_wanted];
-                self.file_access.file.read_exact(&mut buffer).unwrap();
-                self.file_access.current_position =
-                    self.file_access.file.stream_position().unwrap();
-
-                let num_vals = bytes_wanted / mem::size_of::<T>();
-                self.file_access.buffer =
-                    SufrBuilder::slice_u8_to_vec(&buffer, num_vals);
-                self.file_access.buffer_pos = 0;
-            }
-
-            let val = self
-                .file_access
-                .buffer
-                .get(self.file_access.buffer_pos)
-                .copied();
-
-            self.file_access.buffer_pos += 1;
-            val
-        }
-    }
-}
-
-// --------------------------------------------------
-#[derive(Debug)]
 pub struct SufrFile<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
@@ -1370,18 +1221,21 @@ where
     }
 
     // --------------------------------------------------
-    fn get_suffix(&mut self, pos: usize) -> Option<T> {
-        if self.query_low_memory {
-            self.suffix_array_file.get(pos)
-        } else {
-            self.suffix_array_mem.get(pos).copied()
-        }
-    }
+    //fn get_suffix(&mut self, pos: usize) -> Option<T> {
+    //    if self.query_low_memory {
+    //        self.suffix_array_file.get(pos)
+    //    } else {
+    //        self.suffix_array_mem.get(pos).copied()
+    //    }
+    //}
 
     // --------------------------------------------------
-    pub fn locate(&mut self, args: Locate) -> Result<Vec<Result<LocateResult<T>>>> {
+    pub fn suffix_search(
+        &mut self,
+        args: SearchOptions,
+    ) -> Result<Vec<SearchResult<T>>> {
         self.query_low_memory = args.low_memory;
-        let n = if self.query_low_memory {
+        let _n = if self.query_low_memory {
             self.num_suffixes.to_usize()
         } else {
             let max_query_len =
@@ -1389,176 +1243,162 @@ where
             self.set_suffix_array_mem(max_query_len)?;
             self.suffix_array_mem.len()
         };
-        let seq_starts = self.sequence_starts.clone();
-        let seq_names = self.headers.clone();
 
-        let now = Instant::now();
         let res: Vec<_> = args
             .queries
-            .into_iter()
-            .map(|query| -> Result<LocateResult<T>> {
-                let qry = query.as_bytes();
-
-                if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
-                    let end = self
-                        .suffix_search_last(qry, start, n - 1, n, 0, 0)
-                        .unwrap_or(start);
-
-                    // Rank is empty when we have the full SA in memory
-                    // AND when doing low-memory searches
-                    let (suffixes, ranks) = if self.suffix_array_rank_mem.is_empty() {
-                        let (start_rank, end_rank) = (start, end + 1);
-                        // For low-memory, go to disk
-                        let suffixes = if self.suffix_array_mem.is_empty() {
-                            self.suffix_array_file.get_range(start_rank..end_rank)?
-                        } else {
-                            // Otherwise, get from memory
-                            self.suffix_array_mem[start_rank..end_rank].to_vec()
-                        };
-                        (suffixes, start_rank..end_rank)
-                    } else {
-                        // This is the case for the compressed/in-memory SA
-                        let start_rank = self.suffix_array_rank_mem[start];
-                        let end_rank = if start == end {
-                            if start == self.suffix_array_rank_mem.len() - 1 {
-                                // We're on the last rank, so go to end
-                                self.num_suffixes.to_usize()
-                            } else {
-                                // Use the next LCP rank
-                                self.suffix_array_rank_mem[start + 1]
-                            }
-                        } else {
-                            self.suffix_array_rank_mem[end] + 1
-                        };
-
-                        // I have to go to disk to get the actual suffixes
-                        let suffixes =
-                            self.suffix_array_file.get_range(start_rank..end_rank)?;
-                        (suffixes, start_rank..end_rank)
-                    };
-
-                    let positions: Vec<_> = suffixes
-                        .iter()
-                        .map(|&suffix| {
-                            let i =
-                                seq_starts.partition_point(|&val| val <= suffix) - 1;
-                            LocateResultPosition {
-                                suffix,
-                                sequence_name: seq_names[i].clone(),
-                                sequence_position: suffix - seq_starts[i],
-                            }
-                        })
-                        .collect();
-
-                    Ok(LocateResult {
-                        query: query.to_string(),
-                        positions,
-                        ranks,
-                    })
-                } else {
-                    Err(anyhow!("{query}"))
-                }
+            .clone()
+            .into_par_iter()
+            .enumerate()
+            .map(|(query_num, query)| -> Result<SearchResult<T>> {
+                let search_file: FileAccess<T> = FileAccess::new(
+                    &self.filename,
+                    self.suffix_array_pos as u64,
+                    self.num_suffixes.to_usize(),
+                )?;
+                let mut search = SuffixSearch::new(
+                    &self.text,
+                    search_file,
+                    &self.suffix_array_mem,
+                    &self.suffix_array_rank_mem,
+                    args.low_memory,
+                    self.num_suffixes.to_usize(),
+                );
+                search.search(query_num, &query, args.find_suffixes)
             })
+            .flatten() // TODO: Do I throw away these errors?
             .collect();
-
-        info!("Search finished in {:?}", now.elapsed());
         Ok(res)
     }
 
     // --------------------------------------------------
-    fn suffix_search_first(
-        &mut self,
-        qry: &[u8],
-        low: usize,
-        high: usize,
-        left_lcp: usize,
-        right_lcp: usize,
-    ) -> Option<usize> {
-        if high >= low {
-            let mid = low + ((high - low) / 2);
-            let mid_val = self.get_suffix(mid)?.to_usize();
-            let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
+    pub fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult<T>>> {
+        let search_result = &self.suffix_search(args)?;
+        let seq_starts = self.sequence_starts.clone();
+        let seq_names = self.headers.clone();
+        let now = Instant::now();
+        let mut locate_result: Vec<LocateResult<T>> = vec![];
 
-            let mid_minus_one = if mid > 0 {
-                self.get_suffix(mid - 1)?.to_usize()
-            } else {
-                mid_val
-            };
-
-            if mid_cmp.cmp == Ordering::Equal
-                && (mid == 0
-                    || self.compare(qry, mid_minus_one, 0).cmp == Ordering::Greater)
-            {
-                Some(mid)
-            } else if mid_cmp.cmp == Ordering::Greater {
-                self.suffix_search_first(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
-            } else {
-                // Ordering::Less
-                self.suffix_search_first(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
+        // Augment the search with relative sequence positions
+        for res in search_result {
+            let mut positions = vec![];
+            if let Some(locs) = &res.locations {
+                for (rank, suffix) in locs.ranks.clone().zip(locs.suffixes.clone()) {
+                    let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
+                    positions.push(LocateResultPosition {
+                        rank,
+                        suffix,
+                        sequence_name: seq_names[i].clone(),
+                        sequence_position: suffix - seq_starts[i],
+                    })
+                }
             }
-        } else {
-            None
+            locate_result.push(LocateResult {
+                query_num: res.query_num,
+                query: res.query.clone(),
+                positions
+            });
         }
+
+        info!("Search finished in {:?}", now.elapsed());
+
+        Ok(locate_result)
     }
+
 
     // --------------------------------------------------
-    fn suffix_search_last(
-        &mut self,
-        qry: &[u8],
-        low: usize,
-        high: usize,
-        n: usize,
-        left_lcp: usize,
-        right_lcp: usize,
-    ) -> Option<usize> {
-        if high >= low {
-            let mid = low + ((high - low) / 2);
-            let mid_val = self.get_suffix(mid)?.to_usize();
-            let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
-
-            // Weird hack because I cannot embed this call in the "if"
-            let mid_plus_one = if mid < n - 1 {
-                self.get_suffix(mid + 1)?.to_usize()
-            } else {
-                mid_val
-            };
-
-            if mid_cmp.cmp == Ordering::Equal
-                && (mid == n - 1
-                    || self.compare(qry, mid_plus_one, 0).cmp == Ordering::Less)
-            {
-                Some(mid)
-            } else if mid_cmp.cmp == Ordering::Less {
-                self.suffix_search_last(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
-            } else {
-                self.suffix_search_last(qry, mid + 1, high, n, mid_cmp.lcp, right_lcp)
-            }
-        } else {
-            None
-        }
-    }
+    //fn suffix_search_first(
+    //    &mut self,
+    //    qry: &[u8],
+    //    low: usize,
+    //    high: usize,
+    //    left_lcp: usize,
+    //    right_lcp: usize,
+    //) -> Option<usize> {
+    //    if high >= low {
+    //        let mid = low + ((high - low) / 2);
+    //        let mid_val = self.get_suffix(mid)?.to_usize();
+    //        let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
+    //
+    //        let mid_minus_one = if mid > 0 {
+    //            self.get_suffix(mid - 1)?.to_usize()
+    //        } else {
+    //            mid_val
+    //        };
+    //
+    //        if mid_cmp.cmp == Ordering::Equal
+    //            && (mid == 0
+    //                || self.compare(qry, mid_minus_one, 0).cmp == Ordering::Greater)
+    //        {
+    //            Some(mid)
+    //        } else if mid_cmp.cmp == Ordering::Greater {
+    //            self.suffix_search_first(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
+    //        } else {
+    //            // Ordering::Less
+    //            self.suffix_search_first(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
+    //        }
+    //    } else {
+    //        None
+    //    }
+    //}
 
     // --------------------------------------------------
-    pub fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
-        let lcp = query
-            .iter()
-            .zip(self.text.get(suffix_pos..).unwrap())
-            .skip(skip)
-            .map_while(|(a, b)| (a == b).then_some(a))
-            .count()
-            + skip;
+    //fn suffix_search_last(
+    //    &mut self,
+    //    qry: &[u8],
+    //    low: usize,
+    //    high: usize,
+    //    n: usize,
+    //    left_lcp: usize,
+    //    right_lcp: usize,
+    //) -> Option<usize> {
+    //    if high >= low {
+    //        let mid = low + ((high - low) / 2);
+    //        let mid_val = self.get_suffix(mid)?.to_usize();
+    //        let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
+    //
+    //        // Weird hack because I cannot embed this call in the "if"
+    //        let mid_plus_one = if mid < n - 1 {
+    //            self.get_suffix(mid + 1)?.to_usize()
+    //        } else {
+    //            mid_val
+    //        };
+    //
+    //        if mid_cmp.cmp == Ordering::Equal
+    //            && (mid == n - 1
+    //                || self.compare(qry, mid_plus_one, 0).cmp == Ordering::Less)
+    //        {
+    //            Some(mid)
+    //        } else if mid_cmp.cmp == Ordering::Less {
+    //            self.suffix_search_last(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
+    //        } else {
+    //            self.suffix_search_last(qry, mid + 1, high, n, mid_cmp.lcp, right_lcp)
+    //        }
+    //    } else {
+    //        None
+    //    }
+    //}
 
-        let cmp = match (query.get(lcp), self.text.get(suffix_pos + lcp)) {
-            // Entire query matched
-            (None, _) => Ordering::Equal,
-            // Compare next char
-            (Some(a), Some(b)) => a.cmp(b),
-            // Panic at the disco
-            _ => unreachable!(),
-        };
-
-        Comparison { lcp, cmp }
-    }
+    // --------------------------------------------------
+    //pub fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
+    //    let lcp = query
+    //        .iter()
+    //        .zip(self.text.get(suffix_pos..).unwrap())
+    //        .skip(skip)
+    //        .map_while(|(a, b)| (a == b).then_some(a))
+    //        .count()
+    //        + skip;
+    //
+    //    let cmp = match (query.get(lcp), self.text.get(suffix_pos + lcp)) {
+    //        // Entire query matched
+    //        (None, _) => Ordering::Equal,
+    //        // Compare next char
+    //        (Some(a), Some(b)) => a.cmp(b),
+    //        // Panic at the disco
+    //        _ => unreachable!(),
+    //    };
+    //
+    //    Comparison { lcp, cmp }
+    //}
 }
 
 // --------------------------------------------------
@@ -1645,7 +1485,7 @@ mod tests {
     };
     use crate::OUTFILE_VERSION;
     use anyhow::Result;
-    use std::cmp::Ordering;
+    //use std::cmp::Ordering;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -1773,44 +1613,44 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_compare() -> Result<()> {
-        // 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14
-        // A  A  B  A  B  A  B  A  B  B  A  B  A  B  #
-        let sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
-
-        // Compare to B to B with no skip
-        let query = "B".as_bytes();
-        let res = sufr_file.compare(query, 13, 0);
-        assert_eq!(res.cmp, Ordering::Equal);
-        assert_eq!(res.lcp, 1);
-
-        // Compare to B to B with skip = 1
-        let query = "B".as_bytes();
-        let res = sufr_file.compare(query, 13, 1);
-        assert_eq!(res.cmp, Ordering::Equal);
-        assert_eq!(res.lcp, 1);
-
-        // Compare to B to AB
-        let query = "B".as_bytes();
-        let res = sufr_file.compare(query, 12, 0);
-        assert_eq!(res.cmp, Ordering::Greater);
-        assert_eq!(res.lcp, 0);
-
-        // Compare to ABABA to ABBABAB#
-        let query = "ABABA".as_bytes();
-        let res = sufr_file.compare(query, 7, 2);
-        assert_eq!(res.cmp, Ordering::Less);
-        assert_eq!(res.lcp, 2);
-
-        // Compare to ABAB to ABABBABAB#
-        let query = "ABABA".as_bytes();
-        let res = sufr_file.compare(query, 5, 2);
-        assert_eq!(res.cmp, Ordering::Less);
-        assert_eq!(res.lcp, 4);
-
-        Ok(())
-    }
+    //#[test]
+    //fn test_compare() -> Result<()> {
+    //    // 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14
+    //    // A  A  B  A  B  A  B  A  B  B  A  B  A  B  #
+    //    let sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
+    //
+    //    // Compare to B to B with no skip
+    //    let query = "B".as_bytes();
+    //    let res = sufr_file.compare(query, 13, 0);
+    //    assert_eq!(res.cmp, Ordering::Equal);
+    //    assert_eq!(res.lcp, 1);
+    //
+    //    // Compare to B to B with skip = 1
+    //    let query = "B".as_bytes();
+    //    let res = sufr_file.compare(query, 13, 1);
+    //    assert_eq!(res.cmp, Ordering::Equal);
+    //    assert_eq!(res.lcp, 1);
+    //
+    //    // Compare to B to AB
+    //    let query = "B".as_bytes();
+    //    let res = sufr_file.compare(query, 12, 0);
+    //    assert_eq!(res.cmp, Ordering::Greater);
+    //    assert_eq!(res.lcp, 0);
+    //
+    //    // Compare to ABABA to ABBABAB#
+    //    let query = "ABABA".as_bytes();
+    //    let res = sufr_file.compare(query, 7, 2);
+    //    assert_eq!(res.cmp, Ordering::Less);
+    //    assert_eq!(res.lcp, 2);
+    //
+    //    // Compare to ABAB to ABABBABAB#
+    //    let query = "ABABA".as_bytes();
+    //    let res = sufr_file.compare(query, 5, 2);
+    //    assert_eq!(res.cmp, Ordering::Less);
+    //    assert_eq!(res.lcp, 4);
+    //
+    //    Ok(())
+    //}
 
     #[test]
     fn test_locate() -> Result<()> {
@@ -2012,13 +1852,11 @@ mod tests {
                 &LocateResult {
                     query: "ABABB".to_string(),
                     ranks: 6..7,
-                    positions: vec![
-                        LocateResultPosition {
-                            suffix: 5,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 5,
-                        },
-                    ]
+                    positions: vec![LocateResultPosition {
+                        suffix: 5,
+                        sequence_name: "1".to_string(),
+                        sequence_position: 5,
+                    },]
                 }
             );
         }
@@ -2098,9 +1936,6 @@ mod tests {
             sequence_delimiter,
         };
         let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
-        // 17 13 9 0 4 14 10 1 5 15 11 2 6 16 12 3 7
-        let sorted_sa = [17, 13, 9, 0, 4, 14, 10, 1, 5, 15, 11, 2, 6, 16, 12, 3, 7];
-        let lcp = [0, 0, 4, 8, 4, 0, 3, 7, 3, 0, 2, 6, 2, 0, 1, 5, 1];
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
         let res = sufr_builder.write(outpath);
@@ -2120,8 +1955,11 @@ mod tests {
         assert_eq!(sufr_file.text, b"ACGTACGTNACGTACGT$");
 
         let file_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        let sorted_sa = [17, 13, 9, 0, 4, 14, 10, 1, 5, 15, 11, 2, 6, 16, 12, 3, 7];
         assert_eq!(file_sa, sorted_sa);
+
         let file_lcp: Vec<_> = sufr_file.lcp_file.iter().collect();
+        let lcp = [0, 0, 4, 8, 4, 0, 3, 7, 3, 0, 2, 6, 2, 0, 1, 5, 1];
         assert_eq!(file_lcp, lcp);
         Ok(())
     }
