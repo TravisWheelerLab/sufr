@@ -836,6 +836,7 @@ where
         let seq_starts = self.sequence_starts.clone();
         let seq_names = self.headers.clone();
         let mut locate_result: Vec<LocateResult<T>> = vec![];
+        let now = Instant::now();
 
         // Augment the search with relative sequence positions
         for res in search_result {
@@ -857,6 +858,8 @@ where
                 positions,
             });
         }
+
+        info!("Adding locate data finished in {:?}", now.elapsed());
 
         Ok(locate_result)
     }
