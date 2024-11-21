@@ -243,9 +243,21 @@ where
                 start_rank..end_rank
             };
 
-            // This requires going to disk but "count" doesn't need them
+            // Getting suffixes may require going to disk
+            // but "count" doesn't need them so this is an option
             let suffixes = if find_suffixes {
-                self.suffix_array_file.get_range(ranks.clone())?
+                // First condition is that there is no in-memory SA
+                if self.suffix_array_mem.is_empty()
+                    // Second condition is there is an in-memory SA
+                    // BUT the ranks are also there meaning the SA
+                    // is compressed, forcing us to go to disk
+                    || !self.suffix_array_rank_mem.is_empty()
+                {
+                    self.suffix_array_file.get_range(ranks.clone())?
+                } else {
+                    // Otherwise, get from memory
+                    self.suffix_array_mem[ranks.clone()].to_vec()
+                }
             } else {
                 vec![]
             };
