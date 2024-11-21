@@ -783,7 +783,7 @@ where
     // --------------------------------------------------
     pub fn suffix_search(
         &mut self,
-        args: SearchOptions,
+        args: &SearchOptions,
     ) -> Result<Vec<SearchResult<T>>> {
         self.query_low_memory = args.low_memory;
         // TODO: I don't use this now because I'm always going to disk for the range.
@@ -796,6 +796,7 @@ where
             self.suffix_array_mem.len()
         };
 
+        let now = Instant::now();
         let res: Vec<_> = args
             .queries
             .clone()
@@ -819,17 +820,21 @@ where
             })
             .flatten() // TODO: Do I throw away these errors?
             .collect();
-        //dbg!(&res);
-        //Ok(res.into_iter().flatten().collect())
+
+        info!(
+            "Search of {} queries finished in {:?}",
+            args.queries.len(),
+            now.elapsed()
+        );
+
         Ok(res)
     }
 
     // --------------------------------------------------
     pub fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult<T>>> {
-        let search_result = &self.suffix_search(args)?;
+        let search_result = &self.suffix_search(&args)?;
         let seq_starts = self.sequence_starts.clone();
         let seq_names = self.headers.clone();
-        let now = Instant::now();
         let mut locate_result: Vec<LocateResult<T>> = vec![];
 
         // Augment the search with relative sequence positions
@@ -852,8 +857,6 @@ where
                 positions,
             });
         }
-
-        info!("Search finished in {:?}", now.elapsed());
 
         Ok(locate_result)
     }

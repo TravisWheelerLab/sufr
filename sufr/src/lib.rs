@@ -128,6 +128,10 @@ pub struct ExtractArgs {
     #[arg(short, long, value_name = "SUFFIX_LEN")]
     pub suffix_len: Option<usize>,
 
+    /// Number of threads
+    #[arg(short, long, value_name = "THREADS")]
+    pub threads: Option<usize>,
+
     /// Show LCP
     #[arg(short, long)]
     pub lcp: bool,
@@ -176,6 +180,10 @@ pub struct CountArgs {
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
 
+    /// Number of threads
+    #[arg(short, long, value_name = "THREADS")]
+    pub threads: Option<usize>,
+
     /// Low-memory
     #[arg(short, long)]
     pub low_memory: bool,
@@ -199,6 +207,10 @@ pub struct LocateArgs {
     /// Output
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
+
+    /// Number of threads
+    #[arg(short, long, value_name = "THREADS")]
+    pub threads: Option<usize>,
 
     /// Low-memory
     #[arg(short, long)]
@@ -289,6 +301,16 @@ where
 
 // --------------------------------------------------
 pub fn count(args: &CountArgs) -> Result<()> {
+    let num_threads = args.threads.unwrap_or(num_cpus::get());
+    info!(
+        "Using {num_threads} thread{}",
+        if num_threads == 1 { "" } else { "s" }
+    );
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .unwrap();
+
     let text_len = read_text_length(&args.file)? as u64;
     if text_len < u32::MAX as u64 {
         let sufr_file: SufrFile<u32> = SufrFile::read(&args.file)?;
@@ -319,7 +341,7 @@ where
         find_suffixes: false,
     };
 
-    for res in sufr_file.suffix_search(loc_args)? {
+    for res in sufr_file.suffix_search(&loc_args)? {
         match res.locations {
             Some(locs) => {
                 let ranks = locs.ranks;
@@ -407,6 +429,16 @@ where
 
 // --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
+    let num_threads = args.threads.unwrap_or(num_cpus::get());
+    info!(
+        "Using {num_threads} thread{}",
+        if num_threads == 1 { "" } else { "s" }
+    );
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .unwrap();
+
     let text_len = read_text_length(&args.file)? as u64;
     if text_len < u32::MAX as u64 {
         let now = Instant::now();
@@ -574,6 +606,16 @@ fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
 
 // --------------------------------------------------
 pub fn locate(args: &LocateArgs) -> Result<()> {
+    let num_threads = args.threads.unwrap_or(num_cpus::get());
+    info!(
+        "Using {num_threads} thread{}",
+        if num_threads == 1 { "" } else { "s" }
+    );
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .unwrap();
+
     let len = read_text_length(&args.file)? as u64;
     if len < u32::MAX as u64 {
         let now = Instant::now();

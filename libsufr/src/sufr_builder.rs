@@ -141,6 +141,7 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
     pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T>> {
+
         let text: Vec<_> = args
             .text
             .iter()
