@@ -821,6 +821,29 @@ where
             .flatten() // TODO: Do I throw away these errors?
             .collect();
 
+        // Single-threaded with SuffixSearch
+        //let search_file: FileAccess<T> = FileAccess::new(
+        //    &self.filename,
+        //    self.suffix_array_pos as u64,
+        //    self.num_suffixes.to_usize(),
+        //)?;
+        //let mut search = SuffixSearch::new(
+        //    &self.text,
+        //    search_file,
+        //    &self.suffix_array_mem,
+        //    &self.suffix_array_rank_mem,
+        //    args.low_memory,
+        //    self.num_suffixes.to_usize(),
+        //);
+        //let res: Vec<_> = args
+        //    .queries
+        //    .iter()
+        //    .enumerate()
+        //    .flat_map(|(query_num, query)| {
+        //        search.search(query_num, query, args.find_suffixes)
+        //    })
+        //    .collect();
+
         info!(
             "Search of {} queries finished in {:?}",
             args.queries.len(),
