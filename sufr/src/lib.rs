@@ -3,8 +3,10 @@ use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_sequence_file, read_text_length, suffix_search::SearchOptions, FromUsize, Int,
-    SufrBuilder, SufrBuilderArgs, SufrFile,
+    sufr_builder::{SufrBuilder, SufrBuilderArgs},
+    sufr_file::SufrFile,
+    types::{FromUsize, Int, SearchOptions},
+    util::{read_sequence_file, read_text_length},
 };
 use log::info;
 use regex::Regex;
@@ -20,6 +22,7 @@ use std::{
 };
 use tabled::Table;
 
+// --------------------------------------------------
 type PositionList = Vec<Range<usize>>;
 
 // --------------------------------------------------
@@ -222,6 +225,7 @@ pub struct SummarizeArgs {
     pub file: String,
 }
 
+// --------------------------------------------------
 #[derive(Debug, Clone)]
 pub enum LogLevel {
     Info,
@@ -254,7 +258,7 @@ pub fn check(args: &CheckArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _check<T>(mut sufr_file: SufrFile<T>, args: &CheckArgs) -> Result<()>
+fn _check<T>(mut sufr_file: SufrFile<T>, args: &CheckArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -296,7 +300,7 @@ pub fn count(args: &CountArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _count<T>(mut sufr_file: SufrFile<T>, args: &CountArgs) -> Result<()>
+fn _count<T>(mut sufr_file: SufrFile<T>, args: &CountArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -320,7 +324,7 @@ where
             Some(locs) => {
                 let ranks = locs.ranks;
                 writeln!(output, "{}: {}", res.query, ranks.end - ranks.start)?;
-            },
+            }
             _ => eprintln!("{}: not found", res.query),
         }
     }
@@ -376,7 +380,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
 // --------------------------------------------------
 // Helper for "create" that checks/writes SA/LCP
-pub fn _create<T>(sa: SufrBuilder<T>, args: &CreateArgs, timer: Instant) -> Result<()>
+fn _create<T>(sa: SufrBuilder<T>, args: &CreateArgs, timer: Instant) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -418,7 +422,7 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _extract<T>(mut sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
+fn _extract<T>(mut sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -484,7 +488,7 @@ pub fn list(args: &ListArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _list<T>(mut sufr_file: SufrFile<T>, args: &ListArgs) -> Result<()>
+fn _list<T>(mut sufr_file: SufrFile<T>, args: &ListArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -585,7 +589,7 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _locate<T>(mut sufr_file: SufrFile<T>, args: &LocateArgs) -> Result<()>
+fn _locate<T>(mut sufr_file: SufrFile<T>, args: &LocateArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
@@ -709,7 +713,7 @@ pub fn summarize(args: &SummarizeArgs) -> Result<()> {
 }
 
 // --------------------------------------------------
-pub fn _summarize<T>(sufr_file: SufrFile<T>, _args: &SummarizeArgs) -> Result<()>
+fn _summarize<T>(sufr_file: SufrFile<T>, _args: &SummarizeArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
