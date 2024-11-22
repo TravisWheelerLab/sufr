@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use log::info;
 use sufr::{Cli, Command, LogLevel};
 use std::{io::BufWriter, fs::File};
 
@@ -27,6 +28,16 @@ fn run(args: Cli) -> Result<()> {
             _ => env_logger::Target::Stdout,
         })
         .init();
+
+    let num_threads = args.threads.unwrap_or(num_cpus::get());
+    info!(
+        "Using {num_threads} thread{}",
+        if num_threads == 1 { "" } else { "s" }
+    );
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global()
+        .unwrap();
 
     match &args.command {
         Some(Command::Check(args)) => {

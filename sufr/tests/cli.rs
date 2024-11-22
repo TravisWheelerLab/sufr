@@ -1,6 +1,8 @@
 use anyhow::Result;
 use assert_cmd::Command;
+use libsufr::types::OUTFILE_VERSION;
 use pretty_assertions::assert_eq;
+use regex::Regex;
 use std::fs;
 use tempfile::NamedTempFile;
 
@@ -8,12 +10,28 @@ const PRG: &str = "sufr";
 const SEQ1: &str = "tests/inputs/1.fa";
 const SEQ2: &str = "tests/inputs/2.fa";
 const SEQ3: &str = "tests/inputs/3.fa";
+const SUFR1: &str = "tests/expected/1.sufr";
 const SUFR2: &str = "tests/expected/2.sufr";
+
+struct CountOptions {
+    queries: Vec<String>,
+    low_memory: bool,
+}
 
 struct CreateOptions {
     allow_ambiguity: bool,
     ignore_softmask: bool,
     sequence_delimiter: Option<char>,
+}
+
+struct ExtractOptions {
+    positions: Vec<String>,
+    prefix_len: Option<usize>,
+    suffix_len: Option<usize>,
+}
+
+struct ListOptions {
+    len: Option<usize>,
 }
 
 struct LocateOptions {
@@ -204,6 +222,185 @@ fn check_seq1() -> Result<()> {
 }
 
 // --------------------------------------------------
+fn count(
+    filename: &str,
+    opts: CountOptions,
+    expected_stdout: &str,
+    expected_stderr: Option<&str>,
+) -> Result<()> {
+    let mut args = vec!["count".to_string(), filename.to_string()];
+
+    if opts.low_memory {
+        args.push("-l".to_string());
+    }
+
+    for query in opts.queries {
+        args.push(query.to_string());
+    }
+
+    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+    assert_eq!(stdout, expected_stdout);
+
+    if let Some(expected) = expected_stderr {
+        let stderr = String::from_utf8(output.stderr).expect("invalid UTF-8");
+        assert_eq!(stderr, expected);
+    }
+
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn count_seq1() -> Result<()> {
+    count(
+        SUFR1,
+        CountOptions {
+            queries: vec!["AC".to_string(), "X".to_string(), "GT".to_string()],
+            low_memory: false,
+        },
+        "AC 2\nGT 2\n",
+        Some("X not found\n"),
+    )
+}
+
+// --------------------------------------------------
+fn extract(filename: &str, opts: ExtractOptions, expected: &str) -> Result<()> {
+    let mut args = vec!["extract".to_string(), filename.to_string()];
+
+    if let Some(prefix_len) = opts.prefix_len {
+        args.push("-p".to_string());
+        args.push(prefix_len.to_string());
+    }
+
+    if let Some(suffix_len) = opts.suffix_len {
+        args.push("-s".to_string());
+        args.push(suffix_len.to_string());
+    }
+
+    for position in opts.positions {
+        args.push(position.to_string());
+    }
+    dbg!(&args);
+
+    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+    assert_eq!(stdout, expected);
+
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn extract_seq1() -> Result<()> {
+    extract(
+        SUFR1,
+        ExtractOptions {
+            positions: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            prefix_len: None,
+            suffix_len: None,
+        },
+        "CGTNNACGT$\nGTNNACGT$\nTNNACGT$\n",
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn extract_seq1_prefix_1() -> Result<()> {
+    extract(
+        SUFR1,
+        ExtractOptions {
+            positions: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            prefix_len: Some(1),
+            suffix_len: None,
+        },
+        "CGTNNACGT$\nCGTNNACGT$\nGTNNACGT$\n",
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn extract_seq1_suf_3() -> Result<()> {
+    extract(
+        SUFR1,
+        ExtractOptions {
+            positions: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            prefix_len: None,
+            suffix_len: Some(3),
+        },
+        "CGT\nGTN\nTNN\n",
+    )
+}
+
+// --------------------------------------------------
+fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
+    let mut args = vec!["list".to_string(), filename.to_string()];
+
+    if let Some(len) = opts.len {
+        args.push("-l".to_string());
+        args.push(len.to_string());
+    }
+
+    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+    assert!(output.status.success());
+    dbg!(&output);
+
+    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+    assert_eq!(stdout, expected);
+
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_sufr1() -> Result<()> {
+    list(
+        SUFR1,
+        ListOptions { len: None },
+        &[
+            " R  S  L",
+            " 0 10  0: $",
+            " 1  6  0: ACGT$",
+            " 2  0  4: ACGTNNACGT$",
+            " 3  7  0: CGT$",
+            " 4  1  3: CGTNNACGT$",
+            " 5  8  0: GT$",
+            " 6  2  2: GTNNACGT$",
+            " 7  9  0: T$",
+            " 8  3  1: TNNACGT$",
+            "",
+        ]
+        .join("\n"),
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn list_sufr1_len_3() -> Result<()> {
+    list(
+        SUFR1,
+        ListOptions { len: Some(3) },
+        &[
+            " R  S  L",
+            " 0 10  0: $",
+            " 1  6  0: ACG",
+            " 2  0  4: ACG",
+            " 3  7  0: CGT",
+            " 4  1  3: CGT",
+            " 5  8  0: GT$",
+            " 6  2  2: GTN",
+            " 7  9  0: T$",
+            " 8  3  1: TNN",
+            "",
+        ]
+        .join("\n"),
+    )
+}
+// --------------------------------------------------
 fn locate(filename: &str, opts: LocateOptions, expected: &str) -> Result<()> {
     let mut args = vec!["locate".to_string(), filename.to_string()];
 
@@ -216,11 +413,9 @@ fn locate(filename: &str, opts: LocateOptions, expected: &str) -> Result<()> {
     }
 
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
-
     assert!(output.status.success());
 
     let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
-
     assert_eq!(stdout, expected);
 
     Ok(())
@@ -249,5 +444,46 @@ fn locate_seq1_absolute() -> Result<()> {
             absolute: true,
         },
         "AC 13 4 9 0\nGT 15 6 11 2\n",
+    )
+}
+
+// --------------------------------------------------
+fn summarize(filename: &str, expected: Vec<(&str, &str)>) -> Result<()> {
+    let args = vec!["summarize".to_string(), filename.to_string()];
+
+    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+
+    for (row_name, value) in expected {
+        let pattern = format!(r#"[|] {}\s+[|] ([^|]+)"#, row_name);
+        let regex = Regex::new(&pattern).unwrap();
+        if let Some(caps) = regex.captures(&stdout) {
+            assert_eq!(caps.get(1).unwrap().as_str().trim(), value);
+        }
+    }
+
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn summarize_sufr1() -> Result<()> {
+    summarize(
+        SUFR1,
+        vec![
+            ("File Size", "164 bytes"),
+            ("File Version", &OUTFILE_VERSION.to_string()),
+            ("DNA", "true"),
+            ("Allow Ambiguity", "false"),
+            ("Ignore Softmask", "false"),
+            ("Text Length", "11"),
+            ("Num Suffixes", "9"),
+            ("Max query len", "0"),
+            ("Num sequences", "1"),
+            ("Sequence starts", "0"),
+            ("Headers", "1"),
+        ],
     )
 }

@@ -1,5 +1,7 @@
 pub mod sufr_builder;
 pub mod sufr_file;
+pub mod sufr_search;
+pub mod file_access;
 pub mod types;
 pub mod util;
 
