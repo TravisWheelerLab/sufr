@@ -8,7 +8,8 @@ use crate::{
 use anyhow::{anyhow, bail, Result};
 use home::home_dir;
 use log::info;
-use rayon::prelude::*;
+use num_cpus;
+use rayon::{current_thread_index, prelude::*};
 use std::{
     cmp::{min, Ordering},
     fs::{self, File},
@@ -17,6 +18,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     slice,
+    sync::{Arc, Mutex},
     time::Instant,
 };
 
@@ -168,7 +170,7 @@ where
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct SuffixSearch<'a, T>
+pub struct SufrSearch<'a, T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
@@ -182,7 +184,7 @@ where
 }
 
 // --------------------------------------------------
-impl<'a, T> SuffixSearch<'a, T>
+impl<'a, T> SufrSearch<'a, T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
@@ -193,8 +195,8 @@ where
         rank: &'a [usize],
         query_low_memory: bool,
         num_suffixes: usize,
-    ) -> SuffixSearch<'a, T> {
-        SuffixSearch {
+    ) -> SufrSearch<'a, T> {
+        SufrSearch {
             text,
             suffix_array_file: file,
             suffix_array_mem: sa,
@@ -807,31 +809,7 @@ where
             self.set_suffix_array_mem(max_query_len)?;
             self.suffix_array_mem.len()
         };
-
         let now = Instant::now();
-        let res: Vec<_> = args
-            .queries
-            .clone()
-            .into_par_iter()
-            .enumerate()
-            .map(|(query_num, query)| -> Result<SearchResult<T>> {
-                let search_file: FileAccess<T> = FileAccess::new(
-                    &self.filename,
-                    self.suffix_array_pos as u64,
-                    self.num_suffixes.to_usize(),
-                )?;
-                let mut search = SuffixSearch::new(
-                    &self.text,
-                    search_file,
-                    &self.suffix_array_mem,
-                    &self.suffix_array_rank_mem,
-                    args.low_memory,
-                    self.num_suffixes.to_usize(),
-                );
-                search.search(query_num, &query, args.find_suffixes)
-            })
-            .flatten() // TODO: Do I throw away these errors?
-            .collect();
 
         // Single-threaded with SuffixSearch
         //let search_file: FileAccess<T> = FileAccess::new(
@@ -855,6 +833,69 @@ where
         //        search.search(query_num, query, args.find_suffixes)
         //    })
         //    .collect();
+
+        // Multi-threaded, creates a new SufrSearch
+        //let res: Vec<_> = args
+        //    .queries
+        //    .clone()
+        //    .into_par_iter()
+        //    .enumerate()
+        //    .map(|(query_num, query)| -> Result<SearchResult<T>> {
+        //        let search_file: FileAccess<T> = FileAccess::new(
+        //            &self.filename,
+        //            self.suffix_array_pos as u64,
+        //            self.num_suffixes.to_usize(),
+        //        )?;
+        //        let mut search = SufrSearch::new(
+        //            &self.text,
+        //            search_file,
+        //            &self.suffix_array_mem,
+        //            &self.suffix_array_rank_mem,
+        //            args.low_memory,
+        //            self.num_suffixes.to_usize(),
+        //        );
+        //        search.search(query_num, &query, args.find_suffixes)
+        //    })
+        //    .flatten() // TODO: Do I throw away these errors?
+        //    .collect();
+
+        // Create a shared pool of SufrSearch
+        let num_threads = num_cpus::get();
+        let pool: Vec<Arc<Mutex<SufrSearch<T>>>> = (0..num_threads)
+            .flat_map(|_thread_num| -> Result<Arc<Mutex<SufrSearch<T>>>> {
+                let search_file: FileAccess<T> = FileAccess::new(
+                    &self.filename,
+                    self.suffix_array_pos as u64,
+                    self.num_suffixes.to_usize(),
+                )?;
+
+                Ok(Arc::new(Mutex::new(SufrSearch::new(
+                    &self.text,
+                    search_file,
+                    &self.suffix_array_mem,
+                    &self.suffix_array_rank_mem,
+                    args.low_memory,
+                    self.num_suffixes.to_usize(),
+                ))))
+            })
+            .collect();
+
+        let res: Vec<_> = args
+            .queries
+            .clone()
+            .into_par_iter()
+            .enumerate()
+            .map(|(query_num, query)| -> Result<SearchResult<T>> {
+                let thread_id = current_thread_index().unwrap();
+                match pool[thread_id].lock() {
+                    Ok(mut search) => {
+                        search.search(query_num, &query, args.find_suffixes)
+                    }
+                    Err(e) => panic!("Failed to lock: {e}"),
+                }
+            })
+            .flatten() // TODO: Do I throw away these errors?
+            .collect();
 
         info!(
             "Search of {} queries finished in {:?}",
