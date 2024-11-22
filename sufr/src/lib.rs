@@ -161,7 +161,7 @@ pub struct ListArgs {
     pub file: String,
 
     /// Ranks of suffixes to show
-    #[arg(value_name = "POS")]
+    #[arg(value_name = "RANK")]
     pub ranks: Vec<String>,
 }
 

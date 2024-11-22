@@ -6,6 +6,7 @@ use std::{
     ops::Range,
 };
 
+// --------------------------------------------------
 pub const OUTFILE_VERSION: u8 = 4;
 pub const SENTINEL_CHARACTER: u8 = b'$';
 

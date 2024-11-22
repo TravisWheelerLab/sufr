@@ -1,26 +1,26 @@
 use crate::{
+    file_access::FileAccess,
+    sufr_search::SufrSearch,
     types::{
-        FromUsize, Int, LocateResult, LocateResultPosition, SearchOptions,
-        SearchResult,
+        FromUsize, Int, LocateResult, LocateResultPosition, SearchOptions, SearchResult,
     },
     util::{slice_u8_to_vec, usize_to_bytes},
-    sufr_search::SufrSearch,
-    file_access::FileAccess,
 };
 use anyhow::{anyhow, Result};
 use home::home_dir;
 use log::info;
-use rayon::{current_num_threads, current_thread_index, prelude::*};
+use rayon::prelude::*;
 use std::{
+    cell::RefCell,
     cmp::min,
     fs::{self, File},
     io::{Read, Seek, Write},
     mem,
     path::{Path, PathBuf},
     slice,
-    sync::{Arc, Mutex},
     time::Instant,
 };
+use thread_local::ThreadLocal;
 
 // --------------------------------------------------
 #[derive(Debug)]
@@ -439,103 +439,46 @@ where
         args: &SearchOptions,
     ) -> Result<Vec<SearchResult<T>>> {
         self.query_low_memory = args.low_memory;
-        // TODO: I don't use this now because I'm always going to disk for the range.
-        let _n = if self.query_low_memory {
-            self.num_suffixes.to_usize()
-        } else {
+
+        if !self.query_low_memory {
             let max_query_len =
                 args.max_query_len.unwrap_or(self.max_query_len.to_usize());
             self.set_suffix_array_mem(max_query_len)?;
-            self.suffix_array_mem.len()
-        };
+        }
+
         let now = Instant::now();
+        let new_search = || -> Result<RefCell<SufrSearch<T>>> {
+            let search_file: FileAccess<T> = FileAccess::new(
+                &self.filename,
+                self.suffix_array_pos as u64,
+                self.num_suffixes.to_usize(),
+            )?;
+            Ok(RefCell::new(SufrSearch::new(
+                &self.text,
+                search_file,
+                &self.suffix_array_mem,
+                &self.suffix_array_rank_mem,
+                args.low_memory,
+                self.num_suffixes.to_usize(),
+            )))
+        };
 
-        // Single-threaded with SuffixSearch
-        //let search_file: FileAccess<T> = FileAccess::new(
-        //    &self.filename,
-        //    self.suffix_array_pos as u64,
-        //    self.num_suffixes.to_usize(),
-        //)?;
-        //let mut search = SuffixSearch::new(
-        //    &self.text,
-        //    search_file,
-        //    &self.suffix_array_mem,
-        //    &self.suffix_array_rank_mem,
-        //    args.low_memory,
-        //    self.num_suffixes.to_usize(),
-        //);
-        //let res: Vec<_> = args
-        //    .queries
-        //    .iter()
-        //    .enumerate()
-        //    .flat_map(|(query_num, query)| {
-        //        search.search(query_num, query, args.find_suffixes)
-        //    })
-        //    .collect();
+        let thread_local_search: ThreadLocal<RefCell<SufrSearch<T>>> =
+            ThreadLocal::new();
 
-        // Multi-threaded, creates a new SufrSearch
-        //let res: Vec<_> = args
-        //    .queries
-        //    .clone()
-        //    .into_par_iter()
-        //    .enumerate()
-        //    .map(|(query_num, query)| -> Result<SearchResult<T>> {
-        //        let search_file: FileAccess<T> = FileAccess::new(
-        //            &self.filename,
-        //            self.suffix_array_pos as u64,
-        //            self.num_suffixes.to_usize(),
-        //        )?;
-        //        let mut search = SufrSearch::new(
-        //            &self.text,
-        //            search_file,
-        //            &self.suffix_array_mem,
-        //            &self.suffix_array_rank_mem,
-        //            args.low_memory,
-        //            self.num_suffixes.to_usize(),
-        //        );
-        //        search.search(query_num, &query, args.find_suffixes)
-        //    })
-        //    .flatten() // TODO: Do I throw away these errors?
-        //    .collect();
-
-        // Create a shared pool of SufrSearch
-        let num_threads = current_num_threads();
-        let pool: Vec<Arc<Mutex<SufrSearch<T>>>> = (0..num_threads)
-            .flat_map(|_thread_num| -> Result<Arc<Mutex<SufrSearch<T>>>> {
-                let search_file: FileAccess<T> = FileAccess::new(
-                    &self.filename,
-                    self.suffix_array_pos as u64,
-                    self.num_suffixes.to_usize(),
-                )?;
-
-                Ok(Arc::new(Mutex::new(SufrSearch::new(
-                    &self.text,
-                    search_file,
-                    &self.suffix_array_mem,
-                    &self.suffix_array_rank_mem,
-                    args.low_memory,
-                    self.num_suffixes.to_usize(),
-                ))))
-            })
-            .collect();
-
-        let res: Vec<_> = args
+        let mut res: Vec<_> = args
             .queries
             .clone()
             .into_par_iter()
             .enumerate()
-            .map(|(query_num, query)| -> Result<SearchResult<T>> {
-                // Fails w/o a thread pool e.g., in tests
-                let thread_id = current_thread_index().unwrap_or(0);
-                match pool[thread_id].lock() {
-                    Ok(mut search) => {
-                        search.search(query_num, &query, args.find_suffixes)
-                    }
-                    Err(e) => panic!("Failed to lock: {e}"),
-                }
+            .flat_map(|(query_num, query)| -> Result<SearchResult<T>> {
+                let mut search = thread_local_search
+                    .get_or_try(new_search)?
+                    .borrow_mut();
+                search.search(query_num, &query, args.find_suffixes)
             })
-            .flatten() // TODO: Do I throw away these errors?
             .collect();
+        res.sort_by_key(|r| r.query_num);
 
         info!(
             "Search of {} queries finished in {:?}",
