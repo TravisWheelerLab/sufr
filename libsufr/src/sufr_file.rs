@@ -8,8 +8,7 @@ use crate::{
 use anyhow::{anyhow, bail, Result};
 use home::home_dir;
 use log::info;
-use num_cpus;
-use rayon::{current_thread_index, prelude::*};
+use rayon::{current_num_threads, current_thread_index, prelude::*};
 use std::{
     cmp::{min, Ordering},
     fs::{self, File},
@@ -860,7 +859,7 @@ where
         //    .collect();
 
         // Create a shared pool of SufrSearch
-        let num_threads = num_cpus::get();
+        let num_threads = current_num_threads();
         let pool: Vec<Arc<Mutex<SufrSearch<T>>>> = (0..num_threads)
             .flat_map(|_thread_num| -> Result<Arc<Mutex<SufrSearch<T>>>> {
                 let search_file: FileAccess<T> = FileAccess::new(
