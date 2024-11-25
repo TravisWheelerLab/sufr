@@ -134,7 +134,7 @@ where
     pub text: Vec<u8>,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
-    pub seed_mask: Option<String>,
+    pub seed_mask: Option<Vec<usize>>,
 }
 
 // --------------------------------------------------
@@ -143,7 +143,6 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
     pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T>> {
-
         let text: Vec<_> = args
             .text
             .iter()
@@ -161,6 +160,16 @@ where
             })
             .collect();
         let text_len = T::from_usize(text.len());
+
+        let seed_mask: Option<Vec<usize>> = match args.seed_mask {
+            Some(mask) => Some(
+                mask.bytes()
+                    .enumerate()
+                    .filter_map(|(i, b)| (b == b'1').then_some(i))
+                    .collect(),
+            ),
+            None => None,
+        };
 
         let mut sa = SufrBuilder {
             version: OUTFILE_VERSION,
@@ -180,7 +189,7 @@ where
             headers: args.headers,
             partitions: vec![],
             sequence_delimiter: args.sequence_delimiter,
-            seed_mask: args.seed_mask,
+            seed_mask,
         };
         sa.sort(args.num_partitions)?;
         Ok(sa)
@@ -200,18 +209,41 @@ where
     pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
         let start1 = start1.to_usize();
         let start2 = start2.to_usize();
-        let len = len.to_usize();
-        let end1 = min(start1 + len, self.text_len.to_usize());
-        let end2 = min(start2 + len, self.text_len.to_usize());
-        unsafe {
-            return T::from_usize(
-                (start1..end1)
-                    .zip(start2..end2)
-                    .take_while(|(a, b)| {
-                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-                    })
-                    .count(),
-            );
+
+        match self.seed_mask {
+            Some(mask) => unsafe {
+                T::from_usize(
+                    mask.iter()
+                        .map(|&o| start1 + o)
+                        .filter(|&pos| pos < self.text_len.to_usize())
+                        .zip(
+                            mask.iter()
+                                .map(|&o| start2 + o)
+                                .filter(|&pos| pos < self.text_len.to_usize()),
+                        )
+                        .take_while(|(a, b)| {
+                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+                        })
+                        .count(),
+                )
+            },
+            None => {
+                let len = len.to_usize();
+                let end1 = min(start1 + len, self.text_len.to_usize());
+                let end2 = min(start2 + len, self.text_len.to_usize());
+
+                unsafe {
+                    T::from_usize(
+                        (start1..end1)
+                            .zip(start2..end2)
+                            .take_while(|(a, b)| {
+                                self.text.get_unchecked(*a)
+                                    == self.text.get_unchecked(*b)
+                            })
+                            .count(),
+                    )
+                }
+            }
         }
     }
 
@@ -710,8 +742,8 @@ where
 // --------------------------------------------------
 #[cfg(test)]
 mod test {
+    use super::{SufrBuilder, SufrBuilderArgs};
     use anyhow::Result;
-    use super::{SufrBuilderArgs, SufrBuilder};
 
     #[test]
     fn test_upper_bound() -> Result<()> {
@@ -727,6 +759,7 @@ mod test {
             headers: vec!["1".to_string()],
             num_partitions: 2,
             sequence_delimiter: b'N',
+            seed_mask: None,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -752,6 +785,7 @@ mod test {
             headers: vec!["1".to_string()],
             num_partitions: 2,
             sequence_delimiter: b'N',
+            seed_mask: None,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 

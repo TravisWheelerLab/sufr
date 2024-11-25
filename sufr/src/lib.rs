@@ -361,7 +361,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         headers: seq_data.headers,
         num_partitions: args.num_partitions,
         sequence_delimiter,
-        seed_mask: args.seed_mask,
+        seed_mask: args.seed_mask.clone(),
     };
 
     if (text_len as u64) < u32::MAX as u64 {
