@@ -114,6 +114,10 @@ pub struct CreateArgs {
     /// Character to separate sequences
     #[arg(short('D'), long, default_value = "%", value_name = "DELIM")]
     pub sequence_delimiter: char,
+
+    /// Spaced seeds mask
+    #[arg(short, long, value_name = "MASK")]
+    pub seed_mask: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -360,6 +364,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         headers: seq_data.headers,
         num_partitions: args.num_partitions,
         sequence_delimiter,
+        seed_mask: args.seed_mask,
     };
 
     if (text_len as u64) < u32::MAX as u64 {
