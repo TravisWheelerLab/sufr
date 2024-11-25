@@ -2,8 +2,8 @@ use crate::{
     file_access::FileAccess,
     sufr_search::SufrSearch,
     types::{
-        ExtractSequence, FromUsize, Int, LocatePosition, LocateResult, SearchOptions,
-        SearchResult,
+        ExtractOptions, ExtractResult, ExtractSequence, FromUsize, Int, LocatePosition,
+        LocateResult, SearchOptions, SearchResult,
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
@@ -490,18 +490,18 @@ where
     }
 
     // --------------------------------------------------
-    pub fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractSequence<T>>> {
+    pub fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
         let search_args = SearchOptions {
             queries: args.queries,
             max_query_len: args.max_query_len,
             low_memory: args.low_memory,
             find_suffixes: true,
         };
-        let search_result = &self.suffix_search(&args)?;
+        let search_result = &self.suffix_search(&search_args)?;
         let seq_starts = self.sequence_starts.clone();
         let seq_names = self.headers.clone();
         let text_len = self.text_len.to_usize();
-        let mut extract_result: Vec<ExtractSequence<T>> = vec![];
+        let mut extract_result: Vec<ExtractResult> = vec![];
         let now = Instant::now();
 
         // Augment the search with relative sequence positions
@@ -518,26 +518,23 @@ where
                     };
                     let suffix = suffix.to_usize();
                     let relative_suffix_start = suffix - seq_start;
-                    let context_start =
-                        relative_suffix_start.saturating_sub(args.prefix_len);
+                    let context_start = relative_suffix_start
+                        .saturating_sub(args.prefix_len.unwrap_or(0));
                     let context_end = min(
                         args.suffix_len
                             .map_or(seq_end, |len| relative_suffix_start + len),
                         seq_end,
                     );
-                    let sequence = String::from_utf8(
-                        self.text.get(context_start..context_end).unwrap().to_vec(),
-                    )?;
                     sequences.push(ExtractSequence {
                         rank,
                         suffix,
                         sequence_name: seq_names[i].clone(),
-                        sequence,
                         sequence_range: (context_start..context_end),
-                        suffix_offset: 0,
+                        suffix_offset: relative_suffix_start - context_start,
                     })
                 }
             }
+
             extract_result.push(ExtractResult {
                 query_num: res.query_num,
                 query: res.query.clone(),
@@ -547,7 +544,7 @@ where
 
         info!("Adding locate data finished in {:?}", now.elapsed());
 
-        Ok(locate_result)
+        Ok(extract_result)
     }
 
     // --------------------------------------------------
