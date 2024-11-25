@@ -112,6 +112,7 @@ pub struct SufrBuilderArgs {
     pub headers: Vec<String>,
     pub num_partitions: usize,
     pub sequence_delimiter: u8,
+    pub seed_mask: Option<String>,
 }
 
 // --------------------------------------------------
@@ -133,6 +134,7 @@ where
     pub text: Vec<u8>,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
+    pub seed_mask: Option<String>,
 }
 
 // --------------------------------------------------
@@ -178,6 +180,7 @@ where
             headers: args.headers,
             partitions: vec![],
             sequence_delimiter: args.sequence_delimiter,
+            seed_mask: args.seed_mask,
         };
         sa.sort(args.num_partitions)?;
         Ok(sa)
