@@ -2,7 +2,8 @@ use crate::{
     file_access::FileAccess,
     sufr_search::SufrSearch,
     types::{
-        FromUsize, Int, LocateResult, LocateResultPosition, SearchOptions, SearchResult,
+        ExtractSequence, FromUsize, Int, LocatePosition, LocateResult, SearchOptions,
+        SearchResult,
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
@@ -472,9 +473,8 @@ where
             .into_par_iter()
             .enumerate()
             .flat_map(|(query_num, query)| -> Result<SearchResult<T>> {
-                let mut search = thread_local_search
-                    .get_or_try(new_search)?
-                    .borrow_mut();
+                let mut search =
+                    thread_local_search.get_or_try(new_search)?.borrow_mut();
                 search.search(query_num, &query, args.find_suffixes)
             })
             .collect();
@@ -487,6 +487,67 @@ where
         );
 
         Ok(res)
+    }
+
+    // --------------------------------------------------
+    pub fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractSequence<T>>> {
+        let search_args = SearchOptions {
+            queries: args.queries,
+            max_query_len: args.max_query_len,
+            low_memory: args.low_memory,
+            find_suffixes: true,
+        };
+        let search_result = &self.suffix_search(&args)?;
+        let seq_starts = self.sequence_starts.clone();
+        let seq_names = self.headers.clone();
+        let text_len = self.text_len.to_usize();
+        let mut extract_result: Vec<ExtractSequence<T>> = vec![];
+        let now = Instant::now();
+
+        // Augment the search with relative sequence positions
+        for res in search_result {
+            let mut sequences = vec![];
+            if let Some(locs) = &res.locations {
+                for (rank, suffix) in locs.ranks.clone().zip(locs.suffixes.clone()) {
+                    let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
+                    let seq_start = seq_starts[i].to_usize();
+                    let seq_end = if i == seq_starts.len() - 1 {
+                        text_len
+                    } else {
+                        seq_starts[i + 1].to_usize()
+                    };
+                    let suffix = suffix.to_usize();
+                    let relative_suffix_start = suffix - seq_start;
+                    let context_start =
+                        relative_suffix_start.saturating_sub(args.prefix_len);
+                    let context_end = min(
+                        args.suffix_len
+                            .map_or(seq_end, |len| relative_suffix_start + len),
+                        seq_end,
+                    );
+                    let sequence = String::from_utf8(
+                        self.text.get(context_start..context_end).unwrap().to_vec(),
+                    )?;
+                    sequences.push(ExtractSequence {
+                        rank,
+                        suffix,
+                        sequence_name: seq_names[i].clone(),
+                        sequence,
+                        sequence_range: (context_start..context_end),
+                        suffix_offset: 0,
+                    })
+                }
+            }
+            extract_result.push(ExtractResult {
+                query_num: res.query_num,
+                query: res.query.clone(),
+                sequences,
+            });
+        }
+
+        info!("Adding locate data finished in {:?}", now.elapsed());
+
+        Ok(locate_result)
     }
 
     // --------------------------------------------------
@@ -503,7 +564,7 @@ where
             if let Some(locs) = &res.locations {
                 for (rank, suffix) in locs.ranks.clone().zip(locs.suffixes.clone()) {
                     let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
-                    positions.push(LocateResultPosition {
+                    positions.push(LocatePosition {
                         rank,
                         suffix,
                         sequence_name: seq_names[i].clone(),
@@ -529,7 +590,7 @@ where
 mod test {
     use crate::{
         sufr_file::SufrFile,
-        types::{LocateResult, LocateResultPosition, SearchOptions},
+        types::{LocatePosition, LocateResult, SearchOptions},
     };
     use anyhow::Result;
 
@@ -572,43 +633,43 @@ mod test {
                     query_num: 0,
                     query: "A".to_string(),
                     positions: vec![
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 1,
                             suffix: 0,
                             sequence_name: "1".to_string(),
                             sequence_position: 0,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 2,
                             suffix: 12,
                             sequence_name: "1".to_string(),
                             sequence_position: 12,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 3,
                             suffix: 10,
                             sequence_name: "1".to_string(),
                             sequence_position: 10,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 4,
                             suffix: 1,
                             sequence_name: "1".to_string(),
                             sequence_position: 1,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 5,
                             suffix: 3,
                             sequence_name: "1".to_string(),
                             sequence_position: 3,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 6,
                             suffix: 5,
                             sequence_name: "1".to_string(),
                             sequence_position: 5,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 7,
                             suffix: 7,
                             sequence_name: "1".to_string(),
@@ -637,43 +698,43 @@ mod test {
                     query_num: 0,
                     query: "B".to_string(),
                     positions: vec![
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 8,
                             suffix: 13,
                             sequence_name: "1".to_string(),
                             sequence_position: 13,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 9,
                             suffix: 11,
                             sequence_name: "1".to_string(),
                             sequence_position: 11,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 10,
                             suffix: 9,
                             sequence_name: "1".to_string(),
                             sequence_position: 9,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 11,
                             suffix: 2,
                             sequence_name: "1".to_string(),
                             sequence_position: 2,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 12,
                             suffix: 4,
                             sequence_name: "1".to_string(),
                             sequence_position: 4,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 13,
                             suffix: 6,
                             sequence_name: "1".to_string(),
                             sequence_position: 6,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 14,
                             suffix: 8,
                             sequence_name: "1".to_string(),
@@ -702,25 +763,25 @@ mod test {
                     query_num: 0,
                     query: "ABAB".to_string(),
                     positions: vec![
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 3,
                             suffix: 10,
                             sequence_name: "1".to_string(),
                             sequence_position: 10,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 4,
                             suffix: 1,
                             sequence_name: "1".to_string(),
                             sequence_position: 1,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 5,
                             suffix: 3,
                             sequence_name: "1".to_string(),
                             sequence_position: 3,
                         },
-                        LocateResultPosition {
+                        LocatePosition {
                             rank: 6,
                             suffix: 5,
                             sequence_name: "1".to_string(),
@@ -747,7 +808,7 @@ mod test {
                 vec![LocateResult {
                     query_num: 0,
                     query: "ABABB".to_string(),
-                    positions: vec![LocateResultPosition {
+                    positions: vec![LocatePosition {
                         rank: 6,
                         suffix: 5,
                         sequence_name: "1".to_string(),

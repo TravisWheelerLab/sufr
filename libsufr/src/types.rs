@@ -97,6 +97,38 @@ impl FromUsize<u64> for u64 {
 }
 
 // --------------------------------------------------
+pub struct ExtractOptions {
+    pub queries: Vec<String>,
+    pub max_query_len: Option<usize>,
+    pub low_memory: bool,
+    pub prefix_len: Option<usize>,
+    pub suffix_len: Option<usize>,
+    pub suffixes: Vec<String>,
+}
+
+// --------------------------------------------------
+#[derive(Debug, PartialEq)]
+pub struct ExtractResult<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    pub query_num: usize,
+    pub query: String,
+    pub sequences: Vec<ExtractSequence<T>>,
+}
+
+// --------------------------------------------------
+#[derive(Debug, PartialEq)]
+pub struct ExtractSequence {
+    pub suffix: usize,
+    pub rank: usize,
+    pub sequence_name: String,
+    pub sequence_range: Range<usize>,
+    pub suffix_offset: usize,
+    pub sequence: String,
+}
+
+// --------------------------------------------------
 #[derive(Debug, PartialEq)]
 pub struct LocateResult<T>
 where
@@ -104,12 +136,12 @@ where
 {
     pub query_num: usize,
     pub query: String,
-    pub positions: Vec<LocateResultPosition<T>>,
+    pub positions: Vec<LocatePosition<T>>,
 }
 
 // --------------------------------------------------
 #[derive(Debug, PartialEq)]
-pub struct LocateResultPosition<T>
+pub struct LocatePosition<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {

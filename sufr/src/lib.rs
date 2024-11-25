@@ -5,7 +5,7 @@ use format_num::NumberFormat;
 use libsufr::{
     sufr_builder::{SufrBuilder, SufrBuilderArgs},
     sufr_file::SufrFile,
-    types::{FromUsize, Int, SearchOptions},
+    types::{FromUsize, Int, SearchOptions, ExtractOptions},
     util::{read_sequence_file, read_text_length},
 };
 use log::info;
@@ -120,6 +120,14 @@ pub struct CreateArgs {
 #[derive(Debug, Parser)]
 #[command(about, alias = "ex")]
 pub struct ExtractArgs {
+    /// Maximum query length
+    #[arg(short, long, value_name = "LEN")]
+    pub max_query_len: Option<usize>,
+
+    /// Low-memory
+    #[arg(short, long)]
+    pub low_memory: bool,
+
     /// Prefix length
     #[arg(short, long, value_name = "PREFIX_LEN")]
     pub prefix_len: Option<usize>,
@@ -192,13 +200,13 @@ pub struct CountArgs {
 #[derive(Debug, Parser)]
 #[command(about, alias = "lo")]
 pub struct LocateArgs {
-    /// Maximum query length
-    #[arg(short, long, value_name = "LEN")]
-    pub max_query_len: Option<usize>,
-
     /// Output
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
+
+    /// Maximum query length
+    #[arg(short, long, value_name = "LEN")]
+    pub max_query_len: Option<usize>,
 
     /// Low-memory
     #[arg(short, long)]
@@ -416,47 +424,110 @@ fn _extract<T>(mut sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
 {
-    let mut suffixes: Vec<usize> = vec![];
-    for suffix in &args.suffixes {
-        let mut positions: Vec<_> = parse_pos(suffix)?
-            .into_iter()
-            .flat_map(|r| r.collect::<Vec<_>>())
-            .collect();
-        suffixes.append(&mut positions);
-    }
+    //let mut output: Box<dyn Write> = match &args.output {
+    //    Some(out_name) => Box::new(File::create(out_name)?),
+    //    _ => Box::new(io::stdout()),
+    //};
+    //
+    //let now = Instant::now();
 
-    let mut output: Box<dyn Write> = match &args.output {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
-    };
-
+    let queries = parse_locate_queries(&args.query)?;
+    let num_queries = queries.len();
     let now = Instant::now();
-    let text_len = sufr_file.text_len.to_usize();
-    let prefix_len = args.prefix_len.unwrap_or(0);
-    for suffix in suffixes {
-        let start = if suffix - prefix_len > 0 {
-            suffix - prefix_len
-        } else {
-            suffix
-        };
-        let end = min(
-            args.suffix_len.map_or(text_len, |len| suffix + len),
-            text_len,
-        );
-        if let Some(bytes) = sufr_file.text.get(start..end) {
-            let lcp = if args.lcp {
-                sufr_file
-                    .lcp_file
-                    .get(suffix)
-                    .map_or("NA".to_string(), |v| format!("\t{v}"))
-            } else {
-                "".to_string()
-            };
-            let seq = String::from_utf8(bytes.to_vec())?;
-            writeln!(output, "{seq}{lcp}")?;
-        }
-    }
-    info!("Extracted suffixes in {:?}", now.elapsed());
+    let loc_args = ExtractOptions {
+        queries,
+        max_query_len: args.max_query_len,
+        low_memory: args.low_memory,
+        prefix_len: args.prefix_len,
+        suffix_len: args.suffix_len,
+        suffixes: args.suffixes,
+    };
+    let res = sufr_file.extract(loc_args)?;
+    dbg!(res);
+
+    //for mut res in sufr_file.extract(loc_args)? {
+    //    if res.positions.is_empty() {
+    //        eprintln!("{} not found", res.query);
+    //        continue;
+    //    }
+    //
+    //    if args.abs {
+    //        writeln!(
+    //            output,
+    //            "{} {}",
+    //            res.query,
+    //            res.positions
+    //                .into_iter()
+    //                .map(|p| p.suffix.to_string())
+    //                .collect::<Vec<_>>()
+    //                .join(" ")
+    //        )?;
+    //    } else {
+    //        // Sort by name then position
+    //        res.positions.sort_by(|a, b| {
+    //            a.sequence_name
+    //                .cmp(&b.sequence_name)
+    //                .then(a.sequence_position.cmp(&b.sequence_position))
+    //        });
+    //
+    //        writeln!(output, "{}", res.query)?;
+    //        let mut prev_seq = "".to_string();
+    //        let mut buffer = vec![];
+    //        for pos in res.positions {
+    //            if pos.sequence_name != prev_seq {
+    //                if !buffer.is_empty() {
+    //                    writeln!(output, "{prev_seq} {}", buffer.join(","))?;
+    //                }
+    //
+    //                prev_seq = pos.sequence_name;
+    //                buffer = vec![];
+    //            }
+    //            buffer.push(pos.sequence_position.to_string());
+    //        }
+    //
+    //        if !buffer.is_empty() {
+    //            writeln!(output, "{prev_seq} {}", buffer.join(","))?;
+    //        }
+    //
+    //        writeln!(output, "//")?;
+    //    }
+    //}
+    //
+    //let mut suffixes: Vec<usize> = vec![];
+    //for suffix in &args.suffixes {
+    //    let mut positions: Vec<_> = parse_pos(suffix)?
+    //        .into_iter()
+    //        .flat_map(|r| r.collect::<Vec<_>>())
+    //        .collect();
+    //    suffixes.append(&mut positions);
+    //}
+    //
+    //let text_len = sufr_file.text_len.to_usize();
+    //let prefix_len = args.prefix_len.unwrap_or(0);
+    //for suffix in suffixes {
+    //    let start = if suffix - prefix_len > 0 {
+    //        suffix - prefix_len
+    //    } else {
+    //        suffix
+    //    };
+    //    let end = min(
+    //        args.suffix_len.map_or(text_len, |len| suffix + len),
+    //        text_len,
+    //    );
+    //    if let Some(bytes) = sufr_file.text.get(start..end) {
+    //        let lcp = if args.lcp {
+    //            sufr_file
+    //                .lcp_file
+    //                .get(suffix)
+    //                .map_or("NA".to_string(), |v| format!("\t{v}"))
+    //        } else {
+    //            "".to_string()
+    //        };
+    //        let seq = String::from_utf8(bytes.to_vec())?;
+    //        writeln!(output, "{seq}{lcp}")?;
+    //    }
+    //}
+    //info!("Extracted suffixes in {:?}", now.elapsed());
 
     Ok(())
 }
