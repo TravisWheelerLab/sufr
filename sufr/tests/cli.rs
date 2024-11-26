@@ -267,7 +267,12 @@ fn count_seq1() -> Result<()> {
 }
 
 // --------------------------------------------------
-fn extract(filename: &str, opts: ExtractOptions, expected: &str) -> Result<()> {
+fn extract(
+    filename: &str,
+    opts: ExtractOptions,
+    expected: &str,
+    error: Option<&str>,
+) -> Result<()> {
     let mut args = vec!["extract".to_string(), filename.to_string()];
 
     if let Some(prefix_len) = opts.prefix_len {
@@ -291,6 +296,11 @@ fn extract(filename: &str, opts: ExtractOptions, expected: &str) -> Result<()> {
     let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
     assert_eq!(stdout, expected);
 
+    if let Some(err) = error {
+        let stderr = String::from_utf8(output.stderr).expect("invalid UTF-8");
+        assert_eq!(stderr, err);
+    }
+
     Ok(())
 }
 
@@ -300,11 +310,23 @@ fn extract_seq1() -> Result<()> {
     extract(
         SUFR1,
         ExtractOptions {
-            positions: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            positions: vec!["AC".to_string(), "GT".to_string(), "XX".to_string()],
             prefix_len: None,
             suffix_len: None,
         },
-        "CGTNNACGT$\nGTNNACGT$\nTNNACGT$\n",
+        &[
+            ">1:6-11 AC 0",
+            "ACGT$",
+            ">1:0-11 AC 0",
+            "ACGTNNACGT$",
+            ">1:8-11 GT 0",
+            "GT$",
+            ">1:2-11 GT 0",
+            "GTNNACGT$",
+            "",
+        ]
+        .join("\n"),
+        Some("XX not found\n"),
     )
 }
 
@@ -314,11 +336,23 @@ fn extract_seq1_prefix_1() -> Result<()> {
     extract(
         SUFR1,
         ExtractOptions {
-            positions: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            positions: vec!["AC".to_string(), "GT".to_string()],
             prefix_len: Some(1),
             suffix_len: None,
         },
-        "CGTNNACGT$\nCGTNNACGT$\nGTNNACGT$\n",
+        &[
+            ">1:5-11 AC 1",
+            "NACGT$",
+            ">1:0-11 AC 0",
+            "ACGTNNACGT$",
+            ">1:7-11 GT 1",
+            "CGT$",
+            ">1:1-11 GT 1",
+            "CGTNNACGT$",
+            "",
+        ]
+        .join("\n"),
+        None,
     )
 }
 
@@ -328,11 +362,49 @@ fn extract_seq1_suf_3() -> Result<()> {
     extract(
         SUFR1,
         ExtractOptions {
-            positions: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+            positions: vec!["AC".to_string(), "GT".to_string()],
             prefix_len: None,
             suffix_len: Some(3),
         },
-        "CGT\nGTN\nTNN\n",
+        &[
+            ">1:6-9 AC 0",
+            "ACG",
+            ">1:0-3 AC 0",
+            "ACG",
+            ">1:8-11 GT 0",
+            "GT$",
+            ">1:2-5 GT 0",
+            "GTN",
+            "",
+        ]
+        .join("\n"),
+        None,
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn extract_seq1_pre_1_suf_3() -> Result<()> {
+    extract(
+        SUFR1,
+        ExtractOptions {
+            positions: vec!["AC".to_string(), "GT".to_string()],
+            prefix_len: Some(1),
+            suffix_len: Some(3),
+        },
+        &[
+            ">1:5-9 AC 1",
+            "NACG",
+            ">1:0-3 AC 0",
+            "ACG",
+            ">1:7-11 GT 1",
+            "CGT$",
+            ">1:1-5 GT 1",
+            "CGTN",
+            "",
+        ]
+        .join("\n"),
+        None,
     )
 }
 

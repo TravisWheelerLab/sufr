@@ -97,6 +97,7 @@ impl FromUsize<u64> for u64 {
 }
 
 // --------------------------------------------------
+#[derive(Debug)]
 pub struct ExtractOptions {
     pub queries: Vec<String>,
     pub max_query_len: Option<usize>,

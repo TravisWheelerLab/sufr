@@ -775,7 +775,7 @@ where
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::{parse_index, parse_pos};
+    use super::{parse_pos, parse_index};
     use pretty_assertions::assert_eq;
 
     #[test]

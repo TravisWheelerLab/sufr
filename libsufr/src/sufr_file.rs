@@ -587,9 +587,81 @@ where
 mod test {
     use crate::{
         sufr_file::SufrFile,
-        types::{LocatePosition, LocateResult, SearchOptions},
+        types::{
+            ExtractOptions, ExtractResult, ExtractSequence, LocatePosition,
+            LocateResult, SearchOptions,
+        },
     };
     use anyhow::Result;
+
+    // --------------------------------------------------
+    #[test]
+    fn test_extract() -> Result<()> {
+        let mut sufr_file: SufrFile<u32> =
+            SufrFile::read("tests/inputs/1.sufr")?;
+
+        let opts = ExtractOptions {
+            queries: vec!["AC".to_string(), "GT".to_string(), "XX".to_string()],
+            max_query_len: None,
+            low_memory: false,
+            prefix_len: Some(1),
+            suffix_len: Some(3),
+        };
+
+        let expected = [
+            ExtractResult {
+                query_num: 0,
+                query: "AC".to_string(),
+                sequences: vec![
+                    ExtractSequence {
+                        suffix: 6,
+                        rank: 1,
+                        sequence_name: "1".to_string(),
+                        sequence_range: 5..9,
+                        suffix_offset: 1,
+                    },
+                    ExtractSequence {
+                        suffix: 0,
+                        rank: 2,
+                        sequence_name: "1".to_string(),
+                        sequence_range: 0..3,
+                        suffix_offset: 0,
+                    },
+                ],
+            },
+            ExtractResult {
+                query_num: 1,
+                query: "GT".to_string(),
+                sequences: vec![
+                    ExtractSequence {
+                        suffix: 8,
+                        rank: 5,
+                        sequence_name: "1".to_string(),
+                        sequence_range: 7..11,
+                        suffix_offset: 1,
+                    },
+                    ExtractSequence {
+                        suffix: 2,
+                        rank: 6,
+                        sequence_name: "1".to_string(),
+                        sequence_range: 1..5,
+                        suffix_offset: 1,
+                    },
+                ],
+            },
+            ExtractResult {
+                query_num: 2,
+                query: "XX".to_string(),
+                sequences: vec![],
+            },
+        ];
+
+        let res = sufr_file.extract(opts);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), expected);
+
+        Ok(())
+    }
 
     // --------------------------------------------------
     #[test]
