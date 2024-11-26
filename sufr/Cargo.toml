@@ -1,6 +1,6 @@
 [package]
 name = "sufr"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Parallel Construction of Suffix Arrays in Rust"
 license = "BSD-3-Clause"
@@ -18,7 +18,7 @@ clap = { version = "4.5.13", features = ["derive"] }
 env_logger = "0.11.5"
 format_num = "0.1.0"
 home = "0.5.9"
-libsufr = { path = "../libsufr", version = "0.5.0" }
+libsufr = { path = "../libsufr", version = "0.5.1" }
 log = "0.4.22"
 num_cpus = "1.16.0"
 pretty_assertions = "1.4.0"
