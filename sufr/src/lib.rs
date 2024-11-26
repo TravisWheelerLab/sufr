@@ -342,6 +342,7 @@ where
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
+    dbg!(&args);
     // Read sequence input
     let now = Instant::now();
     let sequence_delimiter = args.sequence_delimiter as u8;

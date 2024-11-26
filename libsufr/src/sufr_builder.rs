@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail, Result};
 use log::info;
 use rand::Rng;
 use rayon::prelude::*;
+use regex::Regex;
 use std::{
     cmp::{max, min, Ordering},
     collections::HashSet,
@@ -134,7 +135,7 @@ where
     pub text: Vec<u8>,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
-    pub seed_mask: Option<Vec<usize>>,
+    pub seed_mask: Vec<usize>,
 }
 
 // --------------------------------------------------
@@ -161,14 +162,18 @@ where
             .collect();
         let text_len = T::from_usize(text.len());
 
-        let seed_mask: Option<Vec<usize>> = match args.seed_mask {
-            Some(mask) => Some(
+        let seed_mask: Vec<usize> = match args.seed_mask {
+            Some(mask) => {
+                let seed_re = Regex::new("^[01]+$").unwrap();
+                if !seed_re.is_match(&mask) {
+                    bail!("Invalid mask: {mask}");
+                }
                 mask.bytes()
                     .enumerate()
                     .filter_map(|(i, b)| (b == b'1').then_some(i))
-                    .collect(),
-            ),
-            None => None,
+                    .collect()
+            }
+            None => vec![],
         };
 
         let mut sa = SufrBuilder {
@@ -210,14 +215,29 @@ where
         let start1 = start1.to_usize();
         let start2 = start2.to_usize();
 
-        match self.seed_mask {
-            Some(mask) => unsafe {
+        if self.seed_mask.is_empty() {
+            let len = len.to_usize();
+            let end1 = min(start1 + len, self.text_len.to_usize());
+            let end2 = min(start2 + len, self.text_len.to_usize());
+
+            unsafe {
                 T::from_usize(
-                    mask.iter()
+                    (start1..end1)
+                        .zip(start2..end2)
+                        .take_while(|(a, b)| {
+                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+                        })
+                        .count(),
+                )
+            }
+        } else {
+            unsafe {
+                T::from_usize(
+                    self.seed_mask.iter()
                         .map(|&o| start1 + o)
                         .filter(|&pos| pos < self.text_len.to_usize())
                         .zip(
-                            mask.iter()
+                            self.seed_mask.iter()
                                 .map(|&o| start2 + o)
                                 .filter(|&pos| pos < self.text_len.to_usize()),
                         )
@@ -226,23 +246,6 @@ where
                         })
                         .count(),
                 )
-            },
-            None => {
-                let len = len.to_usize();
-                let end1 = min(start1 + len, self.text_len.to_usize());
-                let end2 = min(start2 + len, self.text_len.to_usize());
-
-                unsafe {
-                    T::from_usize(
-                        (start1..end1)
-                            .zip(start2..end2)
-                            .take_while(|(a, b)| {
-                                self.text.get_unchecked(*a)
-                                    == self.text.get_unchecked(*b)
-                            })
-                            .count(),
-                    )
-                }
             }
         }
     }
@@ -744,6 +747,28 @@ where
 mod test {
     use super::{SufrBuilder, SufrBuilderArgs};
     use anyhow::Result;
+
+    #[test]
+    fn test_invalid_mask() -> Result<()> {
+        let text = b"TTTAGC".to_vec();
+        let args = SufrBuilderArgs {
+            text,
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+            seed_mask: Some("1234".to_string()),
+        };
+        let res: Result<SufrBuilder<u32>> = SufrBuilder::new(args);
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().to_string(), "Invalid mask: 1234");
+
+        Ok(())
+    }
 
     #[test]
     fn test_upper_bound() -> Result<()> {

@@ -36,6 +36,9 @@ smol:
 s1:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1.sufr
 
+s1m:
+	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --seed-mask 1201 -o 1m.sufr
+
 s1s:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1s.sufr --ignore-softmask
 

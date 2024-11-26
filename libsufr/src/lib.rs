@@ -32,6 +32,7 @@ mod tests {
             headers: seq_data.headers,
             num_partitions: 2,
             sequence_delimiter,
+            seed_mask: None,
         };
         let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
         let outfile = NamedTempFile::new()?;
@@ -77,6 +78,7 @@ mod tests {
             headers: seq_data.headers,
             num_partitions: 2,
             sequence_delimiter,
+            seed_mask: None,
         };
 
         let suffix_array: SufrBuilder<u64> = SufrBuilder::new(args)?;
@@ -122,6 +124,7 @@ mod tests {
             headers: seq_data.headers,
             num_partitions: 2,
             sequence_delimiter,
+            seed_mask: None,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
         let outfile = NamedTempFile::new()?;
