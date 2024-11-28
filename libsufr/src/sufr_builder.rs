@@ -230,104 +230,143 @@ where
     }
 
     // --------------------------------------------------
-    #[inline(always)]
-    pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
-        //println!("start1 {start1} start2 {start2} len {len}");
-        let start1 = start1.to_usize();
-        let start2 = start2.to_usize();
-        let len = len.to_usize();
-        let text_len = self.text_len.to_usize();
-        let end1 = min(start1 + len, text_len);
-        let end2 = min(start2 + len, text_len);
-
-        // TODO: This is probably bad to collect potentially huge ranges
-        let mut range1: Vec<_> = (start1..end1).collect();
-        let mut range2: Vec<_> = (start2..end2).collect();
-
-        //println!("BEFORE: range1 {range1:?} range2 {range2:?}");
-        //let vals1: Vec<u8> = range1.iter().map(|v| self.text[*v]).collect();
-        //let vals2: Vec<u8> = range2.iter().map(|v| self.text[*v]).collect();
-        //println!(
-        //    "BEFORE: vals1 {} vals2 {}",
-        //    String::from_utf8(vals1).unwrap(),
-        //    String::from_utf8(vals2).unwrap(),
-        //);
-
-        if !self.seed_mask.is_empty() {
-            //println!("seed_mask {:?}", self.seed_mask);
-            let mut tmp1 = vec![];
-            for pos in &self.seed_mask {
-                if let Some(val) = range1.get(*pos) {
-                    tmp1.push(*val);
-                } else {
-                    break;
-                }
-            }
-            range1 = tmp1.clone();
-
-            let mut tmp2 = vec![];
-            for pos in &self.seed_mask {
-                if let Some(val) = range2.get(*pos) {
-                    tmp2.push(*val);
-                } else {
-                    break;
-                }
-            }
-            range2 = tmp2.clone();
-            //println!("AFTER: range1 {tmp1:?} range2 {tmp2:?}");
-        }
-        //let vals1: Vec<u8> = range1.iter().map(|v| self.text[*v]).collect();
-        //let vals2: Vec<u8> = range2.iter().map(|v| self.text[*v]).collect();
-
-        // Original
-        //unsafe {
-        //    T::from_usize(
-        //        (start1..end1)
-        //            .zip(start2..end2)
-        //            .take_while(|(a, b)| {
-        //                self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-        //            })
-        //            .count(),
-        //    )
-        //}
-
-        // Return count using subset
-        unsafe {
-            T::from_usize(
-                range1
-                    .into_iter()
-                    .zip(range2.into_iter())
-                    .take_while(|(a, b)| {
-                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-                    })
-                    .count(),
-            )
-        }
-
-        //let count = unsafe {
-        //    T::from_usize(
-        //        range1
-        //            .into_iter()
-        //            .zip(range2.into_iter())
-        //            .take_while(|(a, b)| {
-        //                self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-        //            })
-        //            .count(),
-        //    )
-        //};
-        //
-        //if self.seed_mask.is_empty() {
-        //    count
-        //} else {
-        //    if count == self.seed_mask.len() {
-        //        // Return last element
-        //        self.seed_mask[count - 1]
-        //    } else {
-        //        // Return next mask position minus 1
-        //        self.seed_mask[count] - 1
-        //    }
-        //}
-    }
+    // TODO: Fix merge conflict
+//    #[inline(always)]
+//    pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
+//        //println!("start1 {start1} start2 {start2} len {len}");
+//        let start1 = start1.to_usize();
+//        let start2 = start2.to_usize();
+//<<<<<<< HEAD
+//        let len = len.to_usize();
+//        let text_len = self.text_len.to_usize();
+//        let end1 = min(start1 + len, text_len);
+//        let end2 = min(start2 + len, text_len);
+//
+//        // TODO: This is probably bad to collect potentially huge ranges
+//        let mut range1: Vec<_> = (start1..end1).collect();
+//        let mut range2: Vec<_> = (start2..end2).collect();
+//
+//        //println!("BEFORE: range1 {range1:?} range2 {range2:?}");
+//        //let vals1: Vec<u8> = range1.iter().map(|v| self.text[*v]).collect();
+//        //let vals2: Vec<u8> = range2.iter().map(|v| self.text[*v]).collect();
+//        //println!(
+//        //    "BEFORE: vals1 {} vals2 {}",
+//        //    String::from_utf8(vals1).unwrap(),
+//        //    String::from_utf8(vals2).unwrap(),
+//        //);
+//
+//        if !self.seed_mask.is_empty() {
+//            //println!("seed_mask {:?}", self.seed_mask);
+//            let mut tmp1 = vec![];
+//            for pos in &self.seed_mask {
+//                if let Some(val) = range1.get(*pos) {
+//                    tmp1.push(*val);
+//                } else {
+//                    break;
+//                }
+//            }
+//            range1 = tmp1.clone();
+//
+//            let mut tmp2 = vec![];
+//            for pos in &self.seed_mask {
+//                if let Some(val) = range2.get(*pos) {
+//                    tmp2.push(*val);
+//                } else {
+//                    break;
+//                }
+//            }
+//            range2 = tmp2.clone();
+//            //println!("AFTER: range1 {tmp1:?} range2 {tmp2:?}");
+//        }
+//        //let vals1: Vec<u8> = range1.iter().map(|v| self.text[*v]).collect();
+//        //let vals2: Vec<u8> = range2.iter().map(|v| self.text[*v]).collect();
+//
+//        // Original
+//        //unsafe {
+//        //    T::from_usize(
+//        //        (start1..end1)
+//        //            .zip(start2..end2)
+//        //            .take_while(|(a, b)| {
+//        //                self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+//        //            })
+//        //            .count(),
+//        //    )
+//        //}
+//
+//        // Return count using subset
+//        unsafe {
+//            T::from_usize(
+//                range1
+//                    .into_iter()
+//                    .zip(range2.into_iter())
+//                    .take_while(|(a, b)| {
+//                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+//                    })
+//                    .count(),
+//            )
+//=======
+//
+//        match self.seed_mask {
+//            Some(mask) => unsafe {
+//                T::from_usize(
+//                    mask.iter()
+//                        .map(|&o| start1 + o)
+//                        .filter(|&pos| pos < self.text_len.to_usize())
+//                        .zip(
+//                            mask.iter()
+//                                .map(|&o| start2 + o)
+//                                .filter(|&pos| pos < self.text_len.to_usize()),
+//                        )
+//                        .take_while(|(a, b)| {
+//                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+//                        })
+//                        .count(),
+//                )
+//            },
+//            None => {
+//                let len = len.to_usize();
+//                let end1 = min(start1 + len, self.text_len.to_usize());
+//                let end2 = min(start2 + len, self.text_len.to_usize());
+//
+//                unsafe {
+//                    T::from_usize(
+//                        (start1..end1)
+//                            .zip(start2..end2)
+//                            .take_while(|(a, b)| {
+//                                self.text.get_unchecked(*a)
+//                                    == self.text.get_unchecked(*b)
+//                            })
+//                            .count(),
+//                    )
+//                }
+//            }
+//>>>>>>> 6cbaef0471bc70853ec03b49f37e1ee2afd73ccd
+//        }
+//
+//        //let count = unsafe {
+//        //    T::from_usize(
+//        //        range1
+//        //            .into_iter()
+//        //            .zip(range2.into_iter())
+//        //            .take_while(|(a, b)| {
+//        //                self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+//        //            })
+//        //            .count(),
+//        //    )
+//        //};
+//        //
+//        //if self.seed_mask.is_empty() {
+//        //    count
+//        //} else {
+//        //    if count == self.seed_mask.len() {
+//        //        // Return last element
+//        //        self.seed_mask[count - 1]
+//        //    } else {
+//        //        // Return next mask position minus 1
+//        //        self.seed_mask[count] - 1
+//        //    }
+//        //}
+//    }
 
     // --------------------------------------------------
     #[inline(always)]
