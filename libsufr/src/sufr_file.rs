@@ -1,6 +1,6 @@
 use crate::{
     file_access::FileAccess,
-    sufr_search::SufrSearch,
+    sufr_search::{SufrSearchArgs, SufrSearch},
     types::{
         ExtractOptions, ExtractResult, ExtractSequence, FromUsize, Int, LocatePosition,
         LocateResult, SearchOptions, SearchResult,
@@ -39,6 +39,7 @@ where
     pub suffix_array_pos: usize,
     pub lcp_pos: usize,
     pub max_query_len: T,
+    pub seed_mask: Vec<u8>,
     pub text_len: T,
     pub num_suffixes: T,
     pub num_sequences: T,
@@ -110,6 +111,20 @@ where
         let sequence_starts: Vec<T> =
             slice_u8_to_vec(&buffer, num_sequences.to_usize());
 
+        // Seed mask len
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let seed_mask_len = usize::from_ne_bytes(buffer);
+
+        // Seed mask
+        let seed_mask: Vec<u8> = if seed_mask_len > 0 {
+            let mut buffer = vec![0; seed_mask_len];
+            file.read_exact(&mut buffer)?;
+            buffer
+        } else {
+            vec![]
+        };
+
         // Text
         let mut text = vec![0; text_len];
         file.read_exact(&mut text)?;
@@ -142,6 +157,7 @@ where
             text_len: T::from_usize(text_len),
             num_suffixes: T::from_usize(num_suffixes),
             max_query_len,
+            seed_mask,
             num_sequences,
             sequence_starts,
             headers,
@@ -454,14 +470,16 @@ where
                 self.suffix_array_pos as u64,
                 self.num_suffixes.to_usize(),
             )?;
-            Ok(RefCell::new(SufrSearch::new(
-                &self.text,
-                search_file,
-                &self.suffix_array_mem,
-                &self.suffix_array_rank_mem,
-                args.low_memory,
-                self.num_suffixes.to_usize(),
-            )))
+            let args = SufrSearchArgs {
+                text: &self.text,
+                file: search_file,
+                suffix_array: &self.suffix_array_mem,
+                rank: &self.suffix_array_rank_mem,
+                query_low_memory: args.low_memory,
+                num_suffixes: self.num_suffixes.to_usize(),
+                seed_mask: self.seed_mask.clone(),
+            };
+            Ok(RefCell::new(SufrSearch::new(args)))
         };
 
         let thread_local_search: ThreadLocal<RefCell<SufrSearch<T>>> =

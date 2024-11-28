@@ -7,6 +7,21 @@ use std::cmp::{min, Ordering};
 
 // --------------------------------------------------
 #[derive(Debug)]
+pub struct SufrSearchArgs<'a, T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    pub text: &'a [u8],
+    pub file: FileAccess<T>,
+    pub suffix_array: &'a [T],
+    pub rank: &'a [usize],
+    pub query_low_memory: bool,
+    pub num_suffixes: usize,
+    pub seed_mask: Vec<u8>,
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
 pub struct SufrSearch<'a, T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
@@ -17,6 +32,7 @@ where
     suffix_array_rank_mem: &'a [usize],
     query_low_memory: bool,
     num_suffixes: usize,
+    seed_mask: Vec<u8>,
 }
 
 // --------------------------------------------------
@@ -24,25 +40,19 @@ impl<'a, T> SufrSearch<'a, T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
-    pub fn new(
-        text: &'a [u8],
-        file: FileAccess<T>,
-        sa: &'a [T],
-        rank: &'a [usize],
-        query_low_memory: bool,
-        num_suffixes: usize,
-    ) -> SufrSearch<'a, T> {
+    pub fn new(args: SufrSearchArgs<'a, T>) -> SufrSearch<'a, T> {
         SufrSearch {
-            text,
-            suffix_array_file: file,
-            suffix_array_mem: sa,
-            suffix_array_rank_mem: rank,
-            query_low_memory,
-            num_suffixes: if sa.is_empty() {
-                num_suffixes
+            text: args.text,
+            suffix_array_file: args.file,
+            suffix_array_mem: args.suffix_array,
+            suffix_array_rank_mem: args.rank,
+            query_low_memory: args.query_low_memory,
+            num_suffixes: if args.suffix_array.is_empty() {
+                args.num_suffixes
             } else {
-                sa.len()
+                args.suffix_array.len()
             },
+            seed_mask: args.seed_mask,
         }
     }
 

@@ -4,6 +4,7 @@ ELEGANS = ../data/elegans.fa
 SEQ1  = sufr/tests/inputs/1.fa
 SEQ2  = sufr/tests/inputs/2.fa
 SEQ3  = sufr/tests/inputs/3.fa
+SEQA  = libsufr/tests/inputs/a.fa
 SMOL  = libsufr/tests/inputs/smol.fa
 ABBA  = libsufr/tests/inputs/abba.fa
 SUFR  = ./target/release/sufr
@@ -29,15 +30,20 @@ testfiles: s1 s1s s1n s2 s2d s2n s2s s2ns s3 abba
 	cp [1-3]*.sufr sufr/tests/expected/
 	cp abba.sufr libsufr/tests/inputs/
 
-
 smol:
-	$(CREATE_DEBUG) $(SMOL) --dna
+	$(CREATE_DEBUG) $(SMOL) --dna -m 4
+
+smol-mask:
+	$(CREATE_DEBUG) $(SMOL) --dna --seed-mask 1001 -o smol.mask.sufr
+
+masked:
+	$(CREATE_DEBUG) $(SEQA) --dna --seed-mask 1001 -o a-m1011.sufr
 
 s1:
-	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1.sufr
+	$(CREATE_DEBUG) $(SEQ1) -n 1 --dna -o 1.sufr
 
 s1m:
-	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --seed-mask 1201 -o 1m.sufr
+	$(CREATE_DEBUG) $(SEQ1) -n 1 --dna --seed-mask 1001 -o 1m.sufr
 
 s1s:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1s.sufr --ignore-softmask

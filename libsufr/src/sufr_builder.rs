@@ -135,6 +135,7 @@ where
     pub text: Vec<u8>,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
+    pub seed_mask_orig: Vec<u8>,
     pub seed_mask: Vec<usize>,
 }
 
@@ -162,18 +163,36 @@ where
             .collect();
         let text_len = T::from_usize(text.len());
 
-        let seed_mask: Vec<usize> = match args.seed_mask {
+        if args.seed_mask.is_some() && args.max_query_len.is_some() {
+            bail!("Cannot use max_query_len and seed_mask together");
+        }
+
+        // Validate seed mask before max_query_len
+        let (seed_mask_orig, seed_mask): (Vec<u8>, Vec<usize>) = match args.seed_mask {
             Some(mask) => {
                 let seed_re = Regex::new("^[01]+$").unwrap();
                 if !seed_re.is_match(&mask) {
                     bail!("Invalid mask: {mask}");
                 }
-                mask.bytes()
+                let bytes: Vec<u8> = mask.bytes().collect();
+                let mask: Vec<usize> = bytes
+                    .iter()
                     .enumerate()
-                    .filter_map(|(i, b)| (b == b'1').then_some(i))
-                    .collect()
+                    .filter_map(|(i, &b)| (b == b'1').then_some(i))
+                    .collect();
+                if mask.is_empty() {
+                    bail!("Seed mask must contain at least one 1");
+                }
+                (bytes, mask)
             }
-            None => vec![],
+            None => (vec![], vec![]),
+        };
+
+        // Having a seed mask implies max_query_len
+        let max_query_len = if seed_mask.is_empty() {
+            args.max_query_len.map_or(T::default(), T::from_usize)
+        } else {
+            T::from_usize(seed_mask_orig.len())
         };
 
         let mut sa = SufrBuilder {
@@ -181,7 +200,7 @@ where
             is_dna: args.is_dna,
             allow_ambiguity: args.allow_ambiguity,
             ignore_softmask: args.ignore_softmask,
-            max_query_len: args.max_query_len.map_or(T::default(), T::from_usize),
+            max_query_len,
             text_len,
             num_suffixes: T::default(),
             text,
@@ -194,6 +213,7 @@ where
             headers: args.headers,
             partitions: vec![],
             sequence_delimiter: args.sequence_delimiter,
+            seed_mask_orig,
             seed_mask,
         };
         sa.sort(args.num_partitions)?;
@@ -212,42 +232,101 @@ where
     // --------------------------------------------------
     #[inline(always)]
     pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
+        //println!("start1 {start1} start2 {start2} len {len}");
         let start1 = start1.to_usize();
         let start2 = start2.to_usize();
+        let len = len.to_usize();
+        let text_len = self.text_len.to_usize();
+        let end1 = min(start1 + len, text_len);
+        let end2 = min(start2 + len, text_len);
 
-        if self.seed_mask.is_empty() {
-            let len = len.to_usize();
-            let end1 = min(start1 + len, self.text_len.to_usize());
-            let end2 = min(start2 + len, self.text_len.to_usize());
+        // TODO: This is probably bad to collect potentially huge ranges
+        let mut range1: Vec<_> = (start1..end1).collect();
+        let mut range2: Vec<_> = (start2..end2).collect();
 
-            unsafe {
-                T::from_usize(
-                    (start1..end1)
-                        .zip(start2..end2)
-                        .take_while(|(a, b)| {
-                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-                        })
-                        .count(),
-                )
+        //println!("BEFORE: range1 {range1:?} range2 {range2:?}");
+        //let vals1: Vec<u8> = range1.iter().map(|v| self.text[*v]).collect();
+        //let vals2: Vec<u8> = range2.iter().map(|v| self.text[*v]).collect();
+        //println!(
+        //    "BEFORE: vals1 {} vals2 {}",
+        //    String::from_utf8(vals1).unwrap(),
+        //    String::from_utf8(vals2).unwrap(),
+        //);
+
+        if !self.seed_mask.is_empty() {
+            //println!("seed_mask {:?}", self.seed_mask);
+            let mut tmp1 = vec![];
+            for pos in &self.seed_mask {
+                if let Some(val) = range1.get(*pos) {
+                    tmp1.push(*val);
+                } else {
+                    break;
+                }
             }
-        } else {
-            unsafe {
-                T::from_usize(
-                    self.seed_mask.iter()
-                        .map(|&o| start1 + o)
-                        .filter(|&pos| pos < self.text_len.to_usize())
-                        .zip(
-                            self.seed_mask.iter()
-                                .map(|&o| start2 + o)
-                                .filter(|&pos| pos < self.text_len.to_usize()),
-                        )
-                        .take_while(|(a, b)| {
-                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-                        })
-                        .count(),
-                )
+            range1 = tmp1.clone();
+
+            let mut tmp2 = vec![];
+            for pos in &self.seed_mask {
+                if let Some(val) = range2.get(*pos) {
+                    tmp2.push(*val);
+                } else {
+                    break;
+                }
             }
+            range2 = tmp2.clone();
+            //println!("AFTER: range1 {tmp1:?} range2 {tmp2:?}");
         }
+        //let vals1: Vec<u8> = range1.iter().map(|v| self.text[*v]).collect();
+        //let vals2: Vec<u8> = range2.iter().map(|v| self.text[*v]).collect();
+
+        // Original
+        //unsafe {
+        //    T::from_usize(
+        //        (start1..end1)
+        //            .zip(start2..end2)
+        //            .take_while(|(a, b)| {
+        //                self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+        //            })
+        //            .count(),
+        //    )
+        //}
+
+        // Return count using subset
+        unsafe {
+            T::from_usize(
+                range1
+                    .into_iter()
+                    .zip(range2.into_iter())
+                    .take_while(|(a, b)| {
+                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+                    })
+                    .count(),
+            )
+        }
+
+        //let count = unsafe {
+        //    T::from_usize(
+        //        range1
+        //            .into_iter()
+        //            .zip(range2.into_iter())
+        //            .take_while(|(a, b)| {
+        //                self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+        //            })
+        //            .count(),
+        //    )
+        //};
+        //
+        //if self.seed_mask.is_empty() {
+        //    count
+        //} else {
+        //    if count == self.seed_mask.len() {
+        //        // Return last element
+        //        self.seed_mask[count - 1]
+        //    } else {
+        //        // Return next mask position minus 1
+        //        self.seed_mask[count] - 1
+        //    }
+        //}
     }
 
     // --------------------------------------------------
@@ -261,7 +340,16 @@ where
             } else {
                 self.text_len
             };
+
+            // Make a "find_lcp_full_offset" that calls "find_lcp" and 
+            // then uses mask to find full length of match
             let len_lcp = self.find_lcp(s1, s2, max_query_len).to_usize();
+
+            // No need to look at next character
+            //if len_lcp == max_query_len {
+            //    what to return?
+            //    false
+            //}
 
             match (
                 self.text.get(s1.to_usize() + len_lcp),
@@ -560,6 +648,14 @@ where
                     let len_lcp =
                         m + self.find_lcp(x[idx_x] + m, y[idx_y] + m, context - m);
 
+                    //if !self.seed_mask.is_empty() {
+                    //    if len_lcp == self.seed_mask.len() {
+                    //        len_lcp = self.seed_mask[len_lcp.to_usize()]
+                    //    } else {
+                    //        len_lcp = self.seed_mask[len_lcp + 1] - 1
+                    //    }
+                    //}
+
                     // If the len of the LCP is the entire shorter
                     // sequence, take that.
                     if len_lcp == max_n {
@@ -694,6 +790,14 @@ where
         // Sequence starts
         bytes_out += file.write(vec_to_slice_u8(&self.sequence_starts))?;
 
+        // Seed mask
+        let seed_mask_len = self.seed_mask_orig.len();
+        bytes_out += file.write(&usize_to_bytes(seed_mask_len))?;
+        if seed_mask_len > 0 {
+            file.write_all(&self.seed_mask_orig)?;
+            bytes_out += seed_mask_len;
+        }
+
         // Text
         let text_pos = bytes_out;
         file.write_all(&self.text)?;
@@ -749,10 +853,10 @@ mod test {
     use anyhow::Result;
 
     #[test]
-    fn test_invalid_mask() -> Result<()> {
+    fn test_seed_mask() -> Result<()> {
         let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
-            text,
+            text: text.clone(),
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -766,6 +870,43 @@ mod test {
         let res: Result<SufrBuilder<u32>> = SufrBuilder::new(args);
         assert!(res.is_err());
         assert_eq!(res.unwrap_err().to_string(), "Invalid mask: 1234");
+
+        let args = SufrBuilderArgs {
+            text: text.clone(),
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+            seed_mask: Some("0000".to_string()),
+        };
+        let res: Result<SufrBuilder<u32>> = SufrBuilder::new(args);
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "Seed mask must contain at least one 1"
+        );
+
+        let args = SufrBuilderArgs {
+            text: text.clone(),
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+            seed_mask: Some("1010".to_string()),
+        };
+        let res: Result<SufrBuilder<u32>> = SufrBuilder::new(args);
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert_eq!(res.seed_mask_orig, b"1010");
+        assert_eq!(res.max_query_len, 4);
 
         Ok(())
     }

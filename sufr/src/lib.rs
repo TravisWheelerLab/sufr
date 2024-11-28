@@ -92,7 +92,7 @@ pub struct CreateArgs {
     pub num_partitions: usize,
 
     /// Max context
-    #[arg(short, long, value_name = "CONTEXT")]
+    #[arg(short, long, value_name = "CONTEXT", conflicts_with = "seed_mask")]
     pub max_query_len: Option<usize>,
 
     /// Output file
@@ -155,6 +155,18 @@ pub struct ExtractArgs {
 #[derive(Debug, Parser)]
 #[command(about, alias = "ls")]
 pub struct ListArgs {
+    /// Show rank column
+    #[arg(short('r'), long)]
+    pub show_rank: bool,
+
+    /// Show suffix column
+    #[arg(short('s'), long)]
+    pub show_suffix: bool,
+
+    /// Show LCP column
+    #[arg(short('L'), long)]
+    pub show_lcp: bool,
+
     /// Length of suffixes to show
     #[arg(short, long, value_name = "LEN")]
     pub len: Option<usize>,
@@ -505,7 +517,7 @@ where
     let text_len = sufr_file.text_len.to_usize();
     let suffix_len = args.len.unwrap_or(text_len);
 
-    writeln!(output, "{:>width$} {:>width$} {:>width$}", "R", "S", "L")?;
+    //writeln!(output, "{:>width$} {:>width$} {:>width$}", "R", "S", "L")?;
 
     let mut print = |rank: usize, suffix: usize, lcp: usize| -> Result<()> {
         let end = if suffix + suffix_len > text_len {
@@ -513,9 +525,27 @@ where
         } else {
             suffix + suffix_len
         };
+
+        let rank_display = if args.show_rank {
+            format!("{rank:width$} ")
+        } else {
+            "".to_string()
+        };
+
+        let suffix_display = if args.show_suffix {
+            format!("{suffix:width$} ")
+        } else {
+            "".to_string()
+        };
+        let lcp_display = if args.show_lcp {
+            format!("{lcp:width$} ")
+        } else {
+            "".to_string()
+        };
+
         writeln!(
             output,
-            "{rank:width$} {suffix:width$} {lcp:width$}: {}",
+            "{rank_display}{suffix_display}{lcp_display}{}",
             String::from_utf8(sufr_file.text[suffix..end].to_vec())?
         )?;
         Ok(())
@@ -753,6 +783,14 @@ where
         num_fmt.format(",.0", sufr_file.max_query_len.to_usize() as f64),
     ]);
     rows.push(vec![
+        "Seed mask".to_string(),
+        if sufr_file.seed_mask.is_empty() {
+            "None".to_string()
+        } else {
+            String::from_utf8(sufr_file.seed_mask.to_vec())?
+        },
+    ]);
+    rows.push(vec![
         "Num sequences".to_string(),
         num_fmt.format(",.0", sufr_file.num_sequences.to_usize() as f64),
     ]);
@@ -781,7 +819,7 @@ where
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::{parse_pos, parse_index};
+    use super::{parse_index, parse_pos};
     use pretty_assertions::assert_eq;
 
     #[test]
