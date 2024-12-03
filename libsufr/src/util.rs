@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_read_sequence_file() -> Result<()> {
-        let file = "tests/inputs/2.fa";
+        let file = "../data/inputs/2.fa";
         let sequence_delimiter = b'N';
         let res = read_sequence_file(file, sequence_delimiter);
         assert!(res.is_ok());
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_read_text_length() -> Result<()> {
-        let sufr_file = "tests/inputs/2.sufr";
+        let sufr_file = "../data/inputs/2.sufr";
         let res = read_text_length(sufr_file);
         assert!(res.is_ok());
         let len = res.unwrap();

@@ -7,11 +7,11 @@ use std::fs;
 use tempfile::NamedTempFile;
 
 const PRG: &str = "sufr";
-const SEQ1: &str = "tests/inputs/1.fa";
-const SEQ2: &str = "tests/inputs/2.fa";
-const SEQ3: &str = "tests/inputs/3.fa";
-const SUFR1: &str = "tests/expected/1.sufr";
-const SUFR2: &str = "tests/expected/2.sufr";
+const SEQ1: &str = "../data/inputs/1.fa";
+const SEQ2: &str = "../data/inputs/2.fa";
+const SEQ3: &str = "../data/inputs/3.fa";
+const SUFR1: &str = "../data/expected/1.sufr";
+const SUFR2: &str = "../data/expected/2.sufr";
 
 struct CountOptions {
     queries: Vec<String>,
@@ -31,7 +31,10 @@ struct ExtractOptions {
 }
 
 struct ListOptions {
-    len: Option<usize>,
+    show_rank: bool,
+    show_suffix: bool,
+    show_lcp: bool,
+    suffix_len: Option<usize>,
 }
 
 struct LocateOptions {
@@ -97,7 +100,7 @@ fn check(filename: &str) -> Result<()> {
 #[test]
 fn create_empty_dies() -> Result<()> {
     Command::cargo_bin(PRG)?
-        .args(["create", "tests/expected/empty.sa"])
+        .args(["create", "../data/expected/empty.sa"])
         .assert()
         .failure();
     Ok(())
@@ -108,7 +111,7 @@ fn create_empty_dies() -> Result<()> {
 fn create_seq1() -> Result<()> {
     create(
         SEQ1,
-        "tests/expected/1.sufr",
+        "../data/expected/1.sufr",
         CreateOptions {
             allow_ambiguity: false,
             ignore_softmask: false,
@@ -122,7 +125,7 @@ fn create_seq1() -> Result<()> {
 fn create_seq1_allow_ambiguity() -> Result<()> {
     create(
         SEQ1,
-        "tests/expected/1n.sufr",
+        "../data/expected/1n.sufr",
         CreateOptions {
             allow_ambiguity: true,
             ignore_softmask: false,
@@ -136,7 +139,7 @@ fn create_seq1_allow_ambiguity() -> Result<()> {
 fn create_seq2() -> Result<()> {
     create(
         SEQ2,
-        "tests/expected/2.sufr",
+        "../data/expected/2.sufr",
         CreateOptions {
             allow_ambiguity: false,
             ignore_softmask: false,
@@ -150,7 +153,7 @@ fn create_seq2() -> Result<()> {
 fn create_seq2_sequence_delimiter() -> Result<()> {
     create(
         SEQ2,
-        "tests/expected/2d.sufr",
+        "../data/expected/2d.sufr",
         CreateOptions {
             allow_ambiguity: false,
             ignore_softmask: false,
@@ -164,7 +167,7 @@ fn create_seq2_sequence_delimiter() -> Result<()> {
 fn create_seq2_allow_ambiguity() -> Result<()> {
     create(
         SEQ2,
-        "tests/expected/2n.sufr",
+        "../data/expected/2n.sufr",
         CreateOptions {
             allow_ambiguity: true,
             ignore_softmask: false,
@@ -178,7 +181,7 @@ fn create_seq2_allow_ambiguity() -> Result<()> {
 fn create_seq2_ignore_softmask() -> Result<()> {
     create(
         SEQ2,
-        "tests/expected/2s.sufr",
+        "../data/expected/2s.sufr",
         CreateOptions {
             allow_ambiguity: false,
             ignore_softmask: true,
@@ -192,7 +195,7 @@ fn create_seq2_ignore_softmask() -> Result<()> {
 fn create_seq2_allow_ambiguity_ignore_softmask() -> Result<()> {
     create(
         SEQ2,
-        "tests/expected/2ns.sufr",
+        "../data/expected/2ns.sufr",
         CreateOptions {
             allow_ambiguity: true,
             ignore_softmask: true,
@@ -206,7 +209,7 @@ fn create_seq2_allow_ambiguity_ignore_softmask() -> Result<()> {
 fn create_seq3() -> Result<()> {
     create(
         SEQ3,
-        "tests/expected/3.sufr",
+        "../data/expected/3.sufr",
         CreateOptions {
             allow_ambiguity: false,
             ignore_softmask: false,
@@ -218,7 +221,7 @@ fn create_seq3() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn check_seq1() -> Result<()> {
-    check("tests/expected/1.sufr")
+    check("../data/expected/1.sufr")
 }
 
 // --------------------------------------------------
@@ -412,7 +415,19 @@ fn extract_seq1_pre_1_suf_3() -> Result<()> {
 fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
     let mut args = vec!["list".to_string(), filename.to_string()];
 
-    if let Some(len) = opts.len {
+    if opts.show_suffix {
+        args.push("-s".to_string());
+    }
+
+    if opts.show_rank {
+        args.push("-r".to_string());
+    }
+
+    if opts.show_lcp {
+        args.push("-L".to_string());
+    }
+
+    if let Some(len) = opts.suffix_len {
         args.push("-l".to_string());
         args.push(len.to_string());
     }
@@ -429,21 +444,25 @@ fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn list_sufr1() -> Result<()> {
+fn list_sufr1_no_opts() -> Result<()> {
     list(
         SUFR1,
-        ListOptions { len: None },
+        ListOptions {
+            show_lcp: false,
+            show_suffix: false,
+            show_rank: false,
+            suffix_len: None,
+        },
         &[
-            " R  S  L",
-            " 0 10  0: $",
-            " 1  6  0: ACGT$",
-            " 2  0  4: ACGTNNACGT$",
-            " 3  7  0: CGT$",
-            " 4  1  3: CGTNNACGT$",
-            " 5  8  0: GT$",
-            " 6  2  2: GTNNACGT$",
-            " 7  9  0: T$",
-            " 8  3  1: TNNACGT$",
+            "$",
+            "ACGT$",
+            "ACGTNNACGT$",
+            "CGT$",
+            "CGTNNACGT$",
+            "GT$",
+            "GTNNACGT$",
+            "T$",
+            "TNNACGT$",
             "",
         ]
         .join("\n"),
@@ -452,22 +471,124 @@ fn list_sufr1() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
+fn list_sufr1_show_suffix() -> Result<()> {
+    list(
+        SUFR1,
+        ListOptions {
+            show_lcp: false,
+            show_suffix: true,
+            show_rank: false,
+            suffix_len: None,
+        },
+        &[
+            "10 $",
+            " 6 ACGT$",
+            " 0 ACGTNNACGT$",
+            " 7 CGT$",
+            " 1 CGTNNACGT$",
+            " 8 GT$",
+            " 2 GTNNACGT$",
+            " 9 T$",
+            " 3 TNNACGT$",
+            "",
+        ]
+        .join("\n"),
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn list_sufr1_show_lcp() -> Result<()> {
+    list(
+        SUFR1,
+        ListOptions {
+            show_lcp: true,
+            show_suffix: false,
+            show_rank: false,
+            suffix_len: None,
+        },
+        &[
+            " 0 $",
+            " 0 ACGT$",
+            " 4 ACGTNNACGT$",
+            " 0 CGT$",
+            " 3 CGTNNACGT$",
+            " 0 GT$",
+            " 2 GTNNACGT$",
+            " 0 T$",
+            " 1 TNNACGT$",
+            "",
+        ]
+        .join("\n"),
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn list_sufr1_show_rank_suffix_lcp() -> Result<()> {
+    list(
+        SUFR1,
+        ListOptions {
+            show_lcp: true,
+            show_suffix: true,
+            show_rank: true,
+            suffix_len: None,
+        },
+        &[
+            " 0 10  0 $",
+            " 1  6  0 ACGT$",
+            " 2  0  4 ACGTNNACGT$",
+            " 3  7  0 CGT$",
+            " 4  1  3 CGTNNACGT$",
+            " 5  8  0 GT$",
+            " 6  2  2 GTNNACGT$",
+            " 7  9  0 T$",
+            " 8  3  1 TNNACGT$",
+            "",
+        ]
+        .join("\n"),
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn list_sufr1_show_rank() -> Result<()> {
+    list(
+        SUFR1,
+        ListOptions {
+            show_lcp: false,
+            show_suffix: false,
+            show_rank: true,
+            suffix_len: None,
+        },
+        &[
+            " 0 $",
+            " 1 ACGT$",
+            " 2 ACGTNNACGT$",
+            " 3 CGT$",
+            " 4 CGTNNACGT$",
+            " 5 GT$",
+            " 6 GTNNACGT$",
+            " 7 T$",
+            " 8 TNNACGT$",
+            "",
+        ]
+        .join("\n"),
+    )
+}
+// --------------------------------------------------
+#[test]
 fn list_sufr1_len_3() -> Result<()> {
     list(
         SUFR1,
-        ListOptions { len: Some(3) },
+        ListOptions {
+            show_lcp: false,
+            show_suffix: false,
+            show_rank: false,
+            suffix_len: Some(3),
+        },
         &[
-            " R  S  L",
-            " 0 10  0: $",
-            " 1  6  0: ACG",
-            " 2  0  4: ACG",
-            " 3  7  0: CGT",
-            " 4  1  3: CGT",
-            " 5  8  0: GT$",
-            " 6  2  2: GTN",
-            " 7  9  0: T$",
-            " 8  3  1: TNN",
-            "",
+            "$", "ACG", "ACG", "CGT", "CGT", "GT$", "GTN", "T$", "TNN", "",
         ]
         .join("\n"),
     )
@@ -545,7 +666,7 @@ fn summarize_sufr1() -> Result<()> {
     summarize(
         SUFR1,
         vec![
-            ("File Size", "164 bytes"),
+            ("File Size", "172 bytes"),
             ("File Version", &OUTFILE_VERSION.to_string()),
             ("DNA", "true"),
             ("Allow Ambiguity", "false"),
@@ -553,6 +674,7 @@ fn summarize_sufr1() -> Result<()> {
             ("Text Length", "11"),
             ("Num Suffixes", "9"),
             ("Max query len", "0"),
+            ("Seed mask", "None"),
             ("Num sequences", "1"),
             ("Sequence starts", "0"),
             ("Headers", "1"),

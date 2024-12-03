@@ -1,24 +1,16 @@
-CHR1  = ../data/chr1.fa
-HUMAN = ../data/hs1.fa
+CHR1    = ../data/chr1.fa
+HUMAN   = ../data/hs1.fa
 ELEGANS = ../data/elegans.fa
-SEQ1  = sufr/tests/inputs/1.fa
-SEQ2  = sufr/tests/inputs/2.fa
-SEQ3  = sufr/tests/inputs/3.fa
-SEQA  = libsufr/tests/inputs/a.fa
-SMOL  = libsufr/tests/inputs/smol.fa
-ABBA  = libsufr/tests/inputs/abba.fa
-SUFR  = ./target/release/sufr
+SEQ1    = data/inputs/1.fa
+SEQ2    = data/inputs/2.fa
+SEQ3    = data/inputs/3.fa
+SEQA    = data/inputs/a.fa
+SMOL    = data/inputs/smol.fa
+ABBA    = data/inputs/abba.fa
+SUFR    = ./target/release/sufr
 
-#CREATE = cargo run -- create --log info
 CREATE_RELEASE = /usr/bin/time -l $(SUFR) --log info create 
 CREATE_DEBUG = cargo run -- --log debug create 
-
-SEARCH = cargo run -- search
-
-#READ   = cargo run -- check
-#CHECK  = cargo run -- read
-#CHECK  = $(SUFR) read
-#READ   = $(SUFR) check
 
 perf:
 	perf record --call-graph dwarf $(SUFR) create -t 16 --log info $(CHR1)
@@ -27,8 +19,8 @@ r1:
 	$(SEARCH) C 1.sufr
 
 testfiles: s1 s1s s1n s2 s2d s2n s2s s2ns s3 abba
-	cp [1-3]*.sufr sufr/tests/expected/
-	cp abba.sufr libsufr/tests/inputs/
+	cp [1-3]*.sufr data/expected/
+	cp abba.sufr data/inputs/
 
 smol:
 	$(CREATE_DEBUG) $(SMOL) --dna -m 4

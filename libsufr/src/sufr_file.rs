@@ -616,7 +616,7 @@ mod test {
     #[test]
     fn test_extract() -> Result<()> {
         let mut sufr_file: SufrFile<u32> =
-            SufrFile::read("tests/inputs/1.sufr")?;
+            SufrFile::read("../data/inputs/1.sufr")?;
 
         let opts = ExtractOptions {
             queries: vec!["AC".to_string(), "GT".to_string(), "XX".to_string()],
@@ -700,7 +700,7 @@ mod test {
         // 13   6: BABBABAB#
         // 14   8: BBABAB#
 
-        let mut sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
+        let mut sufr_file: SufrFile<u32> = SufrFile::read("../data/inputs/abba.sufr")?;
 
         for val in &[true, false] {
             let args = SearchOptions {
@@ -933,7 +933,7 @@ mod test {
     // --------------------------------------------------
     #[test]
     fn test_file_access() -> Result<()> {
-        let input_file = "tests/inputs/abba.sufr";
+        let input_file = "../data/inputs/abba.sufr";
         let mut sufr_file: SufrFile<u32> = SufrFile::read(input_file)?;
         let suf_by_rank = [
             14, //  0: #
@@ -996,7 +996,7 @@ mod test {
     //fn test_compare() -> Result<()> {
     //    // 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14
     //    // A  A  B  A  B  A  B  A  B  B  A  B  A  B  #
-    //    let sufr_file: SufrFile<u32> = SufrFile::read("tests/inputs/abba.sufr")?;
+    //    let sufr_file: SufrFile<u32> = SufrFile::read("../data/inputs/abba.sufr")?;
     //
     //    // Compare to B to B with no skip
     //    let query = "B".as_bytes();

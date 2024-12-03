@@ -19,7 +19,7 @@ mod tests {
 
     #[test]
     fn test_write_read_suffix_file_32() -> Result<()> {
-        let seq_file = "tests/inputs/2.fa";
+        let seq_file = "../data/inputs/2.fa";
         let sequence_delimiter = b'N';
         let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let args = SufrBuilderArgs {
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_write_read_suffix_file_64() -> Result<()> {
-        let seq_file = "tests/inputs/1.fa";
+        let seq_file = "../data/inputs/1.fa";
         let sequence_delimiter = b'N';
         let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let args = SufrBuilderArgs {
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_subsample_suffix_array() -> Result<()> {
-        let seq_file = "tests/inputs/smol.fa";
+        let seq_file = "../data/inputs/smol.fa";
         let sequence_delimiter = b'N';
         let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let builder_args = SufrBuilderArgs {
