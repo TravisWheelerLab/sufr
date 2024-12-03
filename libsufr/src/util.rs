@@ -3,7 +3,37 @@ use crate::types::{
 };
 use anyhow::{anyhow, bail, Result};
 use needletail::parse_fastx_file;
+use regex::Regex;
 use std::{fs::File, io::Read, slice};
+
+// --------------------------------------------------
+pub fn seed_mask_difference(positions: &[usize]) -> Vec<usize> {
+    // Mask: 1001101
+    // M: [0, 3, 4, 6] 
+    // U: [0, 1, 2, 3]
+    // D: [0, 2, 2, 3]
+    positions
+        .iter()
+        .enumerate()
+        .map(|(i, &m)| m - i)
+        .collect()
+}
+
+// --------------------------------------------------
+pub fn seed_mask_positions(bytes: &[u8]) -> Vec<usize> {
+    // b"101" -> [0, 2]
+    bytes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &b)| (b == b'1').then_some(i))
+        .collect()
+}
+
+// --------------------------------------------------
+pub fn valid_seed_mask(mask: &str) -> bool {
+    let seed_re = Regex::new("^1+0[01]*1$").unwrap();
+    seed_re.is_match(mask)
+}
 
 // --------------------------------------------------
 pub fn vec_to_slice_u8<T>(vec: &[T]) -> &[u8]
@@ -105,10 +135,33 @@ pub fn usize_to_bytes(value: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_sequence_file, read_text_length, slice_u8_to_vec, usize_to_bytes,
-        vec_to_slice_u8,
+        read_sequence_file, read_text_length, seed_mask_positions, slice_u8_to_vec,
+        usize_to_bytes, valid_seed_mask, vec_to_slice_u8,
+        seed_mask_difference
     };
     use anyhow::Result;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_seed_mask_positions() -> Result<()> {
+        assert_eq!(seed_mask_positions(b"101"), [0, 2]);
+        assert_eq!(seed_mask_positions(b"101101"), [0, 2, 3, 5]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_seed_mask_difference() -> Result<()> {
+        // Empty is not a failure
+        assert_eq!(seed_mask_difference(&[]), []);
+
+        //              0  1
+        // "100001" -> [0, 5]
+        assert_eq!(seed_mask_difference(&[0, 5]), [0, 4]);
+        //               0  1  2  3
+        // "1001101" -> [0, 3, 4, 6] 
+        assert_eq!(seed_mask_difference(&[0, 3, 4, 6]), [0, 2, 2, 3]);
+        Ok(())
+    }
 
     #[test]
     fn test_read_sequence_file() -> Result<()> {
@@ -212,6 +265,24 @@ mod tests {
             res,
             &[0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255]
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_valid_seed_mask() -> Result<()> {
+        let valid = ["101", "1001", "1101", "10101", "1110110110100001"];
+        let invalid = [
+            "", "abc", "1", "11", "111", "0", "00", "0111", "11100", "1a01",
+        ];
+
+        for pattern in valid {
+            assert!(valid_seed_mask(pattern));
+        }
+
+        for pattern in invalid {
+            assert!(!valid_seed_mask(pattern));
+        }
 
         Ok(())
     }

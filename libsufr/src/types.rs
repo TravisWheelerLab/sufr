@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display},
     hash::Hash,
     ops::Range,
-    ops::{Add, Div, Sub},
+    ops::{Add, AddAssign, Div, Sub},
 };
 
 // --------------------------------------------------
@@ -55,6 +55,7 @@ pub struct SequenceFileData {
 // --------------------------------------------------
 pub trait Int:
     Debug
+    + AddAssign
     + Add<Output = Self>
     + Sub<Output = Self>
     + Div<Output = Self>

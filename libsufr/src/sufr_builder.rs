@@ -1,12 +1,14 @@
 use crate::{
     types::{FromUsize, Int, OUTFILE_VERSION, SENTINEL_CHARACTER},
-    util::{slice_u8_to_vec, usize_to_bytes, vec_to_slice_u8},
+    util::{
+        seed_mask_difference, seed_mask_positions, slice_u8_to_vec, usize_to_bytes,
+        valid_seed_mask, vec_to_slice_u8,
+    },
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
 use rand::Rng;
 use rayon::prelude::*;
-use regex::Regex;
 use std::{
     cmp::{max, min, Ordering},
     collections::HashSet,
@@ -34,6 +36,7 @@ where
 }
 
 // --------------------------------------------------
+#[derive(Debug)]
 struct PartitionBuildResult<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
@@ -135,7 +138,7 @@ where
     pub text: Vec<u8>,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
-    pub seed_mask_orig: Vec<u8>,
+    pub seed_mask_orig: Vec<char>,
     pub seed_mask: Vec<usize>,
 }
 
@@ -168,22 +171,20 @@ where
         }
 
         // Validate seed mask before max_query_len
-        let (seed_mask_orig, seed_mask): (Vec<u8>, Vec<usize>) = match args.seed_mask {
+        let (seed_mask_orig, seed_mask): (Vec<char>, Vec<usize>) = match args.seed_mask
+        {
             Some(mask) => {
-                let seed_re = Regex::new("^[01]+$").unwrap();
-                if !seed_re.is_match(&mask) {
+                if !valid_seed_mask(&mask) {
                     bail!("Invalid mask: {mask}");
                 }
+
                 let bytes: Vec<u8> = mask.bytes().collect();
-                let mask: Vec<usize> = bytes
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &b)| (b == b'1').then_some(i))
-                    .collect();
-                if mask.is_empty() {
+                let mask_pos = seed_mask_positions(&bytes);
+                if mask_pos.is_empty() {
                     bail!("Seed mask must contain at least one 1");
                 }
-                (bytes, mask)
+                let chars: Vec<_> = mask.chars().collect();
+                (chars, mask_pos)
             }
             None => (vec![], vec![]),
         };
@@ -216,6 +217,7 @@ where
             seed_mask_orig,
             seed_mask,
         };
+        dbg!(&sa);
         sa.sort(args.num_partitions)?;
         Ok(sa)
     }
@@ -230,148 +232,79 @@ where
     }
 
     // --------------------------------------------------
-    // TODO: Fix merge conflict
-//    #[inline(always)]
-//    pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
-//        //println!("start1 {start1} start2 {start2} len {len}");
-//        let start1 = start1.to_usize();
-//        let start2 = start2.to_usize();
-//<<<<<<< HEAD
-//        let len = len.to_usize();
-//        let text_len = self.text_len.to_usize();
-//        let end1 = min(start1 + len, text_len);
-//        let end2 = min(start2 + len, text_len);
-//
-//        // TODO: This is probably bad to collect potentially huge ranges
-//        let mut range1: Vec<_> = (start1..end1).collect();
-//        let mut range2: Vec<_> = (start2..end2).collect();
-//
-//        //println!("BEFORE: range1 {range1:?} range2 {range2:?}");
-//        //let vals1: Vec<u8> = range1.iter().map(|v| self.text[*v]).collect();
-//        //let vals2: Vec<u8> = range2.iter().map(|v| self.text[*v]).collect();
-//        //println!(
-//        //    "BEFORE: vals1 {} vals2 {}",
-//        //    String::from_utf8(vals1).unwrap(),
-//        //    String::from_utf8(vals2).unwrap(),
-//        //);
-//
-//        if !self.seed_mask.is_empty() {
-//            //println!("seed_mask {:?}", self.seed_mask);
-//            let mut tmp1 = vec![];
-//            for pos in &self.seed_mask {
-//                if let Some(val) = range1.get(*pos) {
-//                    tmp1.push(*val);
-//                } else {
-//                    break;
-//                }
-//            }
-//            range1 = tmp1.clone();
-//
-//            let mut tmp2 = vec![];
-//            for pos in &self.seed_mask {
-//                if let Some(val) = range2.get(*pos) {
-//                    tmp2.push(*val);
-//                } else {
-//                    break;
-//                }
-//            }
-//            range2 = tmp2.clone();
-//            //println!("AFTER: range1 {tmp1:?} range2 {tmp2:?}");
-//        }
-//        //let vals1: Vec<u8> = range1.iter().map(|v| self.text[*v]).collect();
-//        //let vals2: Vec<u8> = range2.iter().map(|v| self.text[*v]).collect();
-//
-//        // Original
-//        //unsafe {
-//        //    T::from_usize(
-//        //        (start1..end1)
-//        //            .zip(start2..end2)
-//        //            .take_while(|(a, b)| {
-//        //                self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-//        //            })
-//        //            .count(),
-//        //    )
-//        //}
-//
-//        // Return count using subset
-//        unsafe {
-//            T::from_usize(
-//                range1
-//                    .into_iter()
-//                    .zip(range2.into_iter())
-//                    .take_while(|(a, b)| {
-//                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-//                    })
-//                    .count(),
-//            )
-//=======
-//
-//        match self.seed_mask {
-//            Some(mask) => unsafe {
-//                T::from_usize(
-//                    mask.iter()
-//                        .map(|&o| start1 + o)
-//                        .filter(|&pos| pos < self.text_len.to_usize())
-//                        .zip(
-//                            mask.iter()
-//                                .map(|&o| start2 + o)
-//                                .filter(|&pos| pos < self.text_len.to_usize()),
-//                        )
-//                        .take_while(|(a, b)| {
-//                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-//                        })
-//                        .count(),
-//                )
-//            },
-//            None => {
-//                let len = len.to_usize();
-//                let end1 = min(start1 + len, self.text_len.to_usize());
-//                let end2 = min(start2 + len, self.text_len.to_usize());
-//
-//                unsafe {
-//                    T::from_usize(
-//                        (start1..end1)
-//                            .zip(start2..end2)
-//                            .take_while(|(a, b)| {
-//                                self.text.get_unchecked(*a)
-//                                    == self.text.get_unchecked(*b)
-//                            })
-//                            .count(),
-//                    )
-//                }
-//            }
-//>>>>>>> 6cbaef0471bc70853ec03b49f37e1ee2afd73ccd
-//        }
-//
-//        //let count = unsafe {
-//        //    T::from_usize(
-//        //        range1
-//        //            .into_iter()
-//        //            .zip(range2.into_iter())
-//        //            .take_while(|(a, b)| {
-//        //                self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-//        //            })
-//        //            .count(),
-//        //    )
-//        //};
-//        //
-//        //if self.seed_mask.is_empty() {
-//        //    count
-//        //} else {
-//        //    if count == self.seed_mask.len() {
-//        //        // Return last element
-//        //        self.seed_mask[count - 1]
-//        //    } else {
-//        //        // Return next mask position minus 1
-//        //        self.seed_mask[count] - 1
-//        //    }
-//        //}
-//    }
+    #[inline(always)]
+    pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
+        let start1 = start1.to_usize();
+        let start2 = start2.to_usize();
+        let seed_diff: Vec<usize> = seed_mask_difference(&self.seed_mask);
+        let text_len = self.text_len.to_usize();
+        let (end1, end2) = if seed_diff.is_empty() {
+            let len = len.to_usize();
+            (min(start1 + len, text_len), min(start2 + len, text_len))
+        } else {
+            // Get the actual span of the spaced seeds
+            let a_len = self
+                .seed_mask
+                .iter()
+                .map(|offset| start1 + offset)
+                .filter(|&v| v < text_len)
+                .count();
+            let b_len = self
+                .seed_mask
+                .iter()
+                .map(|offset| start2 + offset)
+                .filter(|&v| v < text_len)
+                .count();
+            (start1 + a_len, start2 + b_len)
+        };
+
+        //println!("1: {start1}-{end1} 2: {start2}-{end2}");
+
+        unsafe {
+            return T::from_usize(
+                (start1..end1)
+                    .zip(start2..end2)
+                    .enumerate()
+                    .take_while(|(i, (a, b))| {
+                        let add = seed_diff.get(*i).unwrap_or(&0);
+                        //println!(">>> {i}: a {a} b {b} + {add}");
+                        //println!("a[{}] = {:?}", a + add, self.text.get(a + add));
+                        //println!("b[{}] = {:?}", b + add, self.text.get(b + add));
+                        //println!();
+                        self.text.get_unchecked(*a + add)
+                            == self.text.get_unchecked(*b + add)
+                    })
+                    .count(),
+            );
+        }
+    }
+
+    // --------------------------------------------------
+    #[inline(always)]
+    pub fn find_lcp_full_offset(&self, start1: T, start2: T, len: T) -> T {
+        let mut count = self.find_lcp(start1, start2, len).to_usize();
+
+        // If there were some found in common
+        if count > 0 {
+            // Then add the offset from the seed difference
+            // AND the *next* offset, if possible
+            let seed_diff = seed_mask_difference(&self.seed_mask);
+            for val in &[count - 1, count] {
+                if let Some(add) = seed_diff.get(*val) {
+                    count += add;
+                }
+            }
+        }
+
+        T::from_usize(count)
+    }
 
     // --------------------------------------------------
     #[inline(always)]
     pub fn is_less(&self, s1: T, s2: T) -> bool {
+        println!(">>> IS LESS s1 {s1} s2 {s2}");
         if s1 == s2 {
+            println!(">>> SAME SUFFIX NOT LESS");
             false
         } else {
             let max_query_len = if self.max_query_len > T::default() {
@@ -380,35 +313,53 @@ where
                 self.text_len
             };
 
-            // Make a "find_lcp_full_offset" that calls "find_lcp" and 
-            // then uses mask to find full length of match
-            let len_lcp = self.find_lcp(s1, s2, max_query_len).to_usize();
+            let len_lcp = self.find_lcp_full_offset(s1, s2, max_query_len).to_usize();
+            println!(">>> MQL {max_query_len} LCP {len_lcp}");
 
-            // No need to look at next character
-            //if len_lcp == max_query_len {
-            //    what to return?
-            //    false
-            //}
-
-            match (
-                self.text.get(s1.to_usize() + len_lcp),
-                self.text.get(s2.to_usize() + len_lcp),
-            ) {
-                (Some(a), Some(b)) => a < b,
-                (None, Some(_)) => true,
-                _ => false,
+            if len_lcp == max_query_len.to_usize() {
+                // The strings are equal
+                false
+            } else {
+                // Look at the next character
+                println!(
+                    ">>> COMPARE {:?} {:?}",
+                    self.text.get(s1.to_usize() + len_lcp),
+                    self.text.get(s2.to_usize() + len_lcp),
+                );
+                match (
+                    self.text.get(s1.to_usize() + len_lcp),
+                    self.text.get(s2.to_usize() + len_lcp),
+                ) {
+                    (Some(a), Some(b)) => a < b,
+                    (None, Some(_)) => true,
+                    _ => false,
+                }
             }
         }
     }
 
     // --------------------------------------------------
     pub fn upper_bound(&self, target: T, pivots: &[T]) -> usize {
-        // See if target is less than the first element
-        if pivots.is_empty() || self.is_less(target, pivots[0]) {
+        println!("target {target} pivots {pivots:?}");
+        //dbg!(self.is_less(target, pivots[0]));
+        dbg!(pivots.first().map(|&v| self.is_less(target, v)));
+        //dbg!(pivots.last().map(|&v| self.is_less(v, target)));
+
+        // If pivots is empty (no partitions) or
+        // If target is less than the first element
+        if pivots.first().map_or(false, |&v| self.is_less(target, v)) {
+            println!("ONE: 0");
             0
+        } else if pivots.last().map_or(false, |&v| !self.is_less(target, v)) {
+            println!("TWO: {}", pivots.len());
+            // If target is greater than the last element
+            pivots.len()
         } else {
+            println!("THREE");
             // Find where all the values are less than target
             let i = pivots.partition_point(|&p| self.is_less(p, target));
+            dbg!(i);
+            dbg!(pivots.get(i));
 
             // If the value at the partition is the same as the target
             if pivots.get(i).map_or(false, |&v| v == target) {
@@ -441,10 +392,12 @@ where
         } else {
             max_partitions
         };
+        dbg!(num_partitions);
 
         // Randomly select some pivots
         let now = Instant::now();
         let pivot_sa = self.select_pivots(self.text.len(), num_partitions);
+        dbg!(&pivot_sa);
         let num_pivots = pivot_sa.len();
         info!(
             "Selected {num_pivots} pivot{} in {:?}",
@@ -507,6 +460,7 @@ where
     // --------------------------------------------------
     pub fn sort(&mut self, num_partitions: usize) -> Result<()> {
         let mut partition_build = self.partition(num_partitions)?;
+
         // Be sure to round up to get all the suffixes
         let num_per_partition = (partition_build.num_suffixes as f64
             / num_partitions as f64)
@@ -568,7 +522,9 @@ where
                     let mut sa_w = part_sa.clone();
                     let mut lcp = vec![T::default(); len];
                     let mut lcp_w = vec![T::default(); len];
+                    dbg!(&part_sa);
                     self.merge_sort(&mut sa_w, &mut part_sa, len, &mut lcp, &mut lcp_w);
+                    dbg!(&part_sa);
 
                     // Write to disk
                     let mut sa_file = NamedTempFile::new()?;
@@ -684,16 +640,12 @@ where
                     };
 
                     // LCP(X_i, Y_j)
-                    let len_lcp =
-                        m + self.find_lcp(x[idx_x] + m, y[idx_y] + m, context - m);
-
-                    //if !self.seed_mask.is_empty() {
-                    //    if len_lcp == self.seed_mask.len() {
-                    //        len_lcp = self.seed_mask[len_lcp.to_usize()]
-                    //    } else {
-                    //        len_lcp = self.seed_mask[len_lcp + 1] - 1
-                    //    }
-                    //}
+                    let len_lcp = m + self.find_lcp_full_offset(
+                        x[idx_x] + m,
+                        y[idx_y] + m,
+                        context - m,
+                    );
+                    dbg!(len_lcp);
 
                     // If the len of the LCP is the entire shorter
                     // sequence, take that.
@@ -833,7 +785,8 @@ where
         let seed_mask_len = self.seed_mask_orig.len();
         bytes_out += file.write(&usize_to_bytes(seed_mask_len))?;
         if seed_mask_len > 0 {
-            file.write_all(&self.seed_mask_orig)?;
+            let mask: Vec<_> = self.seed_mask_orig.iter().map(|&b| b as u8).collect();
+            file.write_all(&mask)?;
             bytes_out += seed_mask_len;
         }
 
@@ -890,12 +843,14 @@ where
 mod test {
     use super::{SufrBuilder, SufrBuilderArgs};
     use anyhow::Result;
+    use pretty_assertions::assert_eq;
 
     #[test]
-    fn test_seed_mask() -> Result<()> {
+    fn test_is_less() -> Result<()> {
+        //           012345
         let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
-            text: text.clone(),
+            text,
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -904,54 +859,227 @@ mod test {
             headers: vec!["1".to_string()],
             num_partitions: 2,
             sequence_delimiter: b'N',
-            seed_mask: Some("1234".to_string()),
+            seed_mask: None,
         };
-        let res: Result<SufrBuilder<u32>> = SufrBuilder::new(args);
-        assert!(res.is_err());
-        assert_eq!(res.unwrap_err().to_string(), "Invalid mask: 1234");
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
-        let args = SufrBuilderArgs {
-            text: text.clone(),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
-            num_partitions: 2,
-            sequence_delimiter: b'N',
-            seed_mask: Some("0000".to_string()),
-        };
-        let res: Result<SufrBuilder<u32>> = SufrBuilder::new(args);
-        assert!(res.is_err());
-        assert_eq!(
-            res.unwrap_err().to_string(),
-            "Seed mask must contain at least one 1"
-        );
+        // 1: TTAGC
+        // 0: TTTAGC
+        assert!(sufr.is_less(1, 0));
 
-        let args = SufrBuilderArgs {
-            text: text.clone(),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
-            num_partitions: 2,
-            sequence_delimiter: b'N',
-            seed_mask: Some("1010".to_string()),
-        };
-        let res: Result<SufrBuilder<u32>> = SufrBuilder::new(args);
-        assert!(res.is_ok());
-        let res = res.unwrap();
-        assert_eq!(res.seed_mask_orig, b"1010");
-        assert_eq!(res.max_query_len, 4);
+        // 0: TTTAGC
+        // 1: TTAGC
+        assert!(!sufr.is_less(0, 1));
+
+        // 2: TAGC
+        // 3: AGC
+        assert!(!sufr.is_less(2, 3));
+
+        // 3: AGC
+        // 0: TTTAGC
+        assert!(sufr.is_less(3, 0));
 
         Ok(())
     }
 
     #[test]
-    fn test_upper_bound() -> Result<()> {
+    fn test_is_less_max_query_len() -> Result<()> {
+        //           012345
+        let text = b"TTTAGC".to_vec();
+        let args = SufrBuilderArgs {
+            text,
+            max_query_len: Some(2),
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+            seed_mask: None,
+        };
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+
+        // 1: TTAGC
+        // 0: TTTAGC
+        // This is true w/o MQL 2 but here they are equal
+        // ("TT" == "TT")
+        assert!(!sufr.is_less(1, 0));
+
+        // 0: TTTAGC
+        // 1: TTAGC
+        // ("TT" == "TT")
+        assert!(!sufr.is_less(0, 1));
+
+        // 2: TAGC
+        // 3: AGC
+        assert!(!sufr.is_less(2, 3));
+
+        // 3: AGC
+        // 0: TTTAGC
+        assert!(sufr.is_less(3, 0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_less_seed_mask() -> Result<()> {
+        //           012345
+        let text = b"TTTTAT".to_vec();
+        let args = SufrBuilderArgs {
+            text,
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+            seed_mask: Some("101".to_string()),
+        };
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+
+        // 0: TTTTAT
+        // 1: TTTAT
+        // "T-T" vs "T-T"
+        assert!(!sufr.is_less(0, 1));
+
+        // 1: TTTAT
+        // 0: TTTTAT
+        // "T-T" vs "T-T"
+        assert!(!sufr.is_less(1, 0));
+
+        // 0: TTTTAT
+        // 3: TAT
+        // "T-T" vs "T-T"
+        assert!(!sufr.is_less(0, 3));
+
+        // 3: TAT
+        // 0: TTTTAT
+        // "T-T" vs "T-T"
+        assert!(!sufr.is_less(3, 0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_lcp_no_seed_mask() -> Result<()> {
+        //           012345
+        let text = b"TTTAGC".to_vec();
+        let args = SufrBuilderArgs {
+            text,
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+            seed_mask: None,
+        };
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+
+        // 0: TTTAGC
+        // 1:  TTAGC
+        // 6: len of text
+        assert_eq!(sufr.find_lcp(0, 1, 6), 2);
+
+        // 0: TTTAGC
+        // 2:   TAGC
+        // 6: len of text
+        assert_eq!(sufr.find_lcp(0, 2, 6), 1);
+
+        // 0: TTTAGC
+        // 1:  TTAGC
+        // 1: max query len = 1
+        assert_eq!(sufr.find_lcp(0, 1, 1), 1);
+
+        // 0: TTTAGC
+        // 3:    AGC
+        // 6: len of text
+        assert_eq!(sufr.find_lcp(0, 3, 6), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_lcp_with_seed_mask() -> Result<()> {
+        //           012345
+        let text = b"TTTTTA".to_vec();
+        let args = SufrBuilderArgs {
+            text,
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+            seed_mask: Some("1101".to_string()),
+        };
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+
+        // 0: TTTTTA
+        // 1:  TTTTA
+        assert_eq!(sufr.find_lcp(0, 1, 3), 3);
+
+        // 0: TTTTTA
+        // 2:   TTTA
+        assert_eq!(sufr.find_lcp(0, 2, 3), 2);
+
+        // 0: TTTTTA
+        // 5:      A
+        assert_eq!(sufr.find_lcp(0, 5, 3), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_lcp_full_offset() -> Result<()> {
+        //           012345
+        let text = b"TTTTTA".to_vec();
+        let args = SufrBuilderArgs {
+            text,
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            headers: vec!["1".to_string()],
+            num_partitions: 2,
+            sequence_delimiter: b'N',
+            seed_mask: Some("1101".to_string()),
+        };
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+
+        // 0: TTTTTA
+        // 1:  TTTTA
+        // There are only 3 "care" positions but they span 4 bp
+        assert_eq!(sufr.find_lcp_full_offset(0, 1, 3), 4);
+
+        // 0: TTTTTA
+        // 3:    TTA
+        // There are only two Ts in common, but it should span 3 to the end
+        assert_eq!(sufr.find_lcp_full_offset(0, 3, 3), 3);
+
+        // 0: TTTTTA
+        // 4:     TA
+        // There is only one T and the As are in a "care" position
+        assert_eq!(sufr.find_lcp_full_offset(0, 4, 3), 1);
+
+        // 0: TTTTTA
+        // 5:      A
+        // The A is in a "care" position
+        assert_eq!(sufr.find_lcp_full_offset(0, 5, 3), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_upper_bound_1() -> Result<()> {
         //          012345
         let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
@@ -977,27 +1105,33 @@ mod test {
         // The "C$" is the last value
         assert_eq!(sufr.upper_bound(5, &[3, 5, 4]), 2);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_upper_bound_2() -> Result<()> {
         //           0123456789
         let text = b"ACGTNNACGT".to_vec();
-        //let text_len = text.len();
         let args = SufrBuilderArgs {
-            text,
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
-            num_partitions: 2,
-            sequence_delimiter: b'N',
-            seed_mask: None,
+            // 10 $
+            text,                           //  6 ACGT$
+            max_query_len: None,            //  0 ACGTNNACGT$
+            is_dna: false,                  //  7 CGT$
+            allow_ambiguity: false,         //  1 CGTNNACGT$
+            ignore_softmask: false,         //  8 GT$
+            sequence_starts: vec![0],       //  2 GTNNACGT$
+            headers: vec!["1".to_string()], //  5 NACGT$
+            num_partitions: 2,              //  4 NNACGT$
+            sequence_delimiter: b'N',       //  9 T$
+            seed_mask: None,                //  3 TNNACGT$
         };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+
+        let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
 
         // ACGTNNACGT$ == ACGTNNACGT$
         assert_eq!(sufr.upper_bound(0, &[0]), 1);
 
-        // ACGTNNACGT$ > ACGT$
+        // ACGTNNACGT$ (0) > ACGT$ (6)
         assert_eq!(sufr.upper_bound(0, &[6]), 1);
 
         // ACGT$ < ACGTNNACGT$
@@ -1020,6 +1154,66 @@ mod test {
         assert_eq!(sufr.upper_bound(9, &[7, 8]), 2);
 
         // T$ < TNNACGT$ => p0
+        assert_eq!(sufr.upper_bound(9, &[3]), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_upper_bound_seed_mask() -> Result<()> {
+        //           0123456789
+        let text = b"ACGTNNACGT".to_vec();
+        let args = SufrBuilderArgs {
+            // 10 $
+            text,                               //  6 ACGT$
+            max_query_len: None,                //  0 ACGTNNACGT$
+            is_dna: false,                      //  7 CGT$
+            allow_ambiguity: false,             //  1 CGTNNACGT$
+            ignore_softmask: false,             //  8 GT$
+            sequence_starts: vec![0],           //  2 GTNNACGT$
+            headers: vec!["1".to_string()],     //  4 NNACGT$
+            num_partitions: 2,                  //  5 NACGT$
+            sequence_delimiter: b'N',           //  9 T$
+            seed_mask: Some("101".to_string()), //  3 TNNACGT$
+        };
+
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+
+        // two bins
+        // ACGTNNACGT$ == ACGTNNACGT$ (A-G)
+        // so goes in bin 1
+        assert_eq!(sufr.upper_bound(0, &[0]), 1);
+
+        // two bins
+        // ACGTNNACGT$ == ACGT$ (A-G)
+        // so goes in bin 1
+        assert_eq!(sufr.upper_bound(0, &[6]), 1);
+
+        // two bins
+        // ACGT$ == ACGTNNACGT$ (A-G)
+        // so goes in bin 1
+        assert_eq!(sufr.upper_bound(6, &[0]), 1);
+
+        // ACGT$ == ACGT$ (A-G)
+        assert_eq!(sufr.upper_bound(6, &[6]), 1);
+
+        // Pivots = [CGT$, GT$]
+        // ACGTNNACGT$ < CGT$ => p0
+        assert_eq!(sufr.upper_bound(0, &[7, 8]), 0);
+
+        // Pivots = [CGT$, GT$]
+        // CGTNNACGT$ == CGT$ (C-T) => p0
+        assert_eq!(sufr.upper_bound(1, &[7, 8]), 0);
+
+        // Pivots = [CGT$, GT$]
+        // GT$ == GT$ => p2
+        assert_eq!(sufr.upper_bound(8, &[7, 8]), 2);
+
+        // Pivots = [CGT$, GT$]
+        // T$ > GT$  => p2
+        assert_eq!(sufr.upper_bound(9, &[7, 8]), 2);
+
+        // T$ == TNNACGT$ (only compare T) => p0
         assert_eq!(sufr.upper_bound(9, &[3]), 0);
 
         Ok(())
