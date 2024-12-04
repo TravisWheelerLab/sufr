@@ -25,7 +25,7 @@ pub fn seed_mask_positions(bytes: &[u8]) -> Vec<usize> {
     bytes
         .iter()
         .enumerate()
-        .filter_map(|(i, &b)| (b == b'1').then_some(i))
+        .filter_map(|(i, &b)| (b == 1).then_some(i))
         .collect()
 }
 
@@ -144,8 +144,8 @@ mod tests {
 
     #[test]
     fn test_seed_mask_positions() -> Result<()> {
-        assert_eq!(seed_mask_positions(b"101"), [0, 2]);
-        assert_eq!(seed_mask_positions(b"101101"), [0, 2, 3, 5]);
+        assert_eq!(seed_mask_positions(&[1, 0, 1]), [0, 2]);
+        assert_eq!(seed_mask_positions(&[1, 0, 1, 1, 0, 1]), [0, 2, 3, 5]);
         Ok(())
     }
 
@@ -154,11 +154,16 @@ mod tests {
         // Empty is not a failure
         assert_eq!(seed_mask_difference(&[]), []);
 
-        //              0  1
         // "100001" -> [0, 5]
+        //            - 0  1
+        //            --------
+        //             [0, 4]
         assert_eq!(seed_mask_difference(&[0, 5]), [0, 4]);
-        //               0  1  2  3
+
         // "1001101" -> [0, 3, 4, 6] 
+        //             - 0  1  2  3
+        //             -------------
+        //              [0, 2, 2, 3]
         assert_eq!(seed_mask_difference(&[0, 3, 4, 6]), [0, 2, 2, 3]);
         Ok(())
     }

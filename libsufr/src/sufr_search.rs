@@ -1,6 +1,7 @@
 use crate::{
     file_access::FileAccess,
     types::{Comparison, FromUsize, Int, SearchResult, SearchResultLocations},
+    util::{seed_mask_difference, seed_mask_positions},
 };
 use anyhow::Result;
 use std::cmp::{min, Ordering};
@@ -33,6 +34,8 @@ where
     query_low_memory: bool,
     num_suffixes: usize,
     seed_mask: Vec<u8>,
+    seed_mask_pos: Vec<usize>,
+    seed_mask_diff: Vec<usize>,
 }
 
 // --------------------------------------------------
@@ -41,6 +44,8 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     pub fn new(args: SufrSearchArgs<'a, T>) -> SufrSearch<'a, T> {
+        let seed_mask_pos = seed_mask_positions(&args.seed_mask);
+        let seed_mask_diff = seed_mask_difference(&seed_mask_pos);
         SufrSearch {
             text: args.text,
             suffix_array_file: args.file,
@@ -52,7 +57,9 @@ where
             } else {
                 args.suffix_array.len()
             },
-            seed_mask: args.seed_mask,
+            seed_mask: args.seed_mask.clone(),
+            seed_mask_pos,
+            seed_mask_diff,
         }
     }
 
@@ -199,13 +206,52 @@ where
 
     // --------------------------------------------------
     pub fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
-        let lcp = query
-            .iter()
-            .zip(self.text.get(suffix_pos..).unwrap())
-            .skip(skip)
-            .map_while(|(a, b)| (a == b).then_some(a))
-            .count()
-            + skip;
+        //println!(
+        //    "skip {skip} suffix {suffix_pos} = {:?}",
+        //    String::from_utf8(self.text.get(suffix_pos..).expect("OK").to_vec())
+        //);
+        let lcp = if self.seed_mask.is_empty() {
+            query
+                .iter()
+                .zip(self.text.get(suffix_pos..).unwrap())
+                .skip(skip)
+                .map_while(|(a, b)| (a == b).then_some(a))
+                .count()
+                + skip
+        } else {
+            let query_len = self
+                .seed_mask_pos
+                .iter()
+                .skip(skip)
+                .filter(|&v| v < &query.len())
+                .count();
+            let suffix_len = self
+                .seed_mask_pos
+                .iter()
+                .skip(skip)
+                .map(|offset| suffix_pos + offset) // add offset to start of suffix
+                .filter(|&v| v < self.text.len()) // don't go off end of text
+                .count();
+            let len = min(query_len, suffix_len);
+            //println!("query_len {query_len} suffix_len {suffix_len} actual_len {len}");
+            if len > 0 {
+                let count = self.seed_mask_pos[skip..len]
+                    .iter()
+                    .map_while(|&offset| {
+                        (query[offset] == self.text[suffix_pos + offset])
+                            .then_some(offset)
+                    })
+                    .count();
+                count + self.seed_mask_diff.get(count).unwrap_or(&0)
+            } else {
+                0
+            }
+        };
+        //println!(
+        //    "lcp {lcp} query {:?} text {:?}\n",
+        //    query.get(lcp).map(|&v| v as char),
+        //    self.text.get(suffix_pos + lcp).map(|&v| v as char)
+        //);
 
         let cmp = match (query.get(lcp), self.text.get(suffix_pos + lcp)) {
             // Entire query matched

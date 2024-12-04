@@ -1,6 +1,6 @@
 use crate::{
     file_access::FileAccess,
-    sufr_search::{SufrSearchArgs, SufrSearch},
+    sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
         ExtractOptions, ExtractResult, ExtractSequence, FromUsize, Int, LocatePosition,
         LocateResult, SearchOptions, SearchResult,
@@ -116,10 +116,11 @@ where
         file.read_exact(&mut buffer)?;
         let seed_mask_len = usize::from_ne_bytes(buffer);
 
-        // Seed mask
+        // Seed mask: stored as u8 for the 1s/0s
         let seed_mask: Vec<u8> = if seed_mask_len > 0 {
             let mut buffer = vec![0; seed_mask_len];
             file.read_exact(&mut buffer)?;
+            //buffer.into_iter().map(|b| b as usize).collect()
             buffer
         } else {
             vec![]
@@ -615,8 +616,7 @@ mod test {
     // --------------------------------------------------
     #[test]
     fn test_extract() -> Result<()> {
-        let mut sufr_file: SufrFile<u32> =
-            SufrFile::read("../data/inputs/1.sufr")?;
+        let mut sufr_file: SufrFile<u32> = SufrFile::read("../data/inputs/1.sufr")?;
 
         let opts = ExtractOptions {
             queries: vec!["AC".to_string(), "GT".to_string(), "XX".to_string()],

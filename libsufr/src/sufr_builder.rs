@@ -138,7 +138,7 @@ where
     pub text: Vec<u8>,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
-    pub seed_mask_orig: Vec<char>,
+    pub seed_mask_orig: Vec<u8>,
     pub seed_mask: Vec<usize>,
 }
 
@@ -171,20 +171,25 @@ where
         }
 
         // Validate seed mask before max_query_len
-        let (seed_mask_orig, seed_mask): (Vec<char>, Vec<usize>) = match args.seed_mask
-        {
+        let (seed_mask_orig, seed_mask): (Vec<u8>, Vec<usize>) = match args.seed_mask {
             Some(mask) => {
                 if !valid_seed_mask(&mask) {
                     bail!("Invalid mask: {mask}");
                 }
-
-                let bytes: Vec<u8> = mask.bytes().collect();
-                let mask_pos = seed_mask_positions(&bytes);
+                let nums: Vec<u8> = mask
+                    .as_bytes()
+                    .iter()
+                    .flat_map(|b| match b {
+                        b'1' => Some(1),
+                        b'0' => Some(0),
+                        _ => None,
+                    })
+                    .collect();
+                let mask_pos = seed_mask_positions(&nums);
                 if mask_pos.is_empty() {
                     bail!("Seed mask must contain at least one 1");
                 }
-                let chars: Vec<_> = mask.chars().collect();
-                (chars, mask_pos)
+                (nums, mask_pos)
             }
             None => (vec![], vec![]),
         };
@@ -258,8 +263,6 @@ where
             (start1 + a_len, start2 + b_len)
         };
 
-        //println!("1: {start1}-{end1} 2: {start2}-{end2}");
-
         unsafe {
             return T::from_usize(
                 (start1..end1)
@@ -267,10 +270,6 @@ where
                     .enumerate()
                     .take_while(|(i, (a, b))| {
                         let add = seed_diff.get(*i).unwrap_or(&0);
-                        //println!(">>> {i}: a {a} b {b} + {add}");
-                        //println!("a[{}] = {:?}", a + add, self.text.get(a + add));
-                        //println!("b[{}] = {:?}", b + add, self.text.get(b + add));
-                        //println!();
                         self.text.get_unchecked(*a + add)
                             == self.text.get_unchecked(*b + add)
                     })
@@ -506,7 +505,6 @@ where
                     let mut lcp = vec![T::default(); len];
                     let mut lcp_w = vec![T::default(); len];
                     self.merge_sort(&mut sa_w, &mut part_sa, len, &mut lcp, &mut lcp_w);
-                    dbg!(&part_sa);
 
                     // Write to disk
                     let mut sa_file = NamedTempFile::new()?;
@@ -598,17 +596,7 @@ where
         let mut idx_target = 0; // Index into target
 
         while idx_x < len_x && idx_y < len_y {
-            let left = x[idx_x].to_usize();
-            let right = y[idx_y].to_usize();
-            let debug = |msg: &str| {
-                if (4..=5).contains(&left) && (4..=5).contains(&right) {
-                    println!("{msg}");
-                }
-            };
-
             let l_x = lcp_x[idx_x];
-            debug(&format!("left {left} right {right} l_x {l_x} m {m}"));
-
             match l_x.cmp(&m) {
                 Ordering::Greater => {
                     target_sa[idx_target] = x[idx_x];
@@ -634,37 +622,6 @@ where
                     let len_lcp =
                         m + self.find_lcp(x[idx_x] + m, y[idx_y] + m, context - m);
                     let full_len_lcp = self.find_lcp_full_offset(len_lcp);
-                    debug(&format!("context {context} max_n {max_n} lcp {len_lcp} full {full_len_lcp} len {}/{}", self.text.len(), self.text_len));
-                    debug(&format!("left = {left} ({})", self.text[left] as char));
-                    debug(&format!(
-                        "next left {}", // = {} ({})",
-                        T::from_usize(left) + full_len_lcp,
-                    ));
-                    debug(&format!(
-                        ">>> {} = {:?} <<<",
-                        x[idx_x] + full_len_lcp,
-                        self.text
-                            .get((x[idx_x] + full_len_lcp).to_usize())
-                            .map(|&v| v as char)
-                    ));
-
-                    debug(&format!("right = {right} ({})", self.text[right] as char,));
-                    debug(&format!(
-                        "next right {}",
-                        T::from_usize(right) + full_len_lcp,
-                    ));
-                    debug(&format!(
-                        ">>> {} = {:?} <<<",
-                        y[idx_y] + full_len_lcp,
-                        self.text
-                            .get((y[idx_y] + full_len_lcp).to_usize())
-                            .map(|&v| v as char)
-                    ));
-
-                    println!(
-                        "left {left} right {right} full_lcp {full_len_lcp} len {} max_n {max_n}",
-                        self.text_len
-                    );
 
                     // If the len of the LCP is the entire shorter
                     // sequence, take that.
@@ -804,8 +761,7 @@ where
         let seed_mask_len = self.seed_mask_orig.len();
         bytes_out += file.write(&usize_to_bytes(seed_mask_len))?;
         if seed_mask_len > 0 {
-            let mask: Vec<_> = self.seed_mask_orig.iter().map(|&b| b as u8).collect();
-            file.write_all(&mask)?;
+            file.write_all(&self.seed_mask_orig)?;
             bytes_out += seed_mask_len;
         }
 

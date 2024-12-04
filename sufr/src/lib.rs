@@ -786,7 +786,12 @@ where
         if sufr_file.seed_mask.is_empty() {
             "None".to_string()
         } else {
-            String::from_utf8(sufr_file.seed_mask.to_vec())?
+            sufr_file
+                .seed_mask
+                .iter()
+                .map(|val| val.to_string())
+                .collect::<Vec<_>>()
+                .join("")
         },
     ]);
     rows.push(vec![
