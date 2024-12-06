@@ -8,21 +8,20 @@ use std::{fs::File, io::Read, slice};
 
 // --------------------------------------------------
 pub fn find_lcp_full_offset(lcp: usize, seed_mask_pos: &[usize]) -> usize {
-    lcp
     //println!("lcp {lcp} seed mask_pos {seed_mask_pos:?}");
-    //if lcp == 0 || lcp > seed_mask_pos.len() {
-    //    lcp
-    //} else {
-    //    // E.g., LCP = 1, so get the 0th offset
-    //    let offset = seed_mask_pos[lcp - 1];
-    //    let next_offset = *seed_mask_pos.get(lcp).unwrap_or(&0);
-    //    //println!("offset {offset} next_offset {next_offset}");
-    //    if (next_offset > offset) && (next_offset - offset) > 1 {
-    //        next_offset
-    //    } else {
-    //        offset + 1
-    //    }
-    //}
+    if lcp == 0 || lcp > seed_mask_pos.len() {
+        lcp
+    } else {
+        // E.g., LCP = 1, so get the 0th offset
+        let offset = seed_mask_pos[lcp - 1];
+        let next_offset = *seed_mask_pos.get(lcp).unwrap_or(&0);
+        //println!("offset {offset} next_offset {next_offset}");
+        if (next_offset > offset) && (next_offset - offset) > 1 {
+            next_offset
+        } else {
+            offset + 1
+        }
+    }
 }
 
 // --------------------------------------------------

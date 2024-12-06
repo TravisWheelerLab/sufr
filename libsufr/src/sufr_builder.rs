@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
-use rand::Rng;
+use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use rayon::prelude::*;
 use std::{
     cmp::{max, min, Ordering},
@@ -117,6 +117,7 @@ pub struct SufrBuilderArgs {
     pub num_partitions: usize,
     pub sequence_delimiter: u8,
     pub seed_mask: Option<String>,
+    pub random_seed: u64,
 }
 
 // --------------------------------------------------
@@ -228,7 +229,7 @@ where
             seed_mask_pos,
             seed_mask_diff,
         };
-        sa.sort(args.num_partitions)?;
+        sa.sort(args.num_partitions, args.random_seed)?;
         Ok(sa)
     }
 
@@ -244,74 +245,70 @@ where
     // --------------------------------------------------
     #[inline(always)]
     pub fn find_lcp(&self, start1: T, start2: T, len: T, skip: usize) -> T {
-        let text_len = self.text_len.to_usize();
-        let len = len.to_usize();
-        let start1 = start1.to_usize() + skip;
-        let start2 = start2.to_usize() + skip;
-        let end1 = min(start1 + len, text_len);
-        let end2 = min(start2 + len, text_len);
-        unsafe {
-            return T::from_usize(
-                (start1..end1)
-                    .zip(start2..end2)
-                    .take_while(|(a, b)| {
-                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-                    })
-                    .count(),
-            );
-        }
-
         //println!("find_lcp start1 {start1} start2 {start2} len {len} skip {skip}");
-        //let seed_diff: Vec<usize> = seed_mask_difference(&self.seed_mask_pos);
-        //if seed_diff.is_empty() {
-        //    let text_len = self.text_len.to_usize();
-        //    let len = len.to_usize();
-        //    let start1 = start1.to_usize() + skip;
-        //    let start2 = start2.to_usize() + skip;
-        //    let end1 = min(start1 + len, text_len);
-        //    let end2 = min(start2 + len, text_len);
-        //    unsafe {
-        //        return T::from_usize(
-        //            (start1..end1)
-        //                .zip(start2..end2)
-        //                .take_while(|(a, b)| {
-        //                    self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-        //                })
-        //                .count(),
-        //        );
-        //    }
-        //} else {
-        //    // Use the seed diff vector to select only the "care" positions
-        //    // up to the length of the text
-        //    let a_vals: Vec<_> = self
-        //        .seed_mask_pos
-        //        .iter()
-        //        .skip(skip)
-        //        .map(|&offset| start1.to_usize() + offset)
-        //        .filter(|&v| v < self.text_len.to_usize())
-        //        .collect();
-        //    let b_vals: Vec<_> = self
-        //        .seed_mask_pos
-        //        .iter()
-        //        .skip(skip)
-        //        .map(|&offset| start2.to_usize() + offset)
-        //        .filter(|&v| v < self.text_len.to_usize())
-        //        .collect();
-        //    //println!(
-        //    //    "FIND LCP start1 {start1} => {a_vals:?}, start2 {start2} => {b_vals:?}"
-        //    //);
-        //    unsafe {
-        //        return T::from_usize(
-        //            a_vals
-        //                .into_iter()
-        //                .zip(b_vals.into_iter())
-        //                .take_while(|(a, b)| {
-        //                    self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-        //                })
-        //                .count(),
-        //        );
-        //    }
-        //}
+        let seed_diff: Vec<usize> = seed_mask_difference(&self.seed_mask_pos);
+        if seed_diff.is_empty() {
+            let text_len = self.text_len.to_usize();
+            let len = len.to_usize();
+            let start1 = start1.to_usize() + skip;
+            let start2 = start2.to_usize() + skip;
+            let end1 = min(start1 + len, text_len);
+            let end2 = min(start2 + len, text_len);
+            unsafe {
+                return T::from_usize(
+                    skip + (start1..end1)
+                        .zip(start2..end2)
+                        .take_while(|(a, b)| {
+                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+                        })
+                        .count(),
+                );
+            }
+        } else {
+            // Use the seed diff vector to select only the "care" positions
+            // up to the length of the text
+            let a_vals: Vec<_> = self
+                .seed_mask_pos
+                .iter()
+                .skip(skip)
+                .map(|&offset| start1.to_usize() + offset)
+                .filter(|&v| v < self.text_len.to_usize())
+                .collect();
+            let b_vals: Vec<_> = self
+                .seed_mask_pos
+                .iter()
+                .skip(skip)
+                .map(|&offset| start2.to_usize() + offset)
+                .filter(|&v| v < self.text_len.to_usize())
+                .collect();
+            //println!(
+            //    "FIND LCP skip {skip} start1 {start1} => {a_vals:?}, start2 {start2} => {b_vals:?}"
+            //);
+            //println!(
+            //    "{}",
+            //    a_vals
+            //        .clone()
+            //        .into_iter()
+            //        .zip(b_vals.clone().into_iter())
+            //        .map(|(a, b)| format!(
+            //            "{a}/{} {b}/{}",
+            //            self.text[a] as char, self.text[b] as char
+            //        ))
+            //        .collect::<Vec<_>>()
+            //        .join(" | ")
+            //);
+            unsafe {
+                return T::from_usize(
+                    skip + a_vals
+                        .into_iter()
+                        .zip(b_vals.into_iter())
+                        .take_while(|(a, b)| {
+                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+                        })
+                        .count(),
+                );
+            }
+        }
     }
 
     // --------------------------------------------------
@@ -327,13 +324,13 @@ where
                 self.text_len
             };
 
-            let len_lcp = self.find_lcp(s1, s2, max_query_len, 0).to_usize();
+            let len_lcp = find_lcp_full_offset(
+                self.find_lcp(s1, s2, max_query_len, 0).to_usize(),
+                &self.seed_mask_pos,
+            );
 
-            // TODO: Undo
-            //let len_lcp = find_lcp_full_offset(
-            //    self.find_lcp(s1, s2, max_query_len, 0).to_usize(),
-            //    &self.seed_mask_pos,
-            //);
+            //let lcp = self.find_lcp(s1, s2, max_query_len, 0);
+            //println!("s1 {s1} s2 {s2} lcp {lcp} full_lcp {len_lcp}");
 
             if len_lcp == max_query_len.to_usize() {
                 // The strings are equal
@@ -354,25 +351,21 @@ where
 
     // --------------------------------------------------
     pub fn upper_bound(&self, target: T, pivots: &[T]) -> usize {
-        // If pivots is empty (no partitions) or
-        // If target is less than the first element
-        if pivots.first().map_or(false, |&v| self.is_less(target, v)) {
+        // No partitions
+        if pivots.is_empty() {
             0
-        } else if pivots.last().map_or(false, |&v| !self.is_less(target, v)) {
-            // If target is greater than the last element
-            pivots.len()
         } else {
             // Find where all the values are less than target
-            let i = pivots.partition_point(|&p| self.is_less(p, target));
+            pivots.partition_point(|&p| self.is_less(p, target))
 
-            // If the value at the partition is the same as the target
-            if pivots.get(i).map_or(false, |&v| v == target) {
-                // Then return the next value, which might be out of range
-                i + 1
-            } else {
-                // Else return the partition point
-                i
-            }
+            //// If the value at the partition is the same as the target
+            //if pivots.get(i).map_or(false, |&v| v == target) {
+            //    // Then return the next value, which might be out of range
+            //    i + 1
+            //} else {
+            //    // Else return the partition point
+            //    i
+            //}
         }
     }
 
@@ -380,7 +373,7 @@ where
     fn partition(
         &mut self,
         num_partitions: usize,
-        //) -> Result<(Vec<Arc<Mutex<PartitionBuilder<T>>>>, usize)> {
+        random_seed: u64,
     ) -> Result<PartitionBuildResult<T>> {
         // Create more partitions than requested because
         // we can't know how big they will end up being
@@ -399,7 +392,12 @@ where
 
         // Randomly select some pivots
         let now = Instant::now();
-        let pivot_sa = self.select_pivots(self.text.len(), num_partitions);
+        let pivot_sa = self.select_pivots(self.text.len(), num_partitions, random_seed);
+        //let pivots: Vec<_> = pivot_sa
+        //    .iter()
+        //    .map(|&v| format!("{v:2} {}", self.string_at(v.to_usize())))
+        //    .collect();
+        //println!(">>> PIVOTS <<<\n{}", pivots.join("\n"));
         let num_pivots = pivot_sa.len();
         info!(
             "Selected {num_pivots} pivot{} in {:?}",
@@ -424,6 +422,11 @@ where
                     || (b"ACGT".contains(&val) || self.allow_ambiguity)
                 {
                     let partition_num = self.upper_bound(T::from_usize(i), &pivot_sa);
+                    //println!(
+                    //    "Suffix {i:2} -> {} = {}\n",
+                    //    partition_num,
+                    //    self.string_at(i)
+                    //);
                     match builders[partition_num].lock() {
                         Ok(mut guard) => {
                             guard.add(T::from_usize(i))?;
@@ -460,8 +463,23 @@ where
     }
 
     // --------------------------------------------------
-    pub fn sort(&mut self, num_partitions: usize) -> Result<()> {
-        let mut partition_build = self.partition(num_partitions)?;
+    pub fn sort(&mut self, num_partitions: usize, random_seed: u64) -> Result<()> {
+        let mut partition_build = self.partition(num_partitions, random_seed)?;
+
+        //for (part_num, part) in partition_build.builders.iter().enumerate() {
+        //    match part.lock() {
+        //        Ok(builder) => {
+        //            let buffer = fs::read(&builder.path)?;
+        //            let part_sa: Vec<T> = slice_u8_to_vec(&buffer, builder.len);
+        //            let vals: Vec<_> = part_sa
+        //                .iter()
+        //                .map(|&v| format!("{v:2} {}", self.string_at(v.to_usize())))
+        //                .collect();
+        //            println!(">>> PARTITION {part_num} <<<\n{}\n", vals.join("\n"));
+        //        }
+        //        _ => println!("ouch"),
+        //    }
+        //}
 
         // Be sure to round up to get all the suffixes
         let num_per_partition = (partition_build.num_suffixes as f64
@@ -520,6 +538,7 @@ where
                 }
 
                 let len = part_sa.len();
+                //println!(">>> PARTITION {partition_num} has {len}<<<");
                 if len > 0 {
                     let mut sa_w = part_sa.clone();
                     let mut lcp = vec![T::default(); len];
@@ -533,6 +552,12 @@ where
                     let _ = lcp_file.write(vec_to_slice_u8(&lcp))?;
                     let (_, sa_path) = sa_file.keep()?;
                     let (_, lcp_path) = lcp_file.keep()?;
+
+                    //let vals: Vec<_> = part_sa
+                    //    .iter()
+                    //    .map(|s| format!("{s:2} {}", self.string_at(s.to_usize())))
+                    //    .collect();
+                    //println!("\n>>> SORTED <<<\n{}\n", vals.join("\n"));
 
                     *partition = Some(Partition {
                         order: partition_num,
@@ -607,8 +632,10 @@ where
         target_lcp: &mut [T],
     ) {
         let (mut x, mut y) = suffix_array.split_at_mut(mid);
-        //println!("\n\n>>>>> x {x:?} y {y:?}");
+        //println!("\n\n>>>>> MERGE");
         let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
+        //println!("x {x:?} y {y:?}");
+        //println!("lcp_x {lcp_x:?} lcp_y {lcp_y:?}");
         let mut len_x = x.len();
         let mut len_y = y.len();
         let mut m = T::default(); // Last LCP from left side (x)
@@ -622,13 +649,13 @@ where
             //let right = y[idx_y].to_usize();
             //let lsuf = String::from_utf8(self.text[left..].to_vec()).unwrap();
             //let rsuf = String::from_utf8(self.text[right..].to_vec()).unwrap();
-            //print!(">>> left  {left} {lsuf:8} len_x {len_x} ");
-            //print!("right {right} {rsuf:8} len_y {len_y} ");
-            //println!("l_x {l_x} m {m}");
+            //println!(
+            //    ">>> left  {left} {lsuf:8} right {right} {rsuf:8} l_x {l_x} m {m}"
+            //);
 
             match l_x.cmp(&m) {
                 Ordering::Greater => {
-                    //println!(" >>> GREATER: LEFT {}", x[idx_x]);
+                    //println!(" >>> GREATER: TAKE LEFT {}", x[idx_x]);
                     target_sa[idx_target] = x[idx_x];
                     target_lcp[idx_target] = l_x;
                 }
@@ -653,6 +680,7 @@ where
                         //    .filter(|&i| *i < max_n.to_usize())
                         //    .count();
                         //println!("  masked {masked}");
+
                         T::from_usize(
                             self.seed_mask_pos
                                 .iter()
@@ -668,21 +696,19 @@ where
 
                     // LCP(X_i, Y_j)
                     let (len_lcp, full_len_lcp) = if m < context {
-                        let lcp = m + self.find_lcp(
+                        let lcp = self.find_lcp(
                             x[idx_x],
                             y[idx_y],
                             context - m,
                             m.to_usize(), // skip
                         );
-                        (lcp, lcp)
-                        // TODO: Undo
-                        //let full_lcp =
-                        //    find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos);
-                        ////println!(
-                        ////    "  lcp {lcp} full_len_lcp {}",
-                        ////    find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos)
-                        ////);
-                        //(lcp, T::from_usize(full_lcp))
+                        let full_lcp =
+                            find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos);
+                        //println!(
+                        //    "  lcp {lcp} full_len_lcp {}",
+                        //    find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos)
+                        //);
+                        (lcp, T::from_usize(full_lcp))
                     } else {
                         (context, context)
                     };
@@ -712,8 +738,8 @@ where
 
                         match cmp {
                             Ordering::Equal => {
-                                target_sa[idx_target] = shorter_suffix;
                                 //println!("  >> SHORTER (B) {shorter_suffix}");
+                                target_sa[idx_target] = shorter_suffix;
                             }
                             Ordering::Less => {
                                 //println!("  LEFT (B) {}", x[idx_x]);
@@ -732,7 +758,8 @@ where
                     } else {
                         target_lcp[idx_target] = m
                     }
-                    // TODO: Should this be full LCP?
+
+                    //println!("Saving len_lcp {len_lcp} -> m");
                     m = len_lcp;
                 }
             }
@@ -788,20 +815,29 @@ where
 
         //let vals: Vec<_> = target_sa
         //    .iter()
-        //    .map(|s| self.string_at(s.to_usize()))
+        //    .map(|s| format!("{s:2} {}", self.string_at(s.to_usize())))
         //    .collect();
-
-        //println!("FINAL: {target_sa:?} {}", vals.join(", "))
+        //println!("END OF MERGE:\n{}", vals.join("\n"))
     }
 
     // --------------------------------------------------
     #[inline(always)]
-    fn select_pivots(&self, text_len: usize, num_partitions: usize) -> Vec<T> {
+    fn select_pivots(
+        &self,
+        text_len: usize,
+        num_partitions: usize,
+        random_seed: u64,
+    ) -> Vec<T> {
         if num_partitions > 1 {
             // Use a HashMap because selecting pivots one-at-a-time
             // can result in duplicates.
             let num_pivots = num_partitions - 1;
-            let rng = &mut rand::thread_rng();
+            //let rng = &mut rand::thread_rng();
+            let mut rng: Box<dyn RngCore> = if random_seed > 0 {
+                Box::new(StdRng::seed_from_u64(random_seed))
+            } else {
+                Box::new(rand::thread_rng())
+            };
             let mut pivot_sa = HashSet::<T>::new();
             loop {
                 let pos = rng.gen_range(0..text_len);
@@ -943,6 +979,7 @@ mod test {
             num_partitions: 2,
             sequence_delimiter: b'N',
             seed_mask: None,
+            random_seed: 0,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -980,6 +1017,7 @@ mod test {
             num_partitions: 2,
             sequence_delimiter: b'N',
             seed_mask: None,
+            random_seed: 0,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1020,6 +1058,7 @@ mod test {
             num_partitions: 2,
             sequence_delimiter: b'N',
             seed_mask: Some("101".to_string()),
+            random_seed: 0,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1061,6 +1100,7 @@ mod test {
             num_partitions: 2,
             sequence_delimiter: b'N',
             seed_mask: None,
+            random_seed: 0,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1104,6 +1144,7 @@ mod test {
             num_partitions: 2,
             sequence_delimiter: b'N',
             seed_mask: Some("1101".to_string()),
+            random_seed: 42,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1137,6 +1178,7 @@ mod test {
             num_partitions: 2,
             sequence_delimiter: b'N',
             seed_mask: None,
+            random_seed: 42,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1168,6 +1210,7 @@ mod test {
             num_partitions: 2,              //  4 NNACGT$
             sequence_delimiter: b'N',       //  9 T$
             seed_mask: None,                //  3 TNNACGT$
+            random_seed: 42,
         };
 
         let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
@@ -1218,6 +1261,7 @@ mod test {
             num_partitions: 2,                  //  5 NACGT$
             sequence_delimiter: b'N',           //  9 T$
             seed_mask: Some("101".to_string()), //  3 TNNACGT$
+            random_seed: 42,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 

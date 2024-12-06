@@ -71,7 +71,7 @@ ecoli:
 	$(CREATE_RELEASE) --dna -m 16 ../data/ecoli.fa 
 
 chr1:
-	$(CREATE_RELEASE) --dna -n 64 $(CHR1)
+	$(CREATE_RELEASE) --dna -n 800 $(CHR1)
 
 chr1-mask:
 	$(CREATE_RELEASE) --dna -n 64 -s 111010010100110111 -o chr1-mask.sufr $(CHR1) 

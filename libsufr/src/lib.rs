@@ -33,6 +33,7 @@ mod tests {
             num_partitions: 2,
             sequence_delimiter,
             seed_mask: None,
+            random_seed: 0,
         };
         let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
         let outfile = NamedTempFile::new()?;
@@ -79,6 +80,7 @@ mod tests {
             num_partitions: 2,
             sequence_delimiter,
             seed_mask: None,
+            random_seed: 0,
         };
 
         let suffix_array: SufrBuilder<u64> = SufrBuilder::new(args)?;
@@ -125,6 +127,7 @@ mod tests {
             num_partitions: 2,
             sequence_delimiter,
             seed_mask: None,
+            random_seed: 0,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
         let outfile = NamedTempFile::new()?;
@@ -201,6 +204,7 @@ mod tests {
             num_partitions: 1,
             sequence_delimiter,
             seed_mask: Some("101".to_string()),
+            random_seed: 0,
         };
 
         // 7 $
@@ -243,6 +247,7 @@ mod tests {
             num_partitions: 1,
             sequence_delimiter,
             seed_mask: Some("11011".to_string()),
+            random_seed: 0,
         };
 
         //  0 16 $
@@ -262,6 +267,43 @@ mod tests {
         // 14 11 CAAAC$
         // 15  7 CAAACAAAC$
         // 16  3 CAAACAAACAAAC$
+
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
+        let outfile = NamedTempFile::new()?;
+        let outpath = &outfile.path().to_str().unwrap();
+        let res = sufr.write(outpath);
+        assert!(res.is_ok());
+        assert_eq!(sufr.num_suffixes, 17);
+
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath)?;
+        let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        assert_eq!(suffix_array.len(), 17);
+        assert_eq!(
+            suffix_array,
+            vec![16, 13, 9, 5, 1, 12, 8, 4, 0, 14, 10, 6, 2, 15, 11, 7, 3],
+        );
+
+        Ok(())
+    }
+
+    fn test_spaced_seeds_3() -> Result<()> {
+        let seq_file = "../data/inputs/spaced_input.fa";
+        let sequence_delimiter = b'N';
+        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let builder_args = SufrBuilderArgs {
+            text: seq_data.seq,
+            max_query_len: None,
+            is_dna: true,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: seq_data.start_positions,
+            headers: seq_data.headers,
+            num_partitions: 1,
+            sequence_delimiter,
+            seed_mask: Some("11000111".to_string()),
+            random_seed: 0,
+        };
+
 
         let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
         let outfile = NamedTempFile::new()?;

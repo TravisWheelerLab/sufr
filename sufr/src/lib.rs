@@ -118,6 +118,10 @@ pub struct CreateArgs {
     /// Spaced seeds mask
     #[arg(short, long, value_name = "MASK")]
     pub seed_mask: Option<String>,
+
+    /// Random seed
+    #[arg(short, long, value_name = "RANDSEED", default_value = "3")] // TODO: Make 42
+    pub random_seed: u64,
 }
 
 #[derive(Debug, Parser)]
@@ -377,6 +381,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         num_partitions: args.num_partitions,
         sequence_delimiter,
         seed_mask: args.seed_mask.clone(),
+        random_seed: args.random_seed,
     };
 
     if (text_len as u64) < u32::MAX as u64 {
