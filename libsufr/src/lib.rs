@@ -1,7 +1,7 @@
+pub mod file_access;
 pub mod sufr_builder;
 pub mod sufr_file;
 pub mod sufr_search;
-pub mod file_access;
 pub mod types;
 pub mod util;
 
@@ -181,6 +181,102 @@ mod tests {
         let (sub_sa, sub_rank) = sufr_file.subsample_suffix_array(max_query_len);
         assert_eq!(sub_sa.len(), 71);
         assert_eq!(sub_rank.len(), 71);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_spaced_seeds_1() -> Result<()> {
+        let seq_file = "../data/inputs/mostlya1.fa";
+        let sequence_delimiter = b'N';
+        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let builder_args = SufrBuilderArgs {
+            text: seq_data.seq,
+            max_query_len: None,
+            is_dna: true,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: seq_data.start_positions,
+            headers: seq_data.headers,
+            num_partitions: 1,
+            sequence_delimiter,
+            seed_mask: Some("101".to_string()),
+        };
+
+        // 7 $
+        // 6 A$
+        // 5 AA$
+        // 4 AAA$
+        // 2 ACAAA$
+        // 0 AAACAAA$
+        // 1 AACAAA$
+        // 3 CAAA$
+
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
+        let outfile = NamedTempFile::new()?;
+        let outpath = &outfile.path().to_str().unwrap();
+        let res = sufr.write(outpath);
+        assert!(res.is_ok());
+        assert_eq!(sufr.num_suffixes, 8);
+
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath)?;
+        let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        assert_eq!(suffix_array.len(), 8);
+        assert_eq!(suffix_array, vec![7, 6, 5, 4, 2, 0, 1, 3]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_spaced_seeds_2() -> Result<()> {
+        let seq_file = "../data/inputs/mostlya2.fa";
+        let sequence_delimiter = b'N';
+        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let builder_args = SufrBuilderArgs {
+            text: seq_data.seq,
+            max_query_len: None,
+            is_dna: true,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: seq_data.start_positions,
+            headers: seq_data.headers,
+            num_partitions: 1,
+            sequence_delimiter,
+            seed_mask: Some("11011".to_string()),
+        };
+
+        //  0 16 $
+        //  1 13 AAC$
+        //  2  5 AACAAACAAAC$
+        //  3  1 AACAAACAAACAAAC$
+        //  4  9 AACAAAC$
+        //  5 12 AAAC$
+        //  6  8 AAACAAAC$
+        //  7  4 AAACAAACAAAC$
+        //  8  0 AAACAAACAAACAAAC$
+        //  9 14 AC$
+        // 10 10 ACAAAC$
+        // 11  6 ACAAACAAAC$
+        // 12  2 ACAAACAAACAAAC$
+        // 13 15 C$
+        // 14 11 CAAAC$
+        // 15  7 CAAACAAAC$
+        // 16  3 CAAACAAACAAAC$
+
+        let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
+        let outfile = NamedTempFile::new()?;
+        let outpath = &outfile.path().to_str().unwrap();
+        let res = sufr.write(outpath);
+        assert!(res.is_ok());
+        assert_eq!(sufr.num_suffixes, 17);
+
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath)?;
+        let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        assert_eq!(suffix_array.len(), 17);
+        assert_eq!(
+            suffix_array,
+            vec![16, 13, 9, 5, 1, 12, 8, 4, 0, 14, 10, 6, 2, 15, 11, 7, 3],
+        );
 
         Ok(())
     }

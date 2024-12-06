@@ -1,8 +1,8 @@
 use crate::{
     types::{FromUsize, Int, OUTFILE_VERSION, SENTINEL_CHARACTER},
     util::{
-        seed_mask_difference, seed_mask_positions, slice_u8_to_vec, usize_to_bytes,
-        valid_seed_mask, vec_to_slice_u8,
+        find_lcp_full_offset, seed_mask_difference, seed_mask_positions,
+        slice_u8_to_vec, usize_to_bytes, valid_seed_mask, vec_to_slice_u8,
     },
 };
 use anyhow::{anyhow, bail, Result};
@@ -139,7 +139,8 @@ where
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
     pub seed_mask_orig: Vec<u8>,
-    pub seed_mask: Vec<usize>,
+    pub seed_mask_pos: Vec<usize>,
+    pub seed_mask_diff: Vec<usize>,
 }
 
 // --------------------------------------------------
@@ -171,36 +172,39 @@ where
         }
 
         // Validate seed mask before max_query_len
-        let (seed_mask_orig, seed_mask): (Vec<u8>, Vec<usize>) = match args.seed_mask {
-            Some(mask) => {
-                if !valid_seed_mask(&mask) {
-                    bail!("Invalid mask: {mask}");
+        let (seed_mask_orig, seed_mask_pos): (Vec<u8>, Vec<usize>) =
+            match args.seed_mask {
+                Some(mask) => {
+                    if !valid_seed_mask(&mask) {
+                        bail!("Invalid mask: {mask}");
+                    }
+                    let nums: Vec<u8> = mask
+                        .as_bytes()
+                        .iter()
+                        .flat_map(|b| match b {
+                            b'1' => Some(1),
+                            b'0' => Some(0),
+                            _ => None,
+                        })
+                        .collect();
+                    let mask_pos = seed_mask_positions(&nums);
+                    if mask_pos.is_empty() {
+                        bail!("Seed mask must contain at least one 1");
+                    }
+                    (nums, mask_pos)
                 }
-                let nums: Vec<u8> = mask
-                    .as_bytes()
-                    .iter()
-                    .flat_map(|b| match b {
-                        b'1' => Some(1),
-                        b'0' => Some(0),
-                        _ => None,
-                    })
-                    .collect();
-                let mask_pos = seed_mask_positions(&nums);
-                if mask_pos.is_empty() {
-                    bail!("Seed mask must contain at least one 1");
-                }
-                (nums, mask_pos)
-            }
-            None => (vec![], vec![]),
-        };
+                None => (vec![], vec![]),
+            };
 
         // Having a seed mask implies max_query_len
-        let max_query_len = if seed_mask.is_empty() {
+        let max_query_len = if seed_mask_pos.is_empty() {
             args.max_query_len.map_or(T::default(), T::from_usize)
         } else {
             // Number of 1s/care positions
-            T::from_usize(seed_mask.iter().sum())
+            T::from_usize(seed_mask_pos.len())
         };
+        let seed_mask_diff = seed_mask_difference(&seed_mask_pos);
+        //println!("seed_mask_pos {seed_mask_pos:?} seed_mask_diff {seed_mask_diff:?}");
 
         let mut sa = SufrBuilder {
             version: OUTFILE_VERSION,
@@ -221,7 +225,8 @@ where
             partitions: vec![],
             sequence_delimiter: args.sequence_delimiter,
             seed_mask_orig,
-            seed_mask,
+            seed_mask_pos,
+            seed_mask_diff,
         };
         sa.sort(args.num_partitions)?;
         Ok(sa)
@@ -238,65 +243,75 @@ where
 
     // --------------------------------------------------
     #[inline(always)]
-    pub fn find_lcp(&self, start1: T, start2: T, len: T) -> T {
-        let start1 = start1.to_usize();
-        let start2 = start2.to_usize();
-        let seed_diff: Vec<usize> = seed_mask_difference(&self.seed_mask);
+    pub fn find_lcp(&self, start1: T, start2: T, len: T, skip: usize) -> T {
         let text_len = self.text_len.to_usize();
-        let (end1, end2) = if seed_diff.is_empty() {
-            let len = len.to_usize();
-            (min(start1 + len, text_len), min(start2 + len, text_len))
-        } else {
-            // Get the actual span of the spaced seeds
-            let a_len = self
-                .seed_mask
-                .iter()
-                .map(|offset| start1 + offset)
-                .filter(|&v| v < text_len)
-                .count();
-            let b_len = self
-                .seed_mask
-                .iter()
-                .map(|offset| start2 + offset)
-                .filter(|&v| v < text_len)
-                .count();
-            (start1 + a_len, start2 + b_len)
-        };
-
+        let len = len.to_usize();
+        let start1 = start1.to_usize() + skip;
+        let start2 = start2.to_usize() + skip;
+        let end1 = min(start1 + len, text_len);
+        let end2 = min(start2 + len, text_len);
         unsafe {
             return T::from_usize(
                 (start1..end1)
                     .zip(start2..end2)
-                    .enumerate()
-                    .take_while(|(i, (a, b))| {
-                        let add = seed_diff.get(*i).unwrap_or(&0);
-                        self.text.get_unchecked(*a + add)
-                            == self.text.get_unchecked(*b + add)
+                    .take_while(|(a, b)| {
+                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
                     })
                     .count(),
             );
         }
-    }
 
-    // --------------------------------------------------
-    #[inline(always)]
-    pub fn find_lcp_full_offset(&self, lcp: T) -> T {
-        let lcp = lcp.to_usize();
-        let mut full_offset = lcp;
-
-        // If there were some found in common
-        if full_offset > 0 {
-            // Then add the offset from the seed difference
-            // AND the *next* offset, if possible
-            let seed_diff = seed_mask_difference(&self.seed_mask);
-            for val in &[lcp - 1, lcp] {
-                if let Some(add) = seed_diff.get(*val) {
-                    full_offset += add;
-                }
-            }
-        }
-
-        T::from_usize(full_offset)
+        //println!("find_lcp start1 {start1} start2 {start2} len {len} skip {skip}");
+        //let seed_diff: Vec<usize> = seed_mask_difference(&self.seed_mask_pos);
+        //if seed_diff.is_empty() {
+        //    let text_len = self.text_len.to_usize();
+        //    let len = len.to_usize();
+        //    let start1 = start1.to_usize() + skip;
+        //    let start2 = start2.to_usize() + skip;
+        //    let end1 = min(start1 + len, text_len);
+        //    let end2 = min(start2 + len, text_len);
+        //    unsafe {
+        //        return T::from_usize(
+        //            (start1..end1)
+        //                .zip(start2..end2)
+        //                .take_while(|(a, b)| {
+        //                    self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+        //                })
+        //                .count(),
+        //        );
+        //    }
+        //} else {
+        //    // Use the seed diff vector to select only the "care" positions
+        //    // up to the length of the text
+        //    let a_vals: Vec<_> = self
+        //        .seed_mask_pos
+        //        .iter()
+        //        .skip(skip)
+        //        .map(|&offset| start1.to_usize() + offset)
+        //        .filter(|&v| v < self.text_len.to_usize())
+        //        .collect();
+        //    let b_vals: Vec<_> = self
+        //        .seed_mask_pos
+        //        .iter()
+        //        .skip(skip)
+        //        .map(|&offset| start2.to_usize() + offset)
+        //        .filter(|&v| v < self.text_len.to_usize())
+        //        .collect();
+        //    //println!(
+        //    //    "FIND LCP start1 {start1} => {a_vals:?}, start2 {start2} => {b_vals:?}"
+        //    //);
+        //    unsafe {
+        //        return T::from_usize(
+        //            a_vals
+        //                .into_iter()
+        //                .zip(b_vals.into_iter())
+        //                .take_while(|(a, b)| {
+        //                    self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+        //                })
+        //                .count(),
+        //        );
+        //    }
+        //}
     }
 
     // --------------------------------------------------
@@ -306,14 +321,19 @@ where
             false
         } else {
             let max_query_len = if self.max_query_len > T::default() {
+                // This should match the weight of any seed mask
                 self.max_query_len
             } else {
                 self.text_len
             };
 
-            let len_lcp =
-                self.find_lcp_full_offset(self.find_lcp(s1, s2, max_query_len));
-            let len_lcp = len_lcp.to_usize();
+            let len_lcp = self.find_lcp(s1, s2, max_query_len, 0).to_usize();
+
+            // TODO: Undo
+            //let len_lcp = find_lcp_full_offset(
+            //    self.find_lcp(s1, s2, max_query_len, 0).to_usize(),
+            //    &self.seed_mask_pos,
+            //);
 
             if len_lcp == max_query_len.to_usize() {
                 // The strings are equal
@@ -587,6 +607,7 @@ where
         target_lcp: &mut [T],
     ) {
         let (mut x, mut y) = suffix_array.split_at_mut(mid);
+        //println!("\n\n>>>>> x {x:?} y {y:?}");
         let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
         let mut len_x = x.len();
         let mut len_y = y.len();
@@ -597,47 +618,112 @@ where
 
         while idx_x < len_x && idx_y < len_y {
             let l_x = lcp_x[idx_x];
+            //let left = x[idx_x].to_usize();
+            //let right = y[idx_y].to_usize();
+            //let lsuf = String::from_utf8(self.text[left..].to_vec()).unwrap();
+            //let rsuf = String::from_utf8(self.text[right..].to_vec()).unwrap();
+            //print!(">>> left  {left} {lsuf:8} len_x {len_x} ");
+            //print!("right {right} {rsuf:8} len_y {len_y} ");
+            //println!("l_x {l_x} m {m}");
+
             match l_x.cmp(&m) {
                 Ordering::Greater => {
+                    //println!(" >>> GREATER: LEFT {}", x[idx_x]);
                     target_sa[idx_target] = x[idx_x];
                     target_lcp[idx_target] = l_x;
                 }
                 Ordering::Less => {
+                    //println!(" >>> LESS: RIGHT {}", y[idx_y]);
                     target_sa[idx_target] = y[idx_y];
                     target_lcp[idx_target] = m;
                     m = l_x;
                 }
                 Ordering::Equal => {
+                    //println!(" >>> EQUAL");
                     // Length of shorter suffix
-                    let max_n = self.text_len - max(x[idx_x], y[idx_y]);
+                    let shorter_suffix = max(x[idx_x], y[idx_y]);
+                    let max_n = self.text_len - shorter_suffix;
 
                     // Prefix-context length for the suffixes
-                    let context = if self.max_query_len > T::default() {
+                    let context = if !self.seed_mask_pos.is_empty() {
+                        // How many positions do we care about?
+                        //let masked = self
+                        //    .seed_mask_pos
+                        //    .iter()
+                        //    .filter(|&i| *i < max_n.to_usize())
+                        //    .count();
+                        //println!("  masked {masked}");
+                        T::from_usize(
+                            self.seed_mask_pos
+                                .iter()
+                                .filter(|&i| *i < max_n.to_usize())
+                                .count(),
+                        )
+                    } else if self.max_query_len > T::default() {
                         min(self.max_query_len, max_n)
                     } else {
                         max_n
                     };
+                    //println!("  mql {} shorter {shorter_suffix} context {context} max_n {max_n} seed_mask {:?}", self.max_query_len, self.seed_mask_pos);
 
                     // LCP(X_i, Y_j)
-                    let len_lcp =
-                        m + self.find_lcp(x[idx_x] + m, y[idx_y] + m, context - m);
-                    let full_len_lcp = self.find_lcp_full_offset(len_lcp);
+                    let (len_lcp, full_len_lcp) = if m < context {
+                        let lcp = m + self.find_lcp(
+                            x[idx_x],
+                            y[idx_y],
+                            context - m,
+                            m.to_usize(), // skip
+                        );
+                        (lcp, lcp)
+                        // TODO: Undo
+                        //let full_lcp =
+                        //    find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos);
+                        ////println!(
+                        ////    "  lcp {lcp} full_len_lcp {}",
+                        ////    find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos)
+                        ////);
+                        //(lcp, T::from_usize(full_lcp))
+                    } else {
+                        (context, context)
+                    };
 
-                    // If the len of the LCP is the entire shorter
-                    // sequence, take that.
-                    if full_len_lcp >= max_n {
-                        target_sa[idx_target] = max(x[idx_x], y[idx_y])
+                    //println!(
+                    //    "  next left {} {:?} right {} {:?}",
+                    //    x[idx_x] + full_len_lcp,
+                    //    self.text
+                    //        .get((x[idx_x] + full_len_lcp).to_usize())
+                    //        .map(|&v| v as char),
+                    //    y[idx_y] + full_len_lcp,
+                    //    self.text
+                    //        .get((y[idx_y] + full_len_lcp).to_usize())
+                    //        .map(|&v| v as char)
+                    //);
+
+                    // If full LCP equals context/MQL, take shorter suffix
+                    if len_lcp >= context {
+                        target_sa[idx_target] = shorter_suffix;
+                        //println!("  >> SHORTER (A) {shorter_suffix}");
                     }
                     // Else, look at the next char after the LCP
                     // to determine order.
-                    else if self.text[(x[idx_x] + full_len_lcp).to_usize()]
-                        < self.text[(y[idx_y] + full_len_lcp).to_usize()]
-                    {
-                        target_sa[idx_target] = x[idx_x]
-                    }
-                    // Else take from the right
                     else {
-                        target_sa[idx_target] = y[idx_y]
+                        let cmp = self.text[(x[idx_x] + full_len_lcp).to_usize()]
+                            .cmp(&self.text[(y[idx_y] + full_len_lcp).to_usize()]);
+
+                        match cmp {
+                            Ordering::Equal => {
+                                target_sa[idx_target] = shorter_suffix;
+                                //println!("  >> SHORTER (B) {shorter_suffix}");
+                            }
+                            Ordering::Less => {
+                                //println!("  LEFT (B) {}", x[idx_x]);
+                                target_sa[idx_target] = x[idx_x];
+                            }
+                            Ordering::Greater => {
+                                //println!("  RIGHT (B) {}", y[idx_y]);
+                                target_sa[idx_target] = y[idx_y];
+                            }
+                        }
                     }
 
                     // If we took from the right...
@@ -646,6 +732,7 @@ where
                     } else {
                         target_lcp[idx_target] = m
                     }
+                    // TODO: Should this be full LCP?
                     m = len_lcp;
                 }
             }
@@ -660,6 +747,19 @@ where
                 mem::swap(&mut idx_x, &mut idx_y);
             }
 
+            //println!(
+            //    "  TARGET IDX {idx_target} ({}): {}",
+            //    target_sa
+            //        .iter()
+            //        .map(|v| v.to_string())
+            //        .collect::<Vec<_>>()
+            //        .join(", "),
+            //    target_sa
+            //        .iter()
+            //        .map(|s| self.string_at(s.to_usize()))
+            //        .collect::<Vec<_>>()
+            //        .join(", ")
+            //);
             idx_target += 1;
         }
 
@@ -685,6 +785,13 @@ where
                 idx_target += 1;
             }
         }
+
+        //let vals: Vec<_> = target_sa
+        //    .iter()
+        //    .map(|s| self.string_at(s.to_usize()))
+        //    .collect();
+
+        //println!("FINAL: {target_sa:?} {}", vals.join(", "))
     }
 
     // --------------------------------------------------
@@ -794,6 +901,7 @@ where
                         self.partitions[i - 1].last_suffix,
                         partition.first_suffix,
                         self.text_len,
+                        0, // start at beginning
                     );
                 }
                 file.write_all(vec_to_slice_u8(&lcp))?;
@@ -959,22 +1067,24 @@ mod test {
         // 0: TTTAGC
         // 1:  TTAGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 1, 6), 2);
+        assert_eq!(sufr.find_lcp(0, 1, 6, 0), 2);
 
         // 0: TTTAGC
         // 2:   TAGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 2, 6), 1);
+        assert_eq!(sufr.find_lcp(0, 2, 6, 0), 1);
 
         // 0: TTTAGC
         // 1:  TTAGC
         // 1: max query len = 1
-        assert_eq!(sufr.find_lcp(0, 1, 1), 1);
+        assert_eq!(sufr.find_lcp(0, 1, 1, 0), 1);
 
         // 0: TTTAGC
         // 3:    AGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 3, 6), 0);
+        assert_eq!(sufr.find_lcp(0, 3, 6, 0), 0);
+
+        // TODO: Add a test with skip
 
         Ok(())
     }
@@ -999,64 +1109,15 @@ mod test {
 
         // 0: TTTTTA
         // 1:  TTTTA
-        assert_eq!(sufr.find_lcp(0, 1, 3), 3);
+        assert_eq!(sufr.find_lcp(0, 1, 3, 0), 3);
 
         // 0: TTTTTA
         // 2:   TTTA
-        assert_eq!(sufr.find_lcp(0, 2, 3), 2);
+        assert_eq!(sufr.find_lcp(0, 2, 3, 0), 2);
 
         // 0: TTTTTA
         // 5:      A
-        assert_eq!(sufr.find_lcp(0, 5, 3), 0);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_find_lcp_full_offset() -> Result<()> {
-        //           012345
-        let text = b"TTTTTA".to_vec();
-        let args = SufrBuilderArgs {
-            text,
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
-            num_partitions: 2,
-            sequence_delimiter: b'N',
-            seed_mask: Some("1101".to_string()),
-        };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
-
-        // 0: TTTTTA
-        // 1:  TTTTA
-        // There are only 3 "care" positions but they span 4 bp
-        let lcp = sufr.find_lcp(0, 1, 3);
-        assert_eq!(lcp, 3);
-        assert_eq!(sufr.find_lcp_full_offset(lcp), 4);
-
-        // 0: TTTTTA
-        // 3:    TTA
-        // There are only two Ts in common, but it should span 3 to the end
-        let lcp = sufr.find_lcp(0, 3, 3);
-        assert_eq!(lcp, 2);
-        assert_eq!(sufr.find_lcp_full_offset(lcp), 3);
-
-        // 0: TTTTTA
-        // 4:     TA
-        // There is only one T and the As are in a "care" position
-        let lcp = sufr.find_lcp(0, 4, 3);
-        assert_eq!(lcp, 1);
-        assert_eq!(sufr.find_lcp_full_offset(lcp), 1);
-
-        // 0: TTTTTA
-        // 5:      A
-        // The A is in a "care" position
-        let lcp = sufr.find_lcp(0, 5, 3);
-        assert_eq!(lcp, 0);
-        assert_eq!(sufr.find_lcp_full_offset(lcp), 0);
+        assert_eq!(sufr.find_lcp(0, 5, 3, 0), 0);
 
         Ok(())
     }

@@ -73,8 +73,14 @@ ecoli:
 chr1:
 	$(CREATE_RELEASE) --dna -n 64 $(CHR1)
 
+chr1-mask:
+	$(CREATE_RELEASE) --dna -n 64 -s 111010010100110111 -o chr1-mask.sufr $(CHR1) 
+
 human:
 	$(CREATE_RELEASE) -t 8 --dna -n 800 $(HUMAN)
+
+humask:
+	$(CREATE_RELEASE) -t 8 --dna -n 800 -s 111010010100110111 $(HUMAN)
 
 valcache:
 	valgrind --tool=cachegrind ./target/release/sufr create ../data/chr1.fa --ignore-start-n -o chr1.sa --log info

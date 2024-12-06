@@ -207,8 +207,9 @@ where
     // --------------------------------------------------
     pub fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
         //println!(
-        //    "skip {skip} suffix {suffix_pos} = {:?}",
-        //    String::from_utf8(self.text.get(suffix_pos..).expect("OK").to_vec())
+        //    "\nskip {skip} suffix {suffix_pos} = {:?} seed_mask_pos = {:?}",
+        //    String::from_utf8(self.text.get(suffix_pos..).expect("OK").to_vec()),
+        //    self.seed_mask_pos
         //);
         let lcp = if self.seed_mask.is_empty() {
             query
@@ -235,7 +236,7 @@ where
             let len = min(query_len, suffix_len);
             //println!("query_len {query_len} suffix_len {suffix_len} actual_len {len}");
             if len > 0 {
-                let count = self.seed_mask_pos[skip..len]
+                let count = self.seed_mask_pos[skip..skip + len]
                     .iter()
                     .map_while(|&offset| {
                         (query[offset] == self.text[suffix_pos + offset])
