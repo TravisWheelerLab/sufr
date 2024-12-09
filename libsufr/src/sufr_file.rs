@@ -494,6 +494,7 @@ where
             .flat_map(|(query_num, query)| -> Result<SearchResult<T>> {
                 let mut search =
                     thread_local_search.get_or_try(new_search)?.borrow_mut();
+                //dbg!(&search);
                 search.search(query_num, &query, args.find_suffixes)
             })
             .collect();
@@ -529,14 +530,14 @@ where
             if let Some(locs) = &res.locations {
                 for (rank, suffix) in locs.ranks.clone().zip(locs.suffixes.clone()) {
                     let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
-                    let seq_start = seq_starts[i].to_usize();
+                    let sequence_start = seq_starts[i].to_usize();
                     let seq_end = if i == seq_starts.len() - 1 {
                         text_len
                     } else {
                         seq_starts[i + 1].to_usize()
                     };
                     let suffix = suffix.to_usize();
-                    let relative_suffix_start = suffix - seq_start;
+                    let relative_suffix_start = suffix - sequence_start;
                     let context_start = relative_suffix_start
                         .saturating_sub(args.prefix_len.unwrap_or(0));
                     let context_end = min(
@@ -548,6 +549,7 @@ where
                         rank,
                         suffix,
                         sequence_name: seq_names[i].clone(),
+                        sequence_start,
                         sequence_range: (context_start..context_end),
                         suffix_offset: relative_suffix_start - context_start,
                     })
@@ -635,6 +637,7 @@ mod test {
                         suffix: 6,
                         rank: 1,
                         sequence_name: "1".to_string(),
+                        sequence_start: 0,
                         sequence_range: 5..9,
                         suffix_offset: 1,
                     },
@@ -642,6 +645,7 @@ mod test {
                         suffix: 0,
                         rank: 2,
                         sequence_name: "1".to_string(),
+                        sequence_start: 0,
                         sequence_range: 0..3,
                         suffix_offset: 0,
                     },
@@ -655,6 +659,7 @@ mod test {
                         suffix: 8,
                         rank: 5,
                         sequence_name: "1".to_string(),
+                        sequence_start: 0,
                         sequence_range: 7..11,
                         suffix_offset: 1,
                     },
@@ -662,6 +667,7 @@ mod test {
                         suffix: 2,
                         rank: 6,
                         sequence_name: "1".to_string(),
+                        sequence_start: 0,
                         sequence_range: 1..5,
                         suffix_offset: 1,
                     },

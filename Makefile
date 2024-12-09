@@ -76,11 +76,11 @@ chr1:
 chr1-mask:
 	$(CREATE_RELEASE) --dna -n 800 -s 111010010100110111 -o chr1-mask.sufr $(CHR1) 
 
-human:
-	$(CREATE_RELEASE) -t 8 --dna -n 800 $(HUMAN)
+hu:
+	$(CREATE_RELEASE) --dna -n 800 $(HUMAN)
 
-humask:
-	$(CREATE_RELEASE) -t 8 --dna -n 800 -s 111010010100110111 $(HUMAN)
+hu-mask:
+	$(CREATE_RELEASE) --dna -n 800 -s 111010010100110111 -o hs1-mask.sufr $(HUMAN)
 
 valcache:
 	valgrind --tool=cachegrind ./target/release/sufr create ../data/chr1.fa --ignore-start-n -o chr1.sa --log info

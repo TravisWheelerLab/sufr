@@ -10,6 +10,8 @@ const PRG: &str = "sufr";
 const SEQ1: &str = "../data/inputs/1.fa";
 const SEQ2: &str = "../data/inputs/2.fa";
 const SEQ3: &str = "../data/inputs/3.fa";
+const LONG: &str = "../data/inputs/long_dna_sequence.fa";
+const PROTEIN: &str = "../data/inputs/uniprot.fa";
 const SUFR1: &str = "../data/expected/1.sufr";
 const SUFR2: &str = "../data/expected/2.sufr";
 
@@ -19,9 +21,11 @@ struct CountOptions {
 }
 
 struct CreateOptions {
+    is_dna: bool,
     allow_ambiguity: bool,
     ignore_softmask: bool,
     sequence_delimiter: Option<char>,
+    seed_mask: Option<String>,
 }
 
 struct ExtractOptions {
@@ -40,6 +44,7 @@ struct ListOptions {
 struct LocateOptions {
     queries: Vec<String>,
     absolute: bool,
+    low_memory: bool,
 }
 
 // --------------------------------------------------
@@ -48,11 +53,14 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
     let outpath = &outfile.path().to_string_lossy();
     let mut args = vec![
         "create".to_string(),
-        "--dna".to_string(),
         "-o".to_string(),
         outpath.to_string(),
         input_file.to_string(),
     ];
+
+    if opts.is_dna {
+        args.push("--dna".to_string());
+    }
 
     if opts.allow_ambiguity {
         args.push("--allow-ambiguity".to_string());
@@ -64,6 +72,11 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
 
     if let Some(delim) = opts.sequence_delimiter {
         let mut tmp = vec!["--sequence-delimiter".to_string(), delim.to_string()];
+        args.append(&mut tmp);
+    }
+
+    if let Some(mask) = opts.seed_mask {
+        let mut tmp = vec!["--seed-mask".to_string(), mask.to_string()];
         args.append(&mut tmp);
     }
 
@@ -113,9 +126,11 @@ fn create_seq1() -> Result<()> {
         SEQ1,
         "../data/expected/1.sufr",
         CreateOptions {
+            is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
+            seed_mask: None,
         },
     )
 }
@@ -127,9 +142,11 @@ fn create_seq1_allow_ambiguity() -> Result<()> {
         SEQ1,
         "../data/expected/1n.sufr",
         CreateOptions {
+            is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: false,
             sequence_delimiter: None,
+            seed_mask: None,
         },
     )
 }
@@ -141,9 +158,11 @@ fn create_seq2() -> Result<()> {
         SEQ2,
         "../data/expected/2.sufr",
         CreateOptions {
+            is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
+            seed_mask: None,
         },
     )
 }
@@ -155,9 +174,11 @@ fn create_seq2_sequence_delimiter() -> Result<()> {
         SEQ2,
         "../data/expected/2d.sufr",
         CreateOptions {
+            is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: Some('N'),
+            seed_mask: None,
         },
     )
 }
@@ -169,9 +190,11 @@ fn create_seq2_allow_ambiguity() -> Result<()> {
         SEQ2,
         "../data/expected/2n.sufr",
         CreateOptions {
+            is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: false,
             sequence_delimiter: None,
+            seed_mask: None,
         },
     )
 }
@@ -183,9 +206,11 @@ fn create_seq2_ignore_softmask() -> Result<()> {
         SEQ2,
         "../data/expected/2s.sufr",
         CreateOptions {
+            is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: true,
             sequence_delimiter: None,
+            seed_mask: None,
         },
     )
 }
@@ -197,9 +222,11 @@ fn create_seq2_allow_ambiguity_ignore_softmask() -> Result<()> {
         SEQ2,
         "../data/expected/2ns.sufr",
         CreateOptions {
+            is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: true,
             sequence_delimiter: None,
+            seed_mask: None,
         },
     )
 }
@@ -211,9 +238,59 @@ fn create_seq3() -> Result<()> {
         SEQ3,
         "../data/expected/3.sufr",
         CreateOptions {
+            is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
+            seed_mask: None,
+        },
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn create_long_dna() -> Result<()> {
+    create(
+        LONG,
+        "../data/expected/long_dna_sequence.sufr",
+        CreateOptions {
+            is_dna: true,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+            seed_mask: None,
+        },
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn create_protein() -> Result<()> {
+    create(
+        PROTEIN,
+        "../data/expected/uniprot.sufr",
+        CreateOptions {
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+            seed_mask: None,
+        },
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn create_protein_masked() -> Result<()> {
+    create(
+        PROTEIN,
+        "../data/expected/uniprot-masked.sufr",
+        CreateOptions {
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+            seed_mask: Some("10111011".to_string()),
         },
     )
 }
@@ -412,6 +489,34 @@ fn extract_seq1_pre_1_suf_3() -> Result<()> {
 }
 
 // --------------------------------------------------
+#[test]
+fn extract_uniprot() -> Result<()> {
+    extract(
+        "../data/expected/uniprot.sufr",
+        ExtractOptions {
+            positions: vec![
+                "RNELNNEEA".to_string(),
+                "DTPTNCPT".to_string(),
+                "GSGLSLLSD".to_string(),
+            ],
+            prefix_len: Some(4),
+            suffix_len: Some(12),
+        },
+        &[
+            ">sp|Q9U408|14331_ECHGR:38-54 RNELNNEEA 4",
+            "MAKMRNELNNEEANLL",
+            ">sp|Q6GZX3|002L_FRG3G:218-234 DTPTNCPT 4",
+            "GTQRDTPTNCPTQVCQ",
+            ">sp|Q6GZW6|009L_FRG3G:390-406 GSGLSLLSD 4",
+            "EYVNGSGLSLLSDILL",
+            "",
+        ]
+        .join("\n"),
+        None,
+    )
+}
+
+// --------------------------------------------------
 fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
     let mut args = vec!["list".to_string(), filename.to_string()];
 
@@ -594,11 +699,15 @@ fn list_sufr1_len_3() -> Result<()> {
     )
 }
 // --------------------------------------------------
-fn locate(filename: &str, opts: LocateOptions, expected: &str) -> Result<()> {
+fn locate(filename: &str, opts: LocateOptions, expected_file: &str) -> Result<()> {
     let mut args = vec!["locate".to_string(), filename.to_string()];
 
     if opts.absolute {
         args.push("-a".to_string());
+    }
+
+    if opts.low_memory {
+        args.push("-l".to_string());
     }
 
     for query in opts.queries {
@@ -608,8 +717,9 @@ fn locate(filename: &str, opts: LocateOptions, expected: &str) -> Result<()> {
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
     assert!(output.status.success());
 
-    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
-    assert_eq!(stdout, expected);
+    let actual = String::from_utf8(output.stdout).expect("invalid UTF-8");
+    let expected = fs::read_to_string(expected_file)?;
+    assert_eq!(actual, expected);
 
     Ok(())
 }
@@ -622,8 +732,9 @@ fn locate_seq1_relative() -> Result<()> {
         LocateOptions {
             queries: vec!["AC".to_string(), "GT".to_string()],
             absolute: false,
+            low_memory: false,
         },
-        "AC\nABC 0,4\nDEF 0,4\n//\nGT\nABC 2,6\nDEF 2,6\n//\n",
+        "../data/expected/locate1.out",
     )
 }
 
@@ -635,15 +746,69 @@ fn locate_seq1_absolute() -> Result<()> {
         LocateOptions {
             queries: vec!["AC".to_string(), "GT".to_string()],
             absolute: true,
+            low_memory: false,
         },
-        "AC 13 4 9 0\nGT 15 6 11 2\n",
+        "../data/expected/locate-abs.out",
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_uniprot() -> Result<()> {
+    locate(
+        "../data/expected/uniprot.sufr",
+        LocateOptions {
+            queries: vec![
+                "RNELNNEEA".to_string(),
+                "DTPTNCPT".to_string(),
+                "GSGLSLLSD".to_string(),
+            ],
+            absolute: false,
+            low_memory: false,
+        },
+        "../data/expected/uniprot-search1.out",
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_uniprot_masked() -> Result<()> {
+    locate(
+        "../data/expected/uniprot-masked.sufr",
+        LocateOptions {
+            queries: vec![
+                "RNELNNEEA".to_string(),
+                "DTPTNCPT".to_string(),
+                "GSGLSLLSD".to_string(),
+            ],
+            absolute: false,
+            low_memory: false,
+        },
+        "../data/expected/uniprot-search-masked.out",
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_long_dna_low_memory() -> Result<()> {
+    locate(
+        "../data/expected/long_dna_sequence.sufr",
+        LocateOptions {
+            queries: vec![
+                "CATGTTGTCACG".to_string(),
+                "CCATGGGAC".to_string(),
+                "GGATGAAGAAAAGCA".to_string(),
+            ],
+            absolute: false,
+            low_memory: true,
+        },
+        "../data/expected/locate_long_dna.out",
     )
 }
 
 // --------------------------------------------------
 fn summarize(filename: &str, expected: Vec<(&str, &str)>) -> Result<()> {
     let args = vec!["summarize".to_string(), filename.to_string()];
-
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
     assert!(output.status.success());
 

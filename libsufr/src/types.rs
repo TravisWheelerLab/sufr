@@ -121,6 +121,7 @@ pub struct ExtractSequence {
     pub suffix: usize,
     pub rank: usize,
     pub sequence_name: String,
+    pub sequence_start: usize,
     pub sequence_range: Range<usize>,
     pub suffix_offset: usize,
 }

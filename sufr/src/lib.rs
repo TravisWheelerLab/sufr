@@ -120,7 +120,8 @@ pub struct CreateArgs {
     pub seed_mask: Option<String>,
 
     /// Random seed
-    #[arg(short, long, value_name = "RANDSEED", default_value = "3")] // TODO: Make 42
+    #[arg(short, long, value_name = "RANDSEED", default_value = "3")]
+    // TODO: Make 42
     pub random_seed: u64,
 }
 
@@ -470,8 +471,10 @@ where
                     res.query,
                     seq.suffix_offset,
                     sufr_file.string_at(
-                        seq.sequence_range.start,
-                        Some(seq.sequence_range.end - seq.sequence_range.start),
+                        seq.sequence_start + seq.sequence_range.start,
+                        Some(
+                            seq.sequence_range.end - seq.sequence_range.start
+                        ),
                     )
                 )?;
             }

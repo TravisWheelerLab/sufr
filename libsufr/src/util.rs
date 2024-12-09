@@ -115,7 +115,13 @@ pub fn read_sequence_file(
         seq.append(&mut tmp);
         i += 1;
 
-        headers.push(String::from_utf8(rec.id().to_vec())?);
+        // Only take ID value up to first whitespace
+        let id = String::from_utf8(rec.id().to_vec())?
+            .split_whitespace()
+            .next()
+            .map_or((i + 1).to_string(), |v| v.to_string());
+
+        headers.push(id);
     }
 
     // File delimiter
