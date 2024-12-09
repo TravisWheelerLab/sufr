@@ -246,8 +246,7 @@ where
     #[inline(always)]
     pub fn find_lcp(&self, start1: T, start2: T, len: T, skip: usize) -> T {
         //println!("find_lcp start1 {start1} start2 {start2} len {len} skip {skip}");
-        let seed_diff: Vec<usize> = seed_mask_difference(&self.seed_mask_pos);
-        if seed_diff.is_empty() {
+        if self.seed_mask_pos.is_empty() {
             let text_len = self.text_len.to_usize();
             let len = len.to_usize();
             let start1 = start1.to_usize() + skip;
@@ -267,41 +266,22 @@ where
         } else {
             // Use the seed diff vector to select only the "care" positions
             // up to the length of the text
-            let a_vals: Vec<_> = self
+            let a_vals = self
                 .seed_mask_pos
                 .iter()
                 .skip(skip)
                 .map(|&offset| start1.to_usize() + offset)
-                .filter(|&v| v < self.text_len.to_usize())
-                .collect();
-            let b_vals: Vec<_> = self
+                .filter(|&v| v < self.text_len.to_usize());
+            let b_vals = self
                 .seed_mask_pos
                 .iter()
                 .skip(skip)
                 .map(|&offset| start2.to_usize() + offset)
-                .filter(|&v| v < self.text_len.to_usize())
-                .collect();
-            //println!(
-            //    "FIND LCP skip {skip} start1 {start1} => {a_vals:?}, start2 {start2} => {b_vals:?}"
-            //);
-            //println!(
-            //    "{}",
-            //    a_vals
-            //        .clone()
-            //        .into_iter()
-            //        .zip(b_vals.clone().into_iter())
-            //        .map(|(a, b)| format!(
-            //            "{a}/{} {b}/{}",
-            //            self.text[a] as char, self.text[b] as char
-            //        ))
-            //        .collect::<Vec<_>>()
-            //        .join(" | ")
-            //);
+                .filter(|&v| v < self.text_len.to_usize());
             unsafe {
                 return T::from_usize(
                     skip + a_vals
-                        .into_iter()
-                        .zip(b_vals.into_iter())
+                        .zip(b_vals)
                         .take_while(|(a, b)| {
                             self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
                         })
@@ -329,11 +309,8 @@ where
                 &self.seed_mask_pos,
             );
 
-            //let lcp = self.find_lcp(s1, s2, max_query_len, 0);
-            //println!("s1 {s1} s2 {s2} lcp {lcp} full_lcp {len_lcp}");
-
-            if len_lcp == max_query_len.to_usize() {
-                // The strings are equal
+            if len_lcp >= max_query_len.to_usize() {
+                // The strings are equal(ish)
                 false
             } else {
                 // Look at the next character
@@ -350,23 +327,10 @@ where
     }
 
     // --------------------------------------------------
+    #[inline(always)]
     pub fn upper_bound(&self, target: T, pivots: &[T]) -> usize {
-        // No partitions
-        if pivots.is_empty() {
-            0
-        } else {
-            // Find where all the values are less than target
-            pivots.partition_point(|&p| self.is_less(p, target))
-
-            //// If the value at the partition is the same as the target
-            //if pivots.get(i).map_or(false, |&v| v == target) {
-            //    // Then return the next value, which might be out of range
-            //    i + 1
-            //} else {
-            //    // Else return the partition point
-            //    i
-            //}
-        }
+        // Returns 0 when pivots is empty
+        pivots.partition_point(|&p| self.is_less(p, target))
     }
 
     // --------------------------------------------------
@@ -422,11 +386,6 @@ where
                     || (b"ACGT".contains(&val) || self.allow_ambiguity)
                 {
                     let partition_num = self.upper_bound(T::from_usize(i), &pivot_sa);
-                    //println!(
-                    //    "Suffix {i:2} -> {} = {}\n",
-                    //    partition_num,
-                    //    self.string_at(i)
-                    //);
                     match builders[partition_num].lock() {
                         Ok(mut guard) => {
                             guard.add(T::from_usize(i))?;
@@ -1167,12 +1126,12 @@ mod test {
     fn test_upper_bound_1() -> Result<()> {
         //          012345
         let text = b"TTTAGC".to_vec();
-        let args = SufrBuilderArgs {
-            text,
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
+        let args = SufrBuilderArgs {           // 0: TTTAGC
+            text,                              // 1:  TTAGC
+            max_query_len: None,               // 2:   TAGC
+            is_dna: false,                     // 3:    AGC
+            allow_ambiguity: false,            // 4:     GC
+            ignore_softmask: false,            // 5:      C
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1186,10 +1145,10 @@ mod test {
         assert_eq!(sufr.upper_bound(3, &[5, 4]), 0);
 
         // The suffix "TAGC$" is beyond all the values
-        assert_eq!(sufr.upper_bound(2, &[3, 5, 4]), 3);
+        assert_eq!(sufr.upper_bound(2, &[3, 4, 5]), 3);
 
         // The "C$" is the last value
-        assert_eq!(sufr.upper_bound(5, &[3, 5, 4]), 2);
+        assert_eq!(sufr.upper_bound(5, &[3, 4, 5]), 1);
 
         Ok(())
     }
@@ -1216,7 +1175,7 @@ mod test {
         let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
 
         // ACGTNNACGT$ == ACGTNNACGT$
-        assert_eq!(sufr.upper_bound(0, &[0]), 1);
+        assert_eq!(sufr.upper_bound(0, &[0]), 0);
 
         // ACGTNNACGT$ (0) > ACGT$ (6)
         assert_eq!(sufr.upper_bound(0, &[6]), 1);
@@ -1225,7 +1184,7 @@ mod test {
         assert_eq!(sufr.upper_bound(6, &[0]), 0);
 
         // ACGT$ == ACGT$
-        assert_eq!(sufr.upper_bound(6, &[6]), 1);
+        assert_eq!(sufr.upper_bound(6, &[6]), 0);
 
         // Pivots = [CGT$, GT$]
         // ACGTNNACGT$ < CGT$ => p0
@@ -1265,42 +1224,36 @@ mod test {
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
-        // two bins
         // ACGTNNACGT$ == ACGTNNACGT$ (A-G)
-        // so goes in bin 1
-        assert_eq!(sufr.upper_bound(0, &[0]), 1);
+        assert_eq!(sufr.upper_bound(0, &[0]), 0);
 
-        // two bins
         // ACGTNNACGT$ == ACGT$ (A-G)
-        // so goes in bin 1
-        assert_eq!(sufr.upper_bound(0, &[6]), 1);
+        assert_eq!(sufr.upper_bound(0, &[6]), 0);
 
-        // two bins
         // ACGT$ == ACGTNNACGT$ (A-G)
-        // so goes in bin 1
-        assert_eq!(sufr.upper_bound(6, &[0]), 1);
+        assert_eq!(sufr.upper_bound(6, &[0]), 0);
 
         // ACGT$ == ACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(6, &[6]), 1);
+        assert_eq!(sufr.upper_bound(6, &[6]), 0);
 
         // Pivots = [CGT$, GT$]
-        // ACGTNNACGT$ < CGT$ => p0
+        // ACGTNNACGT$ < CGT$
         assert_eq!(sufr.upper_bound(0, &[7, 8]), 0);
 
         // Pivots = [CGT$, GT$]
-        // CGTNNACGT$ == CGT$ (C-T) => p1
-        assert_eq!(sufr.upper_bound(1, &[7, 8]), 1);
+        // CGTNNACGT$ == CGT$ (C-T)
+        assert_eq!(sufr.upper_bound(1, &[7, 8]), 0);
 
         // Pivots = [CGT$, GT$]
-        // GT$ == GT$ => p2
-        assert_eq!(sufr.upper_bound(8, &[7, 8]), 2);
+        // GT$ == GT$
+        assert_eq!(sufr.upper_bound(8, &[7, 8]), 1);
 
         // Pivots = [CGT$, GT$]
         // T$ > GT$  => p2
         assert_eq!(sufr.upper_bound(9, &[7, 8]), 2);
 
-        // T$ == TNNACGT$ (only compare T) => p1
-        assert_eq!(sufr.upper_bound(9, &[3]), 1);
+        // T$ == TNNACGT$ (only compare T)
+        assert_eq!(sufr.upper_bound(9, &[3]), 0);
 
         Ok(())
     }
