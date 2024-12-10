@@ -248,7 +248,11 @@ where
         //println!("find_lcp start1 {start1} start2 {start2} len {len} skip {skip}");
         if self.seed_mask_pos.is_empty() {
             let text_len = self.text_len.to_usize();
-            let len = len.to_usize();
+            let len = if self.max_query_len > T::default() {
+                self.max_query_len.to_usize()
+            } else {
+                len.to_usize()
+            };
             let start1 = start1.to_usize() + skip;
             let start2 = start2.to_usize() + skip;
             let end1 = min(start1 + len, text_len);
@@ -1126,12 +1130,13 @@ mod test {
     fn test_upper_bound_1() -> Result<()> {
         //          012345
         let text = b"TTTAGC".to_vec();
-        let args = SufrBuilderArgs {           // 0: TTTAGC
-            text,                              // 1:  TTAGC
-            max_query_len: None,               // 2:   TAGC
-            is_dna: false,                     // 3:    AGC
-            allow_ambiguity: false,            // 4:     GC
-            ignore_softmask: false,            // 5:      C
+        let args = SufrBuilderArgs {
+            // 0: TTTAGC
+            text,                   // 1:  TTAGC
+            max_query_len: None,    // 2:   TAGC
+            is_dna: false,          // 3:    AGC
+            allow_ambiguity: false, // 4:     GC
+            ignore_softmask: false, // 5:      C
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,

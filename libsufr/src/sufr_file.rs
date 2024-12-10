@@ -13,7 +13,7 @@ use log::info;
 use rayon::prelude::*;
 use std::{
     cell::RefCell,
-    cmp::min,
+    cmp::{max, min},
     fs::{self, File},
     io::{Read, Seek, Write},
     mem,
@@ -464,6 +464,17 @@ where
             self.set_suffix_array_mem(max_query_len)?;
         }
 
+        //println!(
+        //    ">>> MQL self {} args {:?}",
+        //    self.max_query_len, args.max_query_len
+        //);
+        let args_mql = args.max_query_len.unwrap_or_default();
+        let file_mql = self.max_query_len.to_usize();
+        let max_query_len = if file_mql > 0 && args_mql > 0 {
+            min(file_mql, args_mql)
+        } else {
+            max(file_mql, args_mql)
+        };
         let now = Instant::now();
         let new_search = || -> Result<RefCell<SufrSearch<T>>> {
             let search_file: FileAccess<T> = FileAccess::new(
@@ -477,6 +488,7 @@ where
                 suffix_array: &self.suffix_array_mem,
                 rank: &self.suffix_array_rank_mem,
                 query_low_memory: args.low_memory,
+                max_query_len,
                 num_suffixes: self.num_suffixes.to_usize(),
                 seed_mask: self.seed_mask.clone(),
             };
