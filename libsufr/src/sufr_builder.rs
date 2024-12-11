@@ -1,8 +1,9 @@
 use crate::{
     types::{FromUsize, Int, OUTFILE_VERSION, SENTINEL_CHARACTER},
     util::{
-        find_lcp_full_offset, seed_mask_difference, seed_mask_positions,
-        slice_u8_to_vec, usize_to_bytes, valid_seed_mask, vec_to_slice_u8,
+        find_lcp_full_offset, parse_seed_mask, seed_mask_difference,
+        seed_mask_positions, slice_u8_to_vec, usize_to_bytes, valid_seed_mask,
+        vec_to_slice_u8,
     },
 };
 use anyhow::{anyhow, bail, Result};
@@ -112,6 +113,7 @@ pub struct SufrBuilderArgs {
     pub is_dna: bool,
     pub allow_ambiguity: bool,
     pub ignore_softmask: bool,
+    pub save_lcp: bool,
     pub sequence_starts: Vec<usize>,
     pub headers: Vec<String>,
     pub num_partitions: usize,
@@ -130,6 +132,7 @@ where
     pub is_dna: bool,
     pub allow_ambiguity: bool,
     pub ignore_softmask: bool,
+    pub save_lcp: bool,
     pub max_query_len: T,
     pub text_len: T,
     pub num_suffixes: T,
@@ -179,15 +182,7 @@ where
                     if !valid_seed_mask(&mask) {
                         bail!("Invalid mask: {mask}");
                     }
-                    let nums: Vec<u8> = mask
-                        .as_bytes()
-                        .iter()
-                        .flat_map(|b| match b {
-                            b'1' => Some(1),
-                            b'0' => Some(0),
-                            _ => None,
-                        })
-                        .collect();
+                    let nums = parse_seed_mask(&mask);
                     let mask_pos = seed_mask_positions(&nums);
                     if mask_pos.is_empty() {
                         bail!("Seed mask must contain at least one 1");
@@ -212,6 +207,7 @@ where
             is_dna: args.is_dna,
             allow_ambiguity: args.allow_ambiguity,
             ignore_softmask: args.ignore_softmask,
+            save_lcp: args.save_lcp,
             max_query_len,
             text_len,
             num_suffixes: T::default(),
@@ -854,6 +850,11 @@ where
         // Number of suffixes
         bytes_out += file.write(&usize_to_bytes(self.num_suffixes.to_usize()))?;
 
+        // Number of LCP
+        //let len_lcp = if self.save_lcp { self.num_suffixes.to_usize() } else { 0 };
+        let len_lcp = self.num_suffixes.to_usize();
+        bytes_out += file.write(&usize_to_bytes(len_lcp))?;
+
         // Max query length
         bytes_out += file.write(&usize_to_bytes(self.max_query_len.to_usize()))?;
 
@@ -884,8 +885,9 @@ where
             file.write_all(&buffer)?;
         }
 
-        // Stitch partitioned LCP files together
         let lcp_pos = bytes_out;
+        //if self.save_lcp {
+        // Stitch partitioned LCP files together
         for (i, partition) in self.partitions.iter().enumerate() {
             let buffer = fs::read(&partition.lcp_path)?;
             bytes_out += &buffer.len();
@@ -906,6 +908,7 @@ where
                 file.write_all(vec_to_slice_u8(&lcp))?;
             }
         }
+        //}
 
         // Headers are variable in length so they are at the end
         bytes_out += file.write(&bincode::serialize(&self.headers)?)?;
@@ -937,6 +940,7 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -975,6 +979,7 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1016,6 +1021,7 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1058,6 +1064,7 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1102,6 +1109,7 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1131,13 +1139,13 @@ mod test {
         //          012345
         let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
-            // 0: TTTAGC
-            text,                   // 1:  TTAGC
-            max_query_len: None,    // 2:   TAGC
-            is_dna: false,          // 3:    AGC
-            allow_ambiguity: false, // 4:     GC
-            ignore_softmask: false, // 5:      C
-            sequence_starts: vec![0],
+            text,
+            max_query_len: None,      // 0: TTTAGC
+            is_dna: false,            // 1:  TTAGC
+            allow_ambiguity: false,   // 2:   TAGC
+            ignore_softmask: false,   // 3:    AGC
+            save_lcp: false,          // 4:     GC
+            sequence_starts: vec![0], // 5:      C
             headers: vec!["1".to_string()],
             num_partitions: 2,
             sequence_delimiter: b'N',
@@ -1168,12 +1176,13 @@ mod test {
             max_query_len: None,            //  0 ACGTNNACGT$
             is_dna: false,                  //  7 CGT$
             allow_ambiguity: false,         //  1 CGTNNACGT$
-            ignore_softmask: false,         //  8 GT$
-            sequence_starts: vec![0],       //  2 GTNNACGT$
-            headers: vec!["1".to_string()], //  5 NACGT$
-            num_partitions: 2,              //  4 NNACGT$
-            sequence_delimiter: b'N',       //  9 T$
-            seed_mask: None,                //  3 TNNACGT$
+            save_lcp: false,                //  8 GT$
+            ignore_softmask: false,         //  2 GTNNACGT$
+            sequence_starts: vec![0],       //  5 NACGT$
+            headers: vec!["1".to_string()], //  4 NNACGT$
+            num_partitions: 2,              //  9 T$
+            sequence_delimiter: b'N',       //  3 TNNACGT$
+            seed_mask: None,
             random_seed: 42,
         };
 
@@ -1215,16 +1224,17 @@ mod test {
         //           0123456789
         let text = b"ACGTNNACGT".to_vec();
         let args = SufrBuilderArgs {
-            text,                               //  6 ACGT$
-            max_query_len: None,                //  0 ACGTNNACGT$
-            is_dna: false,                      //  7 CGT$
-            allow_ambiguity: false,             //  1 CGTNNACGT$
-            ignore_softmask: false,             //  8 GT$
-            sequence_starts: vec![0],           //  2 GTNNACGT$
-            headers: vec!["1".to_string()],     //  4 NNACGT$
-            num_partitions: 2,                  //  5 NACGT$
-            sequence_delimiter: b'N',           //  9 T$
-            seed_mask: Some("101".to_string()), //  3 TNNACGT$
+            text,                           //  6 ACGT$
+            max_query_len: None,            //  0 ACGTNNACGT$
+            is_dna: false,                  //  7 CGT$
+            allow_ambiguity: false,         //  1 CGTNNACGT$
+            ignore_softmask: false,         //  8 GT$
+            save_lcp: false,                //  2 GTNNACGT$
+            sequence_starts: vec![0],       //  4 NNACGT$
+            headers: vec!["1".to_string()], //  5 NACGT$
+            num_partitions: 2,              //  9 T$
+            sequence_delimiter: b'N',       //  3 TNNACGT$
+            seed_mask: Some("101".to_string()),
             random_seed: 42,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;

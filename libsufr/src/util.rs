@@ -44,6 +44,18 @@ pub fn seed_mask_positions(bytes: &[u8]) -> Vec<usize> {
 }
 
 // --------------------------------------------------
+pub fn parse_seed_mask(mask: &str) -> Vec<u8> {
+    mask.as_bytes()
+        .iter()
+        .flat_map(|b| match b {
+            b'1' => Some(1),
+            b'0' => Some(0),
+            _ => None,
+        })
+        .collect()
+}
+
+// --------------------------------------------------
 pub fn valid_seed_mask(mask: &str) -> bool {
     let seed_re = Regex::new("^1+0[01]*1$").unwrap();
     seed_re.is_match(mask)
@@ -154,6 +166,8 @@ pub fn usize_to_bytes(value: usize) -> Vec<u8> {
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
+    use crate::util::parse_seed_mask;
+
     use super::{
         find_lcp_full_offset, read_sequence_file, read_text_length,
         seed_mask_difference, seed_mask_positions, slice_u8_to_vec, usize_to_bytes,
@@ -343,6 +357,13 @@ mod tests {
         assert_eq!(find_lcp_full_offset(3, &seed_mask), 7);
         assert_eq!(find_lcp_full_offset(4, &seed_mask), 8);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_seed_mask() -> Result<()> {
+        assert_eq!(parse_seed_mask("101"), vec![1, 0, 1]);
+        assert_eq!(parse_seed_mask("10001110011"), vec![1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1]);
         Ok(())
     }
 }

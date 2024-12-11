@@ -111,6 +111,10 @@ pub struct CreateArgs {
     #[arg(short, long)]
     pub ignore_softmask: bool,
 
+    /// Save LCP to sufr file
+    #[arg(short('l'), long)]
+    pub save_lcp: bool,
+
     /// Character to separate sequences
     #[arg(short('D'), long, default_value = "%", value_name = "DELIM")]
     pub sequence_delimiter: char,
@@ -120,8 +124,7 @@ pub struct CreateArgs {
     pub seed_mask: Option<String>,
 
     /// Random seed
-    #[arg(short, long, value_name = "RANDSEED", default_value = "3")]
-    // TODO: Make 42
+    #[arg(short, long, value_name = "RANDSEED", default_value = "42")]
     pub random_seed: u64,
 }
 
@@ -292,8 +295,8 @@ where
     let num_fmt = NumberFormat::new();
     println!(
         "Checked {} suffix{}, found {} error{} in suffix array.",
-        num_fmt.format(",.0", sufr_file.num_suffixes.to_usize() as f64),
-        if sufr_file.num_suffixes.to_usize() == 1 {
+        num_fmt.format(",.0", sufr_file.len_suffixes.to_usize() as f64),
+        if sufr_file.len_suffixes.to_usize() == 1 {
             ""
         } else {
             "es"
@@ -377,6 +380,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         is_dna: args.is_dna,
         allow_ambiguity: args.allow_ambiguity,
         ignore_softmask: args.ignore_softmask,
+        save_lcp: args.save_lcp,
         sequence_starts: seq_data.start_positions.into_iter().collect(),
         headers: seq_data.headers,
         num_partitions: args.num_partitions,
@@ -526,7 +530,7 @@ where
 
     //writeln!(output, "{:>width$} {:>width$} {:>width$}", "R", "S", "L")?;
 
-    let mut print = |rank: usize, suffix: usize, lcp: usize| -> Result<()> {
+    let mut print = |rank: usize, suffix: usize, lcp: T| -> Result<()> {
         let end = if suffix + suffix_len > text_len {
             text_len
         } else {
@@ -545,7 +549,7 @@ where
             "".to_string()
         };
         let lcp_display = if args.show_lcp {
-            format!("{lcp:width$} ")
+            format!("{:width$} ", lcp)
         } else {
             "".to_string()
         };
@@ -559,21 +563,13 @@ where
     };
 
     if ranks.is_empty() {
-        for (rank, (suffix, lcp)) in sufr_file
-            .suffix_array_file
-            .iter()
-            .zip(sufr_file.lcp_file.iter())
-            .enumerate()
-        {
-            print(rank, suffix.to_usize(), lcp.to_usize())?;
+        for (rank, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
+            print(rank, suffix.to_usize(), sufr_file.lcp_file.get(rank).unwrap())?;
         }
     } else {
         for rank in ranks {
-            if let (Some(suffix), Some(lcp)) = (
-                sufr_file.suffix_array_file.get(rank),
-                sufr_file.lcp_file.get(rank),
-            ) {
-                print(rank, suffix.to_usize(), lcp.to_usize())?;
+            if let Some(suffix) = sufr_file.suffix_array_file.get(rank) {
+                print(rank, suffix.to_usize(), sufr_file.lcp_file.get(rank).unwrap())?;
             } else {
                 eprintln!("Invalid rank: {rank}");
             }
@@ -782,8 +778,12 @@ where
         num_fmt.format(",.0", sufr_file.text_len.to_usize() as f64),
     ]);
     rows.push(vec![
-        "Num Suffixes".to_string(),
-        num_fmt.format(",.0", sufr_file.num_suffixes.to_usize() as f64),
+        "Len Suffixes".to_string(),
+        num_fmt.format(",.0", sufr_file.len_suffixes.to_usize() as f64),
+    ]);
+    rows.push(vec![
+        "Len LCP".to_string(),
+        num_fmt.format(",.0", sufr_file.len_lcp.to_usize() as f64),
     ]);
     rows.push(vec![
         "Max query len".to_string(),

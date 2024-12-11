@@ -28,6 +28,7 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_starts: seq_data.start_positions.into_iter().collect(),
             headers: seq_data.headers,
             num_partitions: 2,
@@ -75,6 +76,7 @@ mod tests {
             is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: seq_data.start_positions.into_iter().collect(),
             headers: seq_data.headers,
             num_partitions: 2,
@@ -84,8 +86,6 @@ mod tests {
         };
 
         let suffix_array: SufrBuilder<u64> = SufrBuilder::new(args)?;
-        let sorted_sa = [10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3];
-        let lcp = [0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1];
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
         let res = suffix_array.write(outpath);
@@ -103,11 +103,13 @@ mod tests {
         assert_eq!(sufr_file.sequence_starts, [0]);
         assert_eq!(sufr_file.headers, ["1"]);
         assert_eq!(sufr_file.text, b"ACGTNNACGT$");
+        assert_eq!(sufr_file.len_suffixes, 11);
+        assert_eq!(sufr_file.len_lcp, 11);
 
         let file_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
-        assert_eq!(file_sa, sorted_sa);
+        assert_eq!(file_sa, &[10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3]);
         let file_lcp: Vec<_> = sufr_file.lcp_file.iter().collect();
-        assert_eq!(file_lcp, lcp);
+        assert_eq!(file_lcp, &[0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1]);
         Ok(())
     }
 
@@ -122,6 +124,7 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_starts: seq_data.start_positions,
             headers: seq_data.headers,
             num_partitions: 2,
@@ -199,6 +202,7 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: seq_data.start_positions,
             headers: seq_data.headers,
             num_partitions: 1,
@@ -242,6 +246,7 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: seq_data.start_positions,
             headers: seq_data.headers,
             num_partitions: 1,
@@ -286,6 +291,8 @@ mod tests {
         Ok(())
     }
 
+    // --------------------------------------------------
+    #[test]
     fn test_spaced_seeds_3() -> Result<()> {
         let seq_file = "../data/inputs/spaced_input.fa";
         let sequence_delimiter = b'N';
@@ -296,6 +303,7 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_starts: seq_data.start_positions,
             headers: seq_data.headers,
             num_partitions: 1,
@@ -304,20 +312,23 @@ mod tests {
             random_seed: 0,
         };
 
-
         let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
         let outfile = NamedTempFile::new()?;
         let outpath = &outfile.path().to_str().unwrap();
         let res = sufr.write(outpath);
         assert!(res.is_ok());
-        assert_eq!(sufr.num_suffixes, 17);
+        assert_eq!(sufr.num_suffixes, 43);
 
         let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath)?;
         let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
-        assert_eq!(suffix_array.len(), 17);
+        assert_eq!(suffix_array.len(), 43);
         assert_eq!(
             suffix_array,
-            vec![16, 13, 9, 5, 1, 12, 8, 4, 0, 14, 10, 6, 2, 15, 11, 7, 3],
+            vec![
+                42, 18, 12, 0, 32, 29, 13, 23, 21, 6, 40, 1, 33, 19, 30, 10, 28, 9, 17,
+                14, 4, 26, 39, 22, 25, 38, 24, 35, 7, 36, 15, 41, 5, 20, 31, 11, 27, 8,
+                16, 3, 37, 34, 2
+            ],
         );
 
         Ok(())

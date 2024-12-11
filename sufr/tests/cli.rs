@@ -1,9 +1,15 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::types::OUTFILE_VERSION;
+use libsufr::{
+    types::OUTFILE_VERSION,
+    util::{parse_seed_mask, seed_mask_positions},
+};
 use pretty_assertions::assert_eq;
 use regex::Regex;
-use std::fs;
+use std::{
+    fs::{self, File},
+    io::{BufRead, BufReader},
+};
 use tempfile::NamedTempFile;
 
 const PRG: &str = "sufr";
@@ -24,6 +30,7 @@ struct CreateOptions {
     is_dna: bool,
     allow_ambiguity: bool,
     ignore_softmask: bool,
+    save_lcp: bool,
     sequence_delimiter: Option<char>,
     seed_mask: Option<String>,
 }
@@ -33,6 +40,7 @@ struct ExtractOptions {
     prefix_len: Option<usize>,
     suffix_len: Option<usize>,
     max_query_len: Option<usize>,
+    low_memory: bool,
 }
 
 struct ListOptions {
@@ -69,6 +77,10 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
 
     if opts.ignore_softmask {
         args.push("--ignore-softmask".to_string());
+    }
+
+    if opts.save_lcp {
+        args.push("--save-lcp".to_string());
     }
 
     if let Some(delim) = opts.sequence_delimiter {
@@ -130,6 +142,7 @@ fn create_seq1() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -146,6 +159,7 @@ fn create_seq1_allow_ambiguity() -> Result<()> {
             is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -162,6 +176,7 @@ fn create_seq2() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -178,6 +193,7 @@ fn create_seq2_sequence_delimiter() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_delimiter: Some('N'),
             seed_mask: None,
         },
@@ -194,6 +210,7 @@ fn create_seq2_allow_ambiguity() -> Result<()> {
             is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -210,6 +227,7 @@ fn create_seq2_ignore_softmask() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: true,
+            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -226,6 +244,7 @@ fn create_seq2_allow_ambiguity_ignore_softmask() -> Result<()> {
             is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: true,
+            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -242,6 +261,7 @@ fn create_seq3() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -258,6 +278,7 @@ fn create_long_dna() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -274,6 +295,7 @@ fn create_protein() -> Result<()> {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -290,6 +312,7 @@ fn create_protein_masked() -> Result<()> {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
+            save_lcp: false,
             sequence_delimiter: None,
             seed_mask: Some("10111011".to_string()),
         },
@@ -371,9 +394,15 @@ fn extract(
         args.push(max_query_len.to_string());
     }
 
+    if opts.low_memory {
+        args.push("-l".to_string());
+    }
+
     for query in opts.queries {
         args.push(query.to_string());
     }
+
+    dbg!(Command::cargo_bin(PRG)?.args(&args));
 
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
     assert!(output.status.success());
@@ -399,6 +428,7 @@ fn extract_seq1() -> Result<()> {
             prefix_len: None,
             suffix_len: None,
             max_query_len: None,
+            low_memory: false,
         },
         &[
             ">1:6-11 AC 0",
@@ -426,6 +456,7 @@ fn extract_seq1_prefix_1() -> Result<()> {
             prefix_len: Some(1),
             suffix_len: None,
             max_query_len: None,
+            low_memory: false,
         },
         &[
             ">1:5-11 AC 1",
@@ -453,6 +484,7 @@ fn extract_seq1_suf_3() -> Result<()> {
             prefix_len: None,
             suffix_len: Some(3),
             max_query_len: None,
+            low_memory: false,
         },
         &[
             ">1:6-9 AC 0",
@@ -480,6 +512,7 @@ fn extract_seq1_pre_1_suf_3() -> Result<()> {
             prefix_len: Some(1),
             suffix_len: Some(3),
             max_query_len: None,
+            low_memory: false,
         },
         &[
             ">1:5-9 AC 1",
@@ -511,6 +544,7 @@ fn extract_uniprot() -> Result<()> {
             prefix_len: Some(4),
             suffix_len: Some(12),
             max_query_len: None,
+            low_memory: false,
         },
         &[
             ">sp|Q9U408|14331_ECHGR:38-54 RNELNNEEA 4",
@@ -529,6 +563,8 @@ fn extract_uniprot() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn extract_uniprot_mql() -> Result<()> {
+    // In this test, the MQL 3 means all the found suffixes start with "RNE"
+    // cargo run -- ex data/expected/uniprot.sufr RNELNNEEA -s 10 -m 3
     extract(
         "../data/expected/uniprot.sufr",
         ExtractOptions {
@@ -536,6 +572,7 @@ fn extract_uniprot_mql() -> Result<()> {
             prefix_len: None,
             suffix_len: Some(10),
             max_query_len: Some(3),
+            low_memory: false,
         },
         &[
             ">sp|Q6GZW1|014R_FRG3G:111-121 RNELNNEEA 0",
@@ -562,7 +599,8 @@ fn extract_uniprot_mql() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn extract_uniprot_masked() -> Result<()> {
-    // cargo run -- ex data/expected/uniprot-masked.sufr RNELNNEEA
+    // In this test, the MQL 3 means all the found suffixes start with "R*EL"
+    // cargo run -- ex -s 10 -m 3 data/expected/uniprot-masked.sufr RNELNNEEA
     extract(
         "../data/expected/uniprot-masked.sufr",
         ExtractOptions {
@@ -570,6 +608,43 @@ fn extract_uniprot_masked() -> Result<()> {
             prefix_len: None,
             suffix_len: Some(10),
             max_query_len: Some(3),
+            low_memory: false,
+        },
+        &[
+            ">sp|P32234|128UP_DROME:38-48 RNELNNEEA 0",
+            "RRELISPKGG",
+            ">sp|P26709|1107L_ASFL5:128-138 RNELNNEEA 0",
+            "RKELKKDEF%",
+            ">sp|P0DO85|10H_STRNX:151-161 RNELNNEEA 0",
+            "RLELLKHIRV",
+            ">sp|Q9U408|14331_ECHGR:42-52 RNELNNEEA 0",
+            "RNELNNEEAN",
+            ">sp|P19084|11S3_HELAN:355-365 RNELNNEEA 0",
+            "RGELRPNAIQ",
+            ">sp|Q6GZV8|017L_FRG3G:18-28 RNELNNEEA 0",
+            "RGELSALSAA",
+            ">sp|Q6GZW6|009L_FRG3G:653-663 RNELNNEEA 0",
+            "RLELSAPYGS",
+            "",
+        ]
+        .join("\n"),
+        None,
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn extract_uniprot_masked_low_memory() -> Result<()> {
+    // In this test, the MQL 3 means all the found suffixes start with "R*EL"
+    // cargo run -- ex -s 10 -m 3 data/expected/uniprot-masked.sufr RNELNNEEA
+    extract(
+        "../data/expected/uniprot-masked.sufr",
+        ExtractOptions {
+            queries: vec!["RNELNNEEA".to_string()],
+            prefix_len: None,
+            suffix_len: Some(10),
+            max_query_len: Some(3),
+            low_memory: true,
         },
         &[
             ">sp|P32234|128UP_DROME:38-48 RNELNNEEA 0",
@@ -616,7 +691,6 @@ fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
 
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
     assert!(output.status.success());
-    dbg!(&output);
 
     let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
     assert_eq!(stdout, expected);
@@ -708,6 +782,7 @@ fn list_sufr1_show_lcp() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn list_sufr1_show_rank_suffix_lcp() -> Result<()> {
+    // cargo run -- ls -Lsr data/expected/1.sufr
     list(
         SUFR1,
         ListOptions {
@@ -994,7 +1069,7 @@ fn summarize_sufr1() -> Result<()> {
     summarize(
         SUFR1,
         vec![
-            ("File Size", "172 bytes"),
+            ("File Size", "180 bytes"),
             ("File Version", &OUTFILE_VERSION.to_string()),
             ("DNA", "true"),
             ("Allow Ambiguity", "false"),
@@ -1008,4 +1083,84 @@ fn summarize_sufr1() -> Result<()> {
             ("Headers", "1"),
         ],
     )
+}
+
+// --------------------------------------------------
+fn file_is_sorted(filename: &str, seed_mask: Option<&str>) -> Result<()> {
+    // Create the sufr file
+    let sufr_file = NamedTempFile::new()?;
+    let sufr_path = &sufr_file.path().to_string_lossy();
+    let mut args = vec![
+        "create".to_string(),
+        "-o".to_string(),
+        sufr_path.to_string(),
+        filename.to_string(),
+    ];
+
+    if let Some(mask) = seed_mask {
+        args.push("-s".to_string());
+        args.push(mask.to_string());
+    }
+
+    let output = Command::cargo_bin(PRG)?.args(&args).output()?;
+    assert!(output.status.success());
+    assert!(sufr_file.path().exists());
+
+    // Use "list" to write the sorted suffixes to a temp file
+    let list_file = NamedTempFile::new()?;
+    let list_path = &list_file.path().to_string_lossy();
+    let args = vec![
+        "list".to_string(),
+        "-o".to_string(),
+        list_path.to_string(),
+        sufr_path.to_string(),
+    ];
+
+    let output = Command::cargo_bin(PRG)?.args(&args).output()?;
+    assert!(output.status.success());
+    assert!(list_file.path().exists());
+
+    // Read the lines of the sorted suffixes and ensure they are sorted
+    let mask_pos = seed_mask.map(|v| seed_mask_positions(&parse_seed_mask(v)));
+    let list_file = BufReader::new(File::open(list_file.path())?);
+    let mut prev_line: Option<String> = None;
+    for mut line in list_file.lines().map_while(Result::ok) {
+        if let Some(pos) = &mask_pos {
+            let chars: Vec<char> = line.chars().collect();
+            let masked: String = pos.iter().filter_map(|&p| chars.get(p)).collect();
+            line = masked;
+        }
+
+        if let Some(ref prev) = prev_line {
+            assert!(*prev <= line);
+        }
+
+        prev_line = Some(line.clone());
+    }
+
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn long_dna_is_sorted() -> Result<()> {
+    file_is_sorted(LONG, None)
+}
+
+// --------------------------------------------------
+#[test]
+fn masked_long_dna_is_sorted() -> Result<()> {
+    file_is_sorted(LONG, Some("111010010100110111"))
+}
+
+// --------------------------------------------------
+#[test]
+fn uniprot_is_sorted() -> Result<()> {
+    file_is_sorted(UNIPROT, None)
+}
+
+// --------------------------------------------------
+#[test]
+fn masked_uniprot_is_sorted() -> Result<()> {
+    file_is_sorted(UNIPROT, Some("10111011"))
 }

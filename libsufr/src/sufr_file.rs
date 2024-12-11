@@ -41,7 +41,8 @@ where
     pub max_query_len: T,
     pub seed_mask: Vec<u8>,
     pub text_len: T,
-    pub num_suffixes: T,
+    pub len_suffixes: T,
+    pub len_lcp: T,
     pub num_sequences: T,
     pub sequence_starts: Vec<T>,
     pub headers: Vec<String>,
@@ -93,7 +94,12 @@ where
         // Number of suffixes
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let num_suffixes = usize::from_ne_bytes(buffer);
+        let len_suffixes = usize::from_ne_bytes(buffer);
+
+        // Len of LCP (could be zero)
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        let len_lcp = usize::from_ne_bytes(buffer);
 
         // Max query length
         let mut buffer = [0; 8];
@@ -132,12 +138,12 @@ where
 
         // Suffix Array
         let suffix_array_file: FileAccess<T> =
-            FileAccess::new(filename, suffix_array_pos as u64, num_suffixes)?;
+            FileAccess::new(filename, suffix_array_pos as u64, len_suffixes)?;
         file.seek_relative(suffix_array_file.size as i64)?;
 
         // LCP
         let lcp_file: FileAccess<T> =
-            FileAccess::new(filename, lcp_pos as u64, num_suffixes)?;
+            FileAccess::new(filename, lcp_pos as u64, len_lcp)?;
         file.seek_relative(lcp_file.size as i64)?;
 
         // Headers are variable in length so they are at the end
@@ -156,7 +162,8 @@ where
             suffix_array_pos,
             lcp_pos,
             text_len: T::from_usize(text_len),
-            num_suffixes: T::from_usize(num_suffixes),
+            len_suffixes: T::from_usize(len_suffixes),
+            len_lcp: T::from_usize(len_lcp),
             max_query_len,
             seed_mask,
             num_sequences,
@@ -190,9 +197,9 @@ where
         let mut previous: Option<usize> = None;
         let mut errors: Vec<String> = vec![];
         let text_len = self.text_len.to_usize();
-        let num_suffixes = self.num_suffixes.to_usize();
+        let len_suffixes = self.len_suffixes.to_usize();
 
-        for i in 0..num_suffixes {
+        for i in 0..len_suffixes {
             if i > 0 && i % 1_000_000 == 0 {
                 info!("Checked {i}");
             }
@@ -269,7 +276,7 @@ where
         self.suffix_array_file.reset();
 
         // 37s to process 15/hs1
-        let max_len = self.num_suffixes.to_usize();
+        let max_len = self.len_suffixes.to_usize();
         let mut suffix_array: Vec<T> = Vec::with_capacity(max_len);
         let mut rank: Vec<usize> = Vec::with_capacity(max_len);
 
@@ -331,6 +338,7 @@ where
             }
         }
 
+        // The requested MQL matches how the SA was built
         if max_query_len == self.max_query_len.to_usize() {
             // Stuff entire SA into memory
             let now = Instant::now();
@@ -382,26 +390,34 @@ where
 
                 let mut buffer = [0; 8];
                 file.read_exact(&mut buffer)?;
-                let num_elements = usize::from_ne_bytes(buffer);
+                let suffix_array_len = usize::from_ne_bytes(buffer);
 
-                let mut buffer = vec![0; num_elements * mem::size_of::<T>()];
-                file.read_exact(&mut buffer)?;
-                self.suffix_array_mem = slice_u8_to_vec(&buffer, num_elements);
+                self.suffix_array_mem = if suffix_array_len == 0 {
+                    vec![]
+                } else {
+                    let mut buffer = vec![0; suffix_array_len * mem::size_of::<T>()];
+                    file.read_exact(&mut buffer)?;
+                    slice_u8_to_vec(&buffer, suffix_array_len)
+                };
 
                 let mut buffer = vec![];
                 file.read_to_end(&mut buffer)?;
-                self.suffix_array_rank_mem = unsafe {
-                    std::slice::from_raw_parts(
-                        buffer.as_ptr() as *const _,
-                        num_elements,
-                    )
-                    .to_vec()
+                self.suffix_array_rank_mem = if buffer.is_empty() {
+                    vec![]
+                } else {
+                    unsafe {
+                        std::slice::from_raw_parts(
+                            buffer.as_ptr() as *const _,
+                            suffix_array_len,
+                        )
+                        .to_vec()
+                    }
                 };
 
                 info!(
                     "Read compressed SA ({}/{}) from cache file {} in {:?}",
                     self.suffix_array_mem.len(),
-                    self.num_suffixes,
+                    self.len_suffixes,
                     cache_path.display(),
                     now.elapsed()
                 );
@@ -415,36 +431,41 @@ where
                 info!(
                     "Loaded compressed SA ({}/{}) in {:?}",
                     sub_sa.len(),
-                    self.num_suffixes,
+                    self.len_suffixes,
                     now.elapsed()
                 );
 
                 // Write cache file
-                let now = Instant::now();
-                let mut file = File::create(&cache_path)
-                    .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
-                let _ = file.write(&usize_to_bytes(self.suffix_array_mem.len()))?;
-                let bytes = unsafe {
-                    slice::from_raw_parts(
-                        self.suffix_array_mem.as_ptr() as *const u8,
-                        self.suffix_array_mem.len() * std::mem::size_of::<T>(),
-                    )
-                };
-                file.write_all(bytes)?;
+                if !self.suffix_array_mem.is_empty() {
+                    let now = Instant::now();
+                    let mut file = File::create(&cache_path)
+                        .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
+                    let _ = file.write(&usize_to_bytes(self.suffix_array_mem.len()))?;
+                    let bytes = unsafe {
+                        slice::from_raw_parts(
+                            self.suffix_array_mem.as_ptr() as *const u8,
+                            self.suffix_array_mem.len() * std::mem::size_of::<T>(),
+                        )
+                    };
+                    file.write_all(bytes)?;
 
-                let bytes = unsafe {
-                    slice::from_raw_parts(
-                        self.suffix_array_rank_mem.as_ptr() as *const u8,
-                        self.suffix_array_rank_mem.len() * std::mem::size_of::<usize>(),
-                    )
-                };
-                file.write_all(bytes)?;
+                    if !self.suffix_array_rank_mem.is_empty() {
+                        let bytes = unsafe {
+                            slice::from_raw_parts(
+                                self.suffix_array_rank_mem.as_ptr() as *const u8,
+                                self.suffix_array_rank_mem.len()
+                                    * std::mem::size_of::<usize>(),
+                            )
+                        };
+                        file.write_all(bytes)?;
+                    }
 
-                info!(
-                    "Wrote to cache {} in {:?}",
-                    cache_path.display(),
-                    now.elapsed()
-                );
+                    info!(
+                        "Wrote to cache {} in {:?}",
+                        cache_path.display(),
+                        now.elapsed()
+                    );
+                }
             }
         }
 
@@ -457,17 +478,12 @@ where
         args: &SearchOptions,
     ) -> Result<Vec<SearchResult<T>>> {
         self.query_low_memory = args.low_memory;
-
         if !self.query_low_memory {
             let max_query_len =
                 args.max_query_len.unwrap_or(self.max_query_len.to_usize());
             self.set_suffix_array_mem(max_query_len)?;
         }
 
-        //println!(
-        //    ">>> MQL self {} args {:?}",
-        //    self.max_query_len, args.max_query_len
-        //);
         let args_mql = args.max_query_len.unwrap_or_default();
         let file_mql = self.max_query_len.to_usize();
         let max_query_len = if file_mql > 0 && args_mql > 0 {
@@ -480,7 +496,7 @@ where
             let search_file: FileAccess<T> = FileAccess::new(
                 &self.filename,
                 self.suffix_array_pos as u64,
-                self.num_suffixes.to_usize(),
+                self.len_suffixes.to_usize(),
             )?;
             let args = SufrSearchArgs {
                 text: &self.text,
@@ -489,7 +505,7 @@ where
                 rank: &self.suffix_array_rank_mem,
                 query_low_memory: args.low_memory,
                 max_query_len,
-                num_suffixes: self.num_suffixes.to_usize(),
+                len_suffixes: self.len_suffixes.to_usize(),
                 seed_mask: self.seed_mask.clone(),
             };
             Ok(RefCell::new(SufrSearch::new(args)))
@@ -630,7 +646,7 @@ mod test {
     // --------------------------------------------------
     #[test]
     fn test_extract() -> Result<()> {
-        let mut sufr_file: SufrFile<u32> = SufrFile::read("../data/inputs/1.sufr")?;
+        let mut sufr_file: SufrFile<u32> = SufrFile::read("../data/expected/1.sufr")?;
 
         let opts = ExtractOptions {
             queries: vec!["AC".to_string(), "GT".to_string(), "XX".to_string()],
@@ -718,7 +734,8 @@ mod test {
         // 13   6: BABBABAB#
         // 14   8: BBABAB#
 
-        let mut sufr_file: SufrFile<u32> = SufrFile::read("../data/inputs/abba.sufr")?;
+        let mut sufr_file: SufrFile<u32> =
+            SufrFile::read("../data/expected/abba.sufr")?;
 
         for val in &[true, false] {
             let args = SearchOptions {
@@ -951,7 +968,7 @@ mod test {
     // --------------------------------------------------
     #[test]
     fn test_file_access() -> Result<()> {
-        let input_file = "../data/inputs/abba.sufr";
+        let input_file = "../data/expected/abba.sufr";
         let mut sufr_file: SufrFile<u32> = SufrFile::read(input_file)?;
         let suf_by_rank = [
             14, //  0: #
