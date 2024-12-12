@@ -1,65 +1,84 @@
 use crate::types::{
-    FromUsize, Int, SequenceFileData, OUTFILE_VERSION, SENTINEL_CHARACTER,
+    FromUsize, Int, SequenceFileData, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER
 };
 use anyhow::{anyhow, bail, Result};
 use needletail::parse_fastx_file;
-use regex::Regex;
 use std::{fs::File, io::Read, slice};
 
 // --------------------------------------------------
-pub fn find_lcp_full_offset(lcp: usize, seed_mask_pos: &[usize]) -> usize {
-    //println!("lcp {lcp} seed mask_pos {seed_mask_pos:?}");
-    if lcp == 0 || lcp > seed_mask_pos.len() {
-        lcp
-    } else {
-        // E.g., LCP = 1, so get the 0th offset
-        let offset = seed_mask_pos[lcp - 1];
-        let next_offset = *seed_mask_pos.get(lcp).unwrap_or(&0);
-        //println!("offset {offset} next_offset {next_offset}");
-        if (next_offset > offset) && (next_offset - offset) > 1 {
-            next_offset
-        } else {
-            offset + 1
-        }
+pub fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
+    match sort_type {
+        SuffixSortType::Mask(seed_mask) => {
+            if lcp == 0 || lcp > seed_mask.bytes.len() {
+                lcp
+            } else {
+                // E.g., LCP = 1, so get the 0th offset
+                let offset = seed_mask.positions[lcp - 1];
+                let next_offset = *seed_mask.positions.get(lcp).unwrap_or(&0);
+                if (next_offset > offset) && (next_offset - offset) > 1 {
+                    next_offset
+                } else {
+                    offset + 1
+                }
+            }
+        },
+        _ => { lcp }
     }
 }
 
-// --------------------------------------------------
-pub fn seed_mask_difference(positions: &[usize]) -> Vec<usize> {
-    // Mask: 1001101
-    // M: [0, 3, 4, 6]
-    // U: [0, 1, 2, 3]
-    // D: [0, 2, 2, 3]
-    positions.iter().enumerate().map(|(i, &m)| m - i).collect()
-}
+//pub fn find_lcp_full_offset(lcp: usize, seed_mask_pos: &[usize]) -> usize {
+//    //println!("lcp {lcp} seed mask_pos {seed_mask_pos:?}");
+//    if lcp == 0 || lcp > seed_mask_pos.len() {
+//        lcp
+//    } else {
+//        // E.g., LCP = 1, so get the 0th offset
+//        let offset = seed_mask_pos[lcp - 1];
+//        let next_offset = *seed_mask_pos.get(lcp).unwrap_or(&0);
+//        //println!("offset {offset} next_offset {next_offset}");
+//        if (next_offset > offset) && (next_offset - offset) > 1 {
+//            next_offset
+//        } else {
+//            offset + 1
+//        }
+//    }
+//}
 
 // --------------------------------------------------
-pub fn seed_mask_positions(bytes: &[u8]) -> Vec<usize> {
-    // b"101" -> [0, 2]
-    bytes
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &b)| (b == 1).then_some(i))
-        .collect()
-}
+//pub fn seed_mask_difference(positions: &[usize]) -> Vec<usize> {
+//    // Mask: 1001101
+//    // M: [0, 3, 4, 6]
+//    // U: [0, 1, 2, 3]
+//    // D: [0, 2, 2, 3]
+//    positions.iter().enumerate().map(|(i, &m)| m - i).collect()
+//}
 
 // --------------------------------------------------
-pub fn parse_seed_mask(mask: &str) -> Vec<u8> {
-    mask.as_bytes()
-        .iter()
-        .flat_map(|b| match b {
-            b'1' => Some(1),
-            b'0' => Some(0),
-            _ => None,
-        })
-        .collect()
-}
+//pub fn seed_mask_positions(bytes: &[u8]) -> Vec<usize> {
+//    // b"101" -> [0, 2]
+//    bytes
+//        .iter()
+//        .enumerate()
+//        .filter_map(|(i, &b)| (b == 1).then_some(i))
+//        .collect()
+//}
 
 // --------------------------------------------------
-pub fn valid_seed_mask(mask: &str) -> bool {
-    let seed_re = Regex::new("^1+0[01]*1$").unwrap();
-    seed_re.is_match(mask)
-}
+//pub fn parse_seed_mask(mask: &str) -> Vec<u8> {
+//    mask.as_bytes()
+//        .iter()
+//        .flat_map(|b| match b {
+//            b'1' => Some(1),
+//            b'0' => Some(0),
+//            _ => None,
+//        })
+//        .collect()
+//}
+
+// --------------------------------------------------
+//pub fn valid_seed_mask(mask: &str) -> bool {
+//    let seed_re = Regex::new("^1+0[01]*1$").unwrap();
+//    seed_re.is_match(mask)
+//}
 
 // --------------------------------------------------
 pub fn vec_to_slice_u8<T>(vec: &[T]) -> &[u8]
@@ -166,48 +185,14 @@ pub fn usize_to_bytes(value: usize) -> Vec<u8> {
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use crate::util::parse_seed_mask;
-
+    use crate::types::{SeedMask, SuffixSortType};
     use super::{
         find_lcp_full_offset, read_sequence_file, read_text_length,
-        seed_mask_difference, seed_mask_positions, slice_u8_to_vec, usize_to_bytes,
-        valid_seed_mask, vec_to_slice_u8,
+        slice_u8_to_vec, usize_to_bytes,
+        vec_to_slice_u8,
     };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn test_seed_mask_positions() -> Result<()> {
-        assert_eq!(seed_mask_positions(&[1, 0, 1]), [0, 2]);
-        assert_eq!(seed_mask_positions(&[1, 1, 0, 1, 1]), [0, 1, 3, 4]);
-        assert_eq!(seed_mask_positions(&[1, 0, 1, 1, 0, 1]), [0, 2, 3, 5]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_seed_mask_difference() -> Result<()> {
-        // Empty is not a failure
-        assert_eq!(seed_mask_difference(&[]), []);
-
-        // "11011" -> [0, 1, 3, 4]
-        //           - 0  1  2  3
-        //            ------------
-        //            [0, 0, 1, 1]
-        assert_eq!(seed_mask_difference(&[0, 1, 3, 4]), [0, 0, 1, 1]);
-
-        // "100001" -> [0, 5]
-        //            - 0  1
-        //            --------
-        //             [0, 4]
-        assert_eq!(seed_mask_difference(&[0, 5]), [0, 4]);
-
-        // "1001101" -> [0, 3, 4, 6]
-        //             - 0  1  2  3
-        //             -------------
-        //              [0, 2, 2, 3]
-        assert_eq!(seed_mask_difference(&[0, 3, 4, 6]), [0, 2, 2, 3]);
-        Ok(())
-    }
 
     #[test]
     fn test_read_sequence_file() -> Result<()> {
@@ -316,54 +301,29 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_seed_mask() -> Result<()> {
-        let valid = ["101", "1001", "1101", "10101", "1110110110100001"];
-        let invalid = [
-            "", "abc", "1", "11", "111", "0", "00", "0111", "11100", "1a01",
-        ];
-
-        for pattern in valid {
-            assert!(valid_seed_mask(pattern));
-        }
-
-        for pattern in invalid {
-            assert!(!valid_seed_mask(pattern));
-        }
-
-        Ok(())
-    }
-
-    #[test]
     fn test_find_lcp_full_offset() -> Result<()> {
-        // 101
-        let seed_mask = [0, 2];
-        assert_eq!(find_lcp_full_offset(0, &seed_mask), 0);
-        assert_eq!(find_lcp_full_offset(1, &seed_mask), 2);
-        assert_eq!(find_lcp_full_offset(2, &seed_mask), 3);
+        let seed_mask = SeedMask::new("101")?;
+        let sort_type = SuffixSortType::Mask(seed_mask);
+        assert_eq!(find_lcp_full_offset(0, &sort_type), 0);
+        assert_eq!(find_lcp_full_offset(1, &sort_type), 2);
+        assert_eq!(find_lcp_full_offset(2, &sort_type), 3);
 
-        // 11011
-        let seed_mask = [0, 1, 3, 4];
-        assert_eq!(find_lcp_full_offset(0, &seed_mask), 0);
-        assert_eq!(find_lcp_full_offset(1, &seed_mask), 1);
-        assert_eq!(find_lcp_full_offset(2, &seed_mask), 3);
-        assert_eq!(find_lcp_full_offset(3, &seed_mask), 4);
-        assert_eq!(find_lcp_full_offset(4, &seed_mask), 5);
+        let seed_mask = SeedMask::new("11011")?;
+        let sort_type = SuffixSortType::Mask(seed_mask);
+        assert_eq!(find_lcp_full_offset(0, &sort_type), 0);
+        assert_eq!(find_lcp_full_offset(1, &sort_type), 1);
+        assert_eq!(find_lcp_full_offset(2, &sort_type), 3);
+        assert_eq!(find_lcp_full_offset(3, &sort_type), 4);
+        assert_eq!(find_lcp_full_offset(4, &sort_type), 5);
 
-        // 10011001
-        let seed_mask = [0, 3, 4, 7];
-        assert_eq!(find_lcp_full_offset(0, &seed_mask), 0);
-        assert_eq!(find_lcp_full_offset(1, &seed_mask), 3);
-        assert_eq!(find_lcp_full_offset(2, &seed_mask), 4);
-        assert_eq!(find_lcp_full_offset(3, &seed_mask), 7);
-        assert_eq!(find_lcp_full_offset(4, &seed_mask), 8);
+        let seed_mask = SeedMask::new("10011001")?;
+        let sort_type = SuffixSortType::Mask(seed_mask);
+        assert_eq!(find_lcp_full_offset(0, &sort_type), 0);
+        assert_eq!(find_lcp_full_offset(1, &sort_type), 3);
+        assert_eq!(find_lcp_full_offset(2, &sort_type), 4);
+        assert_eq!(find_lcp_full_offset(3, &sort_type), 7);
+        assert_eq!(find_lcp_full_offset(4, &sort_type), 8);
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_parse_seed_mask() -> Result<()> {
-        assert_eq!(parse_seed_mask("101"), vec![1, 0, 1]);
-        assert_eq!(parse_seed_mask("10001110011"), vec![1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1]);
         Ok(())
     }
 }

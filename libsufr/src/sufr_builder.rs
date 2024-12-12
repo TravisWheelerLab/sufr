@@ -1,10 +1,8 @@
 use crate::{
-    types::{FromUsize, Int, OUTFILE_VERSION, SENTINEL_CHARACTER},
-    util::{
-        find_lcp_full_offset, parse_seed_mask, seed_mask_difference,
-        seed_mask_positions, slice_u8_to_vec, usize_to_bytes, valid_seed_mask,
-        vec_to_slice_u8,
+    types::{
+        FromUsize, Int, SeedMask, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER,
     },
+    util::{find_lcp_full_offset, slice_u8_to_vec, usize_to_bytes, vec_to_slice_u8},
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -24,96 +22,12 @@ use tempfile::NamedTempFile;
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct Partition<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    order: usize,
-    len: usize,
-    first_suffix: T,
-    last_suffix: T,
-    sa_path: PathBuf,
-    lcp_path: PathBuf,
-}
-
-// --------------------------------------------------
-#[derive(Debug)]
-struct PartitionBuildResult<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    builders: Vec<Arc<Mutex<PartitionBuilder<T>>>>,
-    num_suffixes: usize,
-}
-
-// --------------------------------------------------
-#[derive(Debug)]
-struct PartitionBuilder<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    vals: Vec<T>,
-    capacity: usize,
-    len: usize,
-    total_len: usize,
-    path: PathBuf,
-}
-
-// --------------------------------------------------
-impl<T> PartitionBuilder<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    fn new(capacity: usize) -> Result<Self> {
-        let tmp = NamedTempFile::new()?;
-        let (_, path) = tmp.keep()?;
-
-        Ok(PartitionBuilder {
-            vals: vec![T::default(); capacity],
-            len: 0,
-            total_len: 0,
-            capacity,
-            path,
-        })
-    }
-
-    pub fn add(&mut self, val: T) -> Result<()> {
-        self.vals[self.len] = val;
-        self.len += 1;
-        if self.len == self.capacity {
-            self.write()?;
-            // Reset
-            for i in 0..self.len {
-                self.vals[i] = T::default();
-            }
-            self.len = 0;
-        }
-
-        Ok(())
-    }
-
-    pub fn write(&mut self) -> Result<()> {
-        if self.len > 0 {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.path)?;
-            file.write_all(vec_to_slice_u8(&self.vals[0..self.len]))?;
-            self.total_len += self.len;
-        }
-        Ok(())
-    }
-}
-
-// --------------------------------------------------
-#[derive(Debug)]
 pub struct SufrBuilderArgs {
     pub text: Vec<u8>,
     pub max_query_len: Option<usize>,
     pub is_dna: bool,
     pub allow_ambiguity: bool,
     pub ignore_softmask: bool,
-    pub save_lcp: bool,
     pub sequence_starts: Vec<usize>,
     pub headers: Vec<String>,
     pub num_partitions: usize,
@@ -132,19 +46,18 @@ where
     pub is_dna: bool,
     pub allow_ambiguity: bool,
     pub ignore_softmask: bool,
-    pub save_lcp: bool,
-    pub max_query_len: T,
     pub text_len: T,
     pub num_suffixes: T,
     pub num_sequences: T,
     pub sequence_starts: Vec<T>,
     pub headers: Vec<String>,
     pub text: Vec<u8>,
+    pub sort_type: SuffixSortType,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
-    pub seed_mask_orig: Vec<u8>,
-    pub seed_mask_pos: Vec<usize>,
-    pub seed_mask_diff: Vec<usize>,
+    //pub seed_mask_orig: Vec<u8>,
+    //pub seed_mask_pos: Vec<usize>,
+    //pub seed_mask_diff: Vec<usize>,
 }
 
 // --------------------------------------------------
@@ -175,31 +88,38 @@ where
             bail!("Cannot use max_query_len and seed_mask together");
         }
 
+        let sort_type = if let Some(mask) = args.seed_mask {
+            let seed_mask = SeedMask::new(&mask)?;
+            SuffixSortType::Mask(seed_mask)
+        } else {
+            SuffixSortType::MaxQueryLen(args.max_query_len.unwrap_or(0))
+        };
+
         // Validate seed mask before max_query_len
-        let (seed_mask_orig, seed_mask_pos): (Vec<u8>, Vec<usize>) =
-            match args.seed_mask {
-                Some(mask) => {
-                    if !valid_seed_mask(&mask) {
-                        bail!("Invalid mask: {mask}");
-                    }
-                    let nums = parse_seed_mask(&mask);
-                    let mask_pos = seed_mask_positions(&nums);
-                    if mask_pos.is_empty() {
-                        bail!("Seed mask must contain at least one 1");
-                    }
-                    (nums, mask_pos)
-                }
-                None => (vec![], vec![]),
-            };
+        //let (seed_mask_orig, seed_mask_pos): (Vec<u8>, Vec<usize>) =
+        //    match args.seed_mask {
+        //        Some(mask) => {
+        //            if !valid_seed_mask(&mask) {
+        //                bail!("Invalid mask: {mask}");
+        //            }
+        //            let nums = parse_seed_mask(&mask);
+        //            let mask_pos = seed_mask_positions(&nums);
+        //            if mask_pos.is_empty() {
+        //                bail!("Seed mask must contain at least one 1");
+        //            }
+        //            (nums, mask_pos)
+        //        }
+        //        None => (vec![], vec![]),
+        //    };
 
         // Having a seed mask implies max_query_len
-        let max_query_len = if seed_mask_pos.is_empty() {
-            args.max_query_len.map_or(T::default(), T::from_usize)
-        } else {
-            // Number of 1s/care positions
-            T::from_usize(seed_mask_pos.len())
-        };
-        let seed_mask_diff = seed_mask_difference(&seed_mask_pos);
+        //let max_query_len = if seed_mask_pos.is_empty() {
+        //    args.max_query_len.map_or(T::default(), T::from_usize)
+        //} else {
+        //    // Number of 1s/care positions
+        //    T::from_usize(seed_mask_pos.len())
+        //};
+        //let seed_mask_diff = seed_mask_difference(&seed_mask_pos);
         //println!("seed_mask_pos {seed_mask_pos:?} seed_mask_diff {seed_mask_diff:?}");
 
         let mut sa = SufrBuilder {
@@ -207,8 +127,7 @@ where
             is_dna: args.is_dna,
             allow_ambiguity: args.allow_ambiguity,
             ignore_softmask: args.ignore_softmask,
-            save_lcp: args.save_lcp,
-            max_query_len,
+            sort_type,
             text_len,
             num_suffixes: T::default(),
             text,
@@ -221,9 +140,9 @@ where
             headers: args.headers,
             partitions: vec![],
             sequence_delimiter: args.sequence_delimiter,
-            seed_mask_orig,
-            seed_mask_pos,
-            seed_mask_diff,
+            //seed_mask_orig,
+            //seed_mask_pos,
+            //seed_mask_diff,
         };
         sa.sort(args.num_partitions, args.random_seed)?;
         Ok(sa)
@@ -242,54 +161,113 @@ where
     #[inline(always)]
     pub fn find_lcp(&self, start1: T, start2: T, len: T, skip: usize) -> T {
         //println!("find_lcp start1 {start1} start2 {start2} len {len} skip {skip}");
-        if self.seed_mask_pos.is_empty() {
-            let text_len = self.text_len.to_usize();
-            let len = if self.max_query_len > T::default() {
-                self.max_query_len.to_usize()
-            } else {
-                len.to_usize()
-            };
-            let start1 = start1.to_usize() + skip;
-            let start2 = start2.to_usize() + skip;
-            let end1 = min(start1 + len, text_len);
-            let end2 = min(start2 + len, text_len);
-            unsafe {
-                return T::from_usize(
-                    skip + (start1..end1)
-                        .zip(start2..end2)
-                        .take_while(|(a, b)| {
-                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-                        })
-                        .count(),
-                );
+        //if self.seed_mask_pos.is_empty() {
+        match &self.sort_type {
+            SuffixSortType::Mask(mask) => {
+                // Use the seed diff vector to select only the "care" positions
+                // up to the length of the text
+                let a_vals = mask
+                    .positions
+                    .iter()
+                    .skip(skip)
+                    .map(|&offset| start1.to_usize() + offset)
+                    .filter(|&v| v < self.text_len.to_usize());
+                let b_vals = mask
+                    .positions
+                    .iter()
+                    .skip(skip)
+                    .map(|&offset| start2.to_usize() + offset)
+                    .filter(|&v| v < self.text_len.to_usize());
+                unsafe {
+                    return T::from_usize(
+                        skip + a_vals
+                            .zip(b_vals)
+                            .take_while(|(a, b)| {
+                                self.text.get_unchecked(*a)
+                                    == self.text.get_unchecked(*b)
+                            })
+                            .count(),
+                    );
+                }
             }
-        } else {
-            // Use the seed diff vector to select only the "care" positions
-            // up to the length of the text
-            let a_vals = self
-                .seed_mask_pos
-                .iter()
-                .skip(skip)
-                .map(|&offset| start1.to_usize() + offset)
-                .filter(|&v| v < self.text_len.to_usize());
-            let b_vals = self
-                .seed_mask_pos
-                .iter()
-                .skip(skip)
-                .map(|&offset| start2.to_usize() + offset)
-                .filter(|&v| v < self.text_len.to_usize());
-            unsafe {
-                return T::from_usize(
-                    skip + a_vals
-                        .zip(b_vals)
-                        .take_while(|(a, b)| {
-                            self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-                        })
-                        .count(),
-                );
+            SuffixSortType::MaxQueryLen(max_query_len) => {
+                let text_len = self.text_len.to_usize();
+                let len = if max_query_len > &0 {
+                    *max_query_len
+                } else {
+                    len.to_usize()
+                };
+                let start1 = start1.to_usize() + skip;
+                let start2 = start2.to_usize() + skip;
+                let end1 = min(start1 + len, text_len);
+                let end2 = min(start2 + len, text_len);
+                unsafe {
+                    return T::from_usize(
+                        skip + (start1..end1)
+                            .zip(start2..end2)
+                            .take_while(|(a, b)| {
+                                self.text.get_unchecked(*a)
+                                    == self.text.get_unchecked(*b)
+                            })
+                            .count(),
+                    );
+                }
             }
         }
     }
+
+    // --------------------------------------------------
+    //#[inline(always)]
+    //pub fn find_lcp(&self, start1: T, start2: T, len: T, skip: usize) -> T {
+    //    //println!("find_lcp start1 {start1} start2 {start2} len {len} skip {skip}");
+    //    if self.seed_mask_pos.is_empty() {
+    //        let text_len = self.text_len.to_usize();
+    //        let len = if self.max_query_len > T::default() {
+    //            self.max_query_len.to_usize()
+    //        } else {
+    //            len.to_usize()
+    //        };
+    //        let start1 = start1.to_usize() + skip;
+    //        let start2 = start2.to_usize() + skip;
+    //        let end1 = min(start1 + len, text_len);
+    //        let end2 = min(start2 + len, text_len);
+    //        unsafe {
+    //            return T::from_usize(
+    //                skip + (start1..end1)
+    //                    .zip(start2..end2)
+    //                    .take_while(|(a, b)| {
+    //                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+    //                    })
+    //                    .count(),
+    //            );
+    //        }
+    //    } else {
+    //        // Use the seed diff vector to select only the "care" positions
+    //        // up to the length of the text
+    //        let a_vals = self
+    //            .seed_mask_pos
+    //            .iter()
+    //            .skip(skip)
+    //            .map(|&offset| start1.to_usize() + offset)
+    //            .filter(|&v| v < self.text_len.to_usize());
+    //        let b_vals = self
+    //            .seed_mask_pos
+    //            .iter()
+    //            .skip(skip)
+    //            .map(|&offset| start2.to_usize() + offset)
+    //            .filter(|&v| v < self.text_len.to_usize());
+    //        unsafe {
+    //            return T::from_usize(
+    //                skip + a_vals
+    //                    .zip(b_vals)
+    //                    .take_while(|(a, b)| {
+    //                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
+    //                    })
+    //                    .count(),
+    //            );
+    //        }
+    //    }
+    //}
 
     // --------------------------------------------------
     #[inline(always)]
@@ -297,16 +275,20 @@ where
         if s1 == s2 {
             false
         } else {
-            let max_query_len = if self.max_query_len > T::default() {
-                // This should match the weight of any seed mask
-                self.max_query_len
-            } else {
-                self.text_len
+            let max_query_len = match &self.sort_type {
+                SuffixSortType::Mask(seed_mask) => T::from_usize(seed_mask.weight),
+                SuffixSortType::MaxQueryLen(max_query_len) => {
+                    if max_query_len > &0 {
+                        T::from_usize(*max_query_len)
+                    } else {
+                        self.text_len
+                    }
+                }
             };
 
             let len_lcp = find_lcp_full_offset(
                 self.find_lcp(s1, s2, max_query_len, 0).to_usize(),
-                &self.seed_mask_pos,
+                &self.sort_type,
             );
 
             if len_lcp >= max_query_len.to_usize() {
@@ -631,25 +613,33 @@ where
                     let max_n = self.text_len - shorter_suffix;
 
                     // Prefix-context length for the suffixes
-                    let context = if !self.seed_mask_pos.is_empty() {
-                        // How many positions do we care about?
-                        //let masked = self
-                        //    .seed_mask_pos
-                        //    .iter()
-                        //    .filter(|&i| *i < max_n.to_usize())
-                        //    .count();
-                        //println!("  masked {masked}");
-
-                        T::from_usize(
-                            self.seed_mask_pos
+                    //let context = if !self.seed_mask_pos.is_empty() {
+                    //    T::from_usize(
+                    //        self.seed_mask_pos
+                    //            .iter()
+                    //            .filter(|&i| *i < max_n.to_usize())
+                    //            .count(),
+                    //    )
+                    //} else if self.max_query_len > T::default() {
+                    //    min(self.max_query_len, max_n)
+                    //} else {
+                    //    max_n
+                    //};
+                    let context = match &self.sort_type {
+                        SuffixSortType::Mask(seed_mask) => T::from_usize(
+                            seed_mask
+                                .positions
                                 .iter()
                                 .filter(|&i| *i < max_n.to_usize())
                                 .count(),
-                        )
-                    } else if self.max_query_len > T::default() {
-                        min(self.max_query_len, max_n)
-                    } else {
-                        max_n
+                        ),
+                        SuffixSortType::MaxQueryLen(max_query_len) => {
+                            if max_query_len > &0 {
+                                min(T::from_usize(*max_query_len), max_n)
+                            } else {
+                                max_n
+                            }
+                        }
                     };
                     //println!("  mql {} shorter {shorter_suffix} context {context} max_n {max_n} seed_mask {:?}", self.max_query_len, self.seed_mask_pos);
 
@@ -662,7 +652,7 @@ where
                             m.to_usize(), // skip
                         );
                         let full_lcp =
-                            find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos);
+                            find_lcp_full_offset(lcp.to_usize(), &self.sort_type);
                         //println!(
                         //    "  lcp {lcp} full_len_lcp {}",
                         //    find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos)
@@ -850,13 +840,13 @@ where
         // Number of suffixes
         bytes_out += file.write(&usize_to_bytes(self.num_suffixes.to_usize()))?;
 
-        // Number of LCP
-        //let len_lcp = if self.save_lcp { self.num_suffixes.to_usize() } else { 0 };
-        let len_lcp = self.num_suffixes.to_usize();
-        bytes_out += file.write(&usize_to_bytes(len_lcp))?;
-
         // Max query length
-        bytes_out += file.write(&usize_to_bytes(self.max_query_len.to_usize()))?;
+        let max_query_len = if let SuffixSortType::MaxQueryLen(val) = &self.sort_type {
+            *val
+        } else {
+            0
+        };
+        bytes_out += file.write(&usize_to_bytes(max_query_len))?;
 
         // Number of sequences
         bytes_out += file.write(&usize_to_bytes(self.sequence_starts.len()))?;
@@ -865,11 +855,12 @@ where
         bytes_out += file.write(vec_to_slice_u8(&self.sequence_starts))?;
 
         // Seed mask
-        let seed_mask_len = self.seed_mask_orig.len();
-        bytes_out += file.write(&usize_to_bytes(seed_mask_len))?;
-        if seed_mask_len > 0 {
-            file.write_all(&self.seed_mask_orig)?;
-            bytes_out += seed_mask_len;
+        match &self.sort_type {
+            SuffixSortType::Mask(seed_mask) => {
+                bytes_out += file.write(&usize_to_bytes(seed_mask.bytes.len()))?;
+                file.write_all(&seed_mask.bytes)?;
+            }
+            _ => bytes_out += file.write(&usize_to_bytes(0))?,
         }
 
         // Text
@@ -886,7 +877,7 @@ where
         }
 
         let lcp_pos = bytes_out;
-        //if self.save_lcp {
+
         // Stitch partitioned LCP files together
         for (i, partition) in self.partitions.iter().enumerate() {
             let buffer = fs::read(&partition.lcp_path)?;
@@ -908,7 +899,6 @@ where
                 file.write_all(vec_to_slice_u8(&lcp))?;
             }
         }
-        //}
 
         // Headers are variable in length so they are at the end
         bytes_out += file.write(&bincode::serialize(&self.headers)?)?;
@@ -920,6 +910,89 @@ where
         let _ = file.write(&usize_to_bytes(lcp_pos))?;
 
         Ok(bytes_out)
+    }
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
+pub struct Partition<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    order: usize,
+    len: usize,
+    first_suffix: T,
+    last_suffix: T,
+    sa_path: PathBuf,
+    lcp_path: PathBuf,
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
+struct PartitionBuildResult<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    builders: Vec<Arc<Mutex<PartitionBuilder<T>>>>,
+    num_suffixes: usize,
+}
+
+// --------------------------------------------------
+#[derive(Debug)]
+struct PartitionBuilder<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    vals: Vec<T>,
+    capacity: usize,
+    len: usize,
+    total_len: usize,
+    path: PathBuf,
+}
+
+// --------------------------------------------------
+impl<T> PartitionBuilder<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    fn new(capacity: usize) -> Result<Self> {
+        let tmp = NamedTempFile::new()?;
+        let (_, path) = tmp.keep()?;
+
+        Ok(PartitionBuilder {
+            vals: vec![T::default(); capacity],
+            len: 0,
+            total_len: 0,
+            capacity,
+            path,
+        })
+    }
+
+    pub fn add(&mut self, val: T) -> Result<()> {
+        self.vals[self.len] = val;
+        self.len += 1;
+        if self.len == self.capacity {
+            self.write()?;
+            // Reset
+            for i in 0..self.len {
+                self.vals[i] = T::default();
+            }
+            self.len = 0;
+        }
+
+        Ok(())
+    }
+
+    pub fn write(&mut self) -> Result<()> {
+        if self.len > 0 {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?;
+            file.write_all(vec_to_slice_u8(&self.vals[0..self.len]))?;
+            self.total_len += self.len;
+        }
+        Ok(())
     }
 }
 
@@ -940,7 +1013,6 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -979,7 +1051,6 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1021,7 +1092,6 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1064,7 +1134,6 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1109,7 +1178,6 @@ mod test {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
@@ -1136,16 +1204,16 @@ mod test {
 
     #[test]
     fn test_upper_bound_1() -> Result<()> {
-        //          012345
-        let text = b"TTTAGC".to_vec();
+        //          012345                    // 0: TTTAGC
+        let text = b"TTTAGC".to_vec(); // 1:  TTAGC
         let args = SufrBuilderArgs {
-            text,
-            max_query_len: None,      // 0: TTTAGC
-            is_dna: false,            // 1:  TTAGC
-            allow_ambiguity: false,   // 2:   TAGC
-            ignore_softmask: false,   // 3:    AGC
-            save_lcp: false,          // 4:     GC
-            sequence_starts: vec![0], // 5:      C
+            // 2:   TAGC
+            text,                // 3:    AGC
+            max_query_len: None, // 4:     GC
+            is_dna: false,       // 5:      C
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
             headers: vec!["1".to_string()],
             num_partitions: 2,
             sequence_delimiter: b'N',
@@ -1171,19 +1239,17 @@ mod test {
         //           0123456789
         let text = b"ACGTNNACGT".to_vec();
         let args = SufrBuilderArgs {
-            // 10 $
-            text,                           //  6 ACGT$
-            max_query_len: None,            //  0 ACGTNNACGT$
-            is_dna: false,                  //  7 CGT$
-            allow_ambiguity: false,         //  1 CGTNNACGT$
-            save_lcp: false,                //  8 GT$
-            ignore_softmask: false,         //  2 GTNNACGT$
-            sequence_starts: vec![0],       //  5 NACGT$
-            headers: vec!["1".to_string()], //  4 NNACGT$
-            num_partitions: 2,              //  9 T$
-            sequence_delimiter: b'N',       //  3 TNNACGT$
-            seed_mask: None,
-            random_seed: 42,
+            text,                           // 10 $
+            max_query_len: None,            //  6 ACGT$
+            is_dna: false,                  //  0 ACGTNNACGT$
+            allow_ambiguity: false,         //  7 CGT$
+            ignore_softmask: false,         //  1 CGTNNACGT$
+            sequence_starts: vec![0],       //  8 GT$
+            headers: vec!["1".to_string()], //  2 GTNNACGT$
+            num_partitions: 2,              //  5 NACGT$
+            sequence_delimiter: b'N',       //  4 NNACGT$
+            seed_mask: None,                //  9 T$
+            random_seed: 42,                //  3 TNNACGT$
         };
 
         let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
@@ -1224,12 +1290,12 @@ mod test {
         //           0123456789
         let text = b"ACGTNNACGT".to_vec();
         let args = SufrBuilderArgs {
-            text,                           //  6 ACGT$
-            max_query_len: None,            //  0 ACGTNNACGT$
-            is_dna: false,                  //  7 CGT$
-            allow_ambiguity: false,         //  1 CGTNNACGT$
-            ignore_softmask: false,         //  8 GT$
-            save_lcp: false,                //  2 GTNNACGT$
+            //  6 ACGT$
+            text,                           //  0 ACGTNNACGT$
+            max_query_len: None,            //  7 CGT$
+            is_dna: false,                  //  1 CGTNNACGT$
+            allow_ambiguity: false,         //  8 GT$
+            ignore_softmask: false,         //  2 GTNNACGT$
             sequence_starts: vec![0],       //  4 NNACGT$
             headers: vec!["1".to_string()], //  5 NACGT$
             num_partitions: 2,              //  9 T$

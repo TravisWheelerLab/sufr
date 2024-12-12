@@ -1,7 +1,9 @@
 use crate::{
     file_access::FileAccess,
-    types::{Comparison, FromUsize, Int, SearchResult, SearchResultLocations},
-    util::{find_lcp_full_offset, seed_mask_positions},
+    types::{
+        Comparison, FromUsize, Int, SearchResult, SearchResultLocations, SuffixSortType,
+    },
+    util::find_lcp_full_offset,
 };
 use anyhow::Result;
 use std::cmp::{min, Ordering};
@@ -17,9 +19,9 @@ where
     pub suffix_array: &'a [T],
     pub rank: &'a [usize],
     pub query_low_memory: bool,
-    pub max_query_len: usize,
+    //pub max_query_len: usize,
     pub len_suffixes: usize,
-    pub seed_mask: Vec<u8>,
+    pub sort_type: &'a SuffixSortType,
 }
 
 // --------------------------------------------------
@@ -33,9 +35,8 @@ where
     suffix_array_mem: &'a [T],
     suffix_array_rank_mem: &'a [usize],
     query_low_memory: bool,
-    max_query_len: usize,
     len_suffixes: usize,
-    seed_mask_pos: Vec<usize>,
+    sort_type: &'a SuffixSortType,
 }
 
 // --------------------------------------------------
@@ -44,21 +45,20 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     pub fn new(args: SufrSearchArgs<'a, T>) -> SufrSearch<'a, T> {
-        let seed_mask_pos = seed_mask_positions(&args.seed_mask);
+        //let seed_mask_pos = seed_mask_positions(&args.seed_mask);
         SufrSearch {
             text: args.text,
             suffix_array_file: args.file,
             suffix_array_mem: args.suffix_array,
             suffix_array_rank_mem: args.rank,
             query_low_memory: args.query_low_memory,
-            max_query_len: args.max_query_len,
             len_suffixes: if args.suffix_array.is_empty() {
                 args.len_suffixes
             } else {
                 args.suffix_array.len()
             },
             //seed_mask: args.seed_mask.clone(),
-            seed_mask_pos,
+            sort_type: args.sort_type,
         }
     }
 
@@ -213,56 +213,107 @@ where
         //    self.max_query_len
         //);
 
-        let lcp = if (self.max_query_len > 0) && (skip >= self.max_query_len) {
-            // If we've already seen enough
-            skip
-        } else if self.seed_mask_pos.is_empty() {
-            let text_start = suffix_pos + skip;
-            let text_end = if self.max_query_len > 0 {
-                min(self.text.len(), text_start + self.max_query_len)
-            } else {
-                self.text.len()
-            };
+        let (lcp, max_query_len) = match &self.sort_type {
+            SuffixSortType::MaxQueryLen(mql) => {
+                let lcp = if (mql > &0) && (skip >= *mql) {
+                    // If we've already seen enough
+                    skip
+                } else {
+                    let text_start = suffix_pos + skip;
+                    let text_end = if mql > &0 {
+                        min(self.text.len(), text_start + mql)
+                    } else {
+                        self.text.len()
+                    };
 
-            query
-                .iter()
-                .skip(skip)
-                .zip(self.text.get(text_start..text_end).unwrap())
-                .map_while(|(a, b)| (a == b).then_some(a))
-                .count()
-                + skip
-        } else {
-            let mask_end = if self.max_query_len > 0 {
-                self.max_query_len
-            } else {
-                self.seed_mask_pos.len()
-            };
-            let mask_pos = &self.seed_mask_pos[skip..mask_end];
-            let query_len = mask_pos.iter().filter(|&v| v < &query.len()).count();
-            let suffix_len = mask_pos
-                .iter()
-                .map(|offset| suffix_pos + offset) // add offset to start of suffix
-                .filter(|&v| v < self.text.len()) // don't go off end of text
-                .count();
-            let len = min(query_len, suffix_len);
-            if len > 0 {
-                skip + self.seed_mask_pos[skip..skip + len]
-                    .iter()
-                    .take_while(|&offset| {
-                        query[*offset] == self.text[suffix_pos + offset]
-                    })
-                    .count()
-            } else {
-                skip
+                    query
+                        .iter()
+                        .skip(skip)
+                        .zip(self.text.get(text_start..text_end).unwrap())
+                        .map_while(|(a, b)| (a == b).then_some(a))
+                        .count()
+                        + skip
+                };
+                (lcp, *mql)
+            }
+            SuffixSortType::Mask(seed_mask) => {
+                let lcp = if skip >= seed_mask.weight {
+                    skip
+                } else {
+                    let mask_pos = &seed_mask.positions[skip..];
+                    let query_len =
+                        mask_pos.iter().filter(|&v| v < &query.len()).count();
+                    let suffix_len = mask_pos
+                        .iter()
+                        .map(|offset| suffix_pos + offset) // add offset to start of suffix
+                        .filter(|&v| v < self.text.len()) // don't go off end of text
+                        .count();
+                    let len = min(query_len, suffix_len);
+                    if len > 0 {
+                        skip + seed_mask.positions[skip..skip + len]
+                            .iter()
+                            .take_while(|&offset| {
+                                query[*offset] == self.text[suffix_pos + offset]
+                            })
+                            .count()
+                    } else {
+                        skip
+                    }
+                };
+                (lcp, seed_mask.weight)
             }
         };
 
-        let cmp = if (self.max_query_len > 0) && (lcp >= self.max_query_len) {
+        //let lcp = if (self.max_query_len > 0) && (skip >= self.max_query_len) {
+        //    // If we've already seen enough
+        //    skip
+        //} else if self.seed_mask_pos.is_empty() {
+        //    let text_start = suffix_pos + skip;
+        //    let text_end = if self.max_query_len > 0 {
+        //        min(self.text.len(), text_start + self.max_query_len)
+        //    } else {
+        //        self.text.len()
+        //    };
+        //
+        //    query
+        //        .iter()
+        //        .skip(skip)
+        //        .zip(self.text.get(text_start..text_end).unwrap())
+        //        .map_while(|(a, b)| (a == b).then_some(a))
+        //        .count()
+        //        + skip
+        //} else {
+        //    let mask_end = if self.max_query_len > 0 {
+        //        self.max_query_len
+        //    } else {
+        //        self.seed_mask_pos.len()
+        //    };
+        //    let mask_pos = &self.seed_mask_pos[skip..mask_end];
+        //    let query_len = mask_pos.iter().filter(|&v| v < &query.len()).count();
+        //    let suffix_len = mask_pos
+        //        .iter()
+        //        .map(|offset| suffix_pos + offset) // add offset to start of suffix
+        //        .filter(|&v| v < self.text.len()) // don't go off end of text
+        //        .count();
+        //    let len = min(query_len, suffix_len);
+        //    if len > 0 {
+        //        skip + self.seed_mask_pos[skip..skip + len]
+        //            .iter()
+        //            .take_while(|&offset| {
+        //                query[*offset] == self.text[suffix_pos + offset]
+        //            })
+        //            .count()
+        //    } else {
+        //        skip
+        //    }
+        //};
+
+        let cmp = if (max_query_len > 0) && (lcp >= max_query_len) {
             // We've seen enough
             Ordering::Equal
         } else {
             // Get the next chars
-            let full_offset = find_lcp_full_offset(lcp, &self.seed_mask_pos);
+            let full_offset = find_lcp_full_offset(lcp, &self.sort_type);
             //println!(
             //    "full_offset {full_offset} next query {:?} next text {:?} = {res:?}",
             //    query.get(full_offset).map(|v| *v as char),

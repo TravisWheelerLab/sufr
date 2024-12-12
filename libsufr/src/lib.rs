@@ -28,7 +28,6 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_starts: seq_data.start_positions.into_iter().collect(),
             headers: seq_data.headers,
             num_partitions: 2,
@@ -76,7 +75,6 @@ mod tests {
             is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: seq_data.start_positions.into_iter().collect(),
             headers: seq_data.headers,
             num_partitions: 2,
@@ -104,7 +102,6 @@ mod tests {
         assert_eq!(sufr_file.headers, ["1"]);
         assert_eq!(sufr_file.text, b"ACGTNNACGT$");
         assert_eq!(sufr_file.len_suffixes, 11);
-        assert_eq!(sufr_file.len_lcp, 11);
 
         let file_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
         assert_eq!(file_sa, &[10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3]);
@@ -124,7 +121,6 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_starts: seq_data.start_positions,
             headers: seq_data.headers,
             num_partitions: 2,
@@ -202,7 +198,6 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: seq_data.start_positions,
             headers: seq_data.headers,
             num_partitions: 1,
@@ -246,7 +241,6 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: seq_data.start_positions,
             headers: seq_data.headers,
             num_partitions: 1,
@@ -303,7 +297,6 @@ mod tests {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_starts: seq_data.start_positions,
             headers: seq_data.headers,
             num_partitions: 1,

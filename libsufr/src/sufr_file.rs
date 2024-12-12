@@ -3,7 +3,7 @@ use crate::{
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
         ExtractOptions, ExtractResult, ExtractSequence, FromUsize, Int, LocatePosition,
-        LocateResult, SearchOptions, SearchResult,
+        LocateResult, SearchOptions, SearchResult, SuffixSortType, SeedMask
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
@@ -38,11 +38,9 @@ where
     pub text_pos: usize,
     pub suffix_array_pos: usize,
     pub lcp_pos: usize,
-    pub max_query_len: T,
-    pub seed_mask: Vec<u8>,
+    pub sort_type: SuffixSortType,
     pub text_len: T,
     pub len_suffixes: T,
-    pub len_lcp: T,
     pub num_sequences: T,
     pub sequence_starts: Vec<T>,
     pub headers: Vec<String>,
@@ -96,11 +94,6 @@ where
         file.read_exact(&mut buffer)?;
         let len_suffixes = usize::from_ne_bytes(buffer);
 
-        // Len of LCP (could be zero)
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let len_lcp = usize::from_ne_bytes(buffer);
-
         // Max query length
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
@@ -126,7 +119,6 @@ where
         let seed_mask: Vec<u8> = if seed_mask_len > 0 {
             let mut buffer = vec![0; seed_mask_len];
             file.read_exact(&mut buffer)?;
-            //buffer.into_iter().map(|b| b as usize).collect()
             buffer
         } else {
             vec![]
@@ -143,13 +135,20 @@ where
 
         // LCP
         let lcp_file: FileAccess<T> =
-            FileAccess::new(filename, lcp_pos as u64, len_lcp)?;
+            FileAccess::new(filename, lcp_pos as u64, len_suffixes)?;
         file.seek_relative(lcp_file.size as i64)?;
 
         // Headers are variable in length so they are at the end
         let mut buffer = vec![];
         file.read_to_end(&mut buffer)?;
         let headers: Vec<String> = bincode::deserialize(&buffer)?;
+
+        let sort_type = if seed_mask.is_empty() {
+            SuffixSortType::MaxQueryLen(max_query_len.to_usize())
+        } else {
+            let seed_mask = SeedMask::from_bytes(&seed_mask)?;
+            SuffixSortType::Mask(seed_mask)
+        };
 
         Ok(SufrFile {
             filename: filename.to_string(),
@@ -163,9 +162,7 @@ where
             lcp_pos,
             text_len: T::from_usize(text_len),
             len_suffixes: T::from_usize(len_suffixes),
-            len_lcp: T::from_usize(len_lcp),
-            max_query_len,
-            seed_mask,
+            sort_type,
             num_sequences,
             sequence_starts,
             headers,
