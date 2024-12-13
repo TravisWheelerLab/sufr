@@ -5,7 +5,7 @@ use format_num::NumberFormat;
 use libsufr::{
     sufr_builder::{SufrBuilder, SufrBuilderArgs},
     sufr_file::SufrFile,
-    types::{ExtractOptions, FromUsize, Int, SearchOptions},
+    types::{ExtractOptions, FromUsize, Int, SearchOptions, SuffixSortType},
     util::{read_sequence_file, read_text_length},
 };
 use log::info;
@@ -110,10 +110,6 @@ pub struct CreateArgs {
     /// Ignore suffixes in soft-mask/lowercase regions
     #[arg(short, long)]
     pub ignore_softmask: bool,
-
-    /// Save LCP to sufr file
-    #[arg(short('l'), long)]
-    pub save_lcp: bool,
 
     /// Character to separate sequences
     #[arg(short('D'), long, default_value = "%", value_name = "DELIM")]
@@ -380,7 +376,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         is_dna: args.is_dna,
         allow_ambiguity: args.allow_ambiguity,
         ignore_softmask: args.ignore_softmask,
-        save_lcp: args.save_lcp,
         sequence_starts: seq_data.start_positions.into_iter().collect(),
         headers: seq_data.headers,
         num_partitions: args.num_partitions,
@@ -476,9 +471,7 @@ where
                     seq.suffix_offset,
                     sufr_file.string_at(
                         seq.sequence_start + seq.sequence_range.start,
-                        Some(
-                            seq.sequence_range.end - seq.sequence_range.start
-                        ),
+                        Some(seq.sequence_range.end - seq.sequence_range.start),
                     )
                 )?;
             }
@@ -528,8 +521,6 @@ where
     let text_len = sufr_file.text_len.to_usize();
     let suffix_len = args.len.unwrap_or(text_len);
 
-    //writeln!(output, "{:>width$} {:>width$} {:>width$}", "R", "S", "L")?;
-
     let mut print = |rank: usize, suffix: usize, lcp: T| -> Result<()> {
         let end = if suffix + suffix_len > text_len {
             text_len
@@ -564,12 +555,20 @@ where
 
     if ranks.is_empty() {
         for (rank, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
-            print(rank, suffix.to_usize(), sufr_file.lcp_file.get(rank).unwrap())?;
+            print(
+                rank,
+                suffix.to_usize(),
+                sufr_file.lcp_file.get(rank).unwrap(),
+            )?;
         }
     } else {
         for rank in ranks {
             if let Some(suffix) = sufr_file.suffix_array_file.get(rank) {
-                print(rank, suffix.to_usize(), sufr_file.lcp_file.get(rank).unwrap())?;
+                print(
+                    rank,
+                    suffix.to_usize(),
+                    sufr_file.lcp_file.get(rank).unwrap(),
+                )?;
             } else {
                 eprintln!("Invalid rank: {rank}");
             }
@@ -781,27 +780,17 @@ where
         "Len Suffixes".to_string(),
         num_fmt.format(",.0", sufr_file.len_suffixes.to_usize() as f64),
     ]);
-    rows.push(vec![
-        "Len LCP".to_string(),
-        num_fmt.format(",.0", sufr_file.len_lcp.to_usize() as f64),
-    ]);
-    rows.push(vec![
-        "Max query len".to_string(),
-        num_fmt.format(",.0", sufr_file.max_query_len.to_usize() as f64),
-    ]);
-    rows.push(vec![
-        "Seed mask".to_string(),
-        if sufr_file.seed_mask.is_empty() {
-            "None".to_string()
-        } else {
-            sufr_file
-                .seed_mask
-                .iter()
-                .map(|val| val.to_string())
-                .collect::<Vec<_>>()
-                .join("")
-        },
-    ]);
+
+    match sufr_file.sort_type {
+        SuffixSortType::Mask(seed_mask) => {
+            rows.push(vec!["Seed mask".to_string(), seed_mask.mask])
+        }
+        SuffixSortType::MaxQueryLen(max_query_len) => rows.push(vec![
+            "Max query len".to_string(),
+            num_fmt.format(",.0", max_query_len as f64),
+        ]),
+    };
+
     rows.push(vec![
         "Num sequences".to_string(),
         num_fmt.format(",.0", sufr_file.num_sequences.to_usize() as f64),

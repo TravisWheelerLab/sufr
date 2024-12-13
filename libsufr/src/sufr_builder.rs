@@ -859,6 +859,7 @@ where
             SuffixSortType::Mask(seed_mask) => {
                 bytes_out += file.write(&usize_to_bytes(seed_mask.bytes.len()))?;
                 file.write_all(&seed_mask.bytes)?;
+                bytes_out += seed_mask.bytes.len();
             }
             _ => bytes_out += file.write(&usize_to_bytes(0))?,
         }

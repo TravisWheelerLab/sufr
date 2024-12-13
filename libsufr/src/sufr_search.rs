@@ -22,6 +22,7 @@ where
     //pub max_query_len: usize,
     pub len_suffixes: usize,
     pub sort_type: &'a SuffixSortType,
+    pub max_query_len: Option<usize>,
 }
 
 // --------------------------------------------------
@@ -37,6 +38,7 @@ where
     query_low_memory: bool,
     len_suffixes: usize,
     sort_type: &'a SuffixSortType,
+    max_query_len: Option<usize>,
 }
 
 // --------------------------------------------------
@@ -57,8 +59,8 @@ where
             } else {
                 args.suffix_array.len()
             },
-            //seed_mask: args.seed_mask.clone(),
             sort_type: args.sort_type,
+            max_query_len: args.max_query_len,
         }
     }
 
@@ -206,11 +208,16 @@ where
     // --------------------------------------------------
     pub fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
         //println!(
-        //    "\nskip {skip} query {:?} suffix {suffix_pos} = {:?} seed_mask_pos = {:?} mql {}",
+        //    "\nskip {skip} query {:?} suffix {suffix_pos} = {:?} \
+        //    max_query_len {:?}",
         //    String::from_utf8(query.to_vec()),
-        //    String::from_utf8(self.text.get(suffix_pos..suffix_pos + query.len()).expect("OK").to_vec()),
-        //    self.seed_mask_pos,
-        //    self.max_query_len
+        //    String::from_utf8(
+        //        self.text
+        //            .get(suffix_pos..suffix_pos + query.len())
+        //            .expect("OK")
+        //            .to_vec()
+        //    ),
+        //    self.max_query_len,
         //);
 
         let (lcp, max_query_len) = match &self.sort_type {
@@ -237,10 +244,16 @@ where
                 (lcp, *mql)
             }
             SuffixSortType::Mask(seed_mask) => {
-                let lcp = if skip >= seed_mask.weight {
+                let max_query_len = self.max_query_len.unwrap_or(0);
+                let lcp = if skip >= seed_mask.weight || skip >= max_query_len {
                     skip
                 } else {
-                    let mask_pos = &seed_mask.positions[skip..];
+                    let end = if max_query_len > 0 {
+                        min(max_query_len, seed_mask.weight)
+                    } else {
+                        seed_mask.weight
+                    };
+                    let mask_pos = &seed_mask.positions[skip..end];
                     let query_len =
                         mask_pos.iter().filter(|&v| v < &query.len()).count();
                     let suffix_len = mask_pos
@@ -249,6 +262,7 @@ where
                         .filter(|&v| v < self.text.len()) // don't go off end of text
                         .count();
                     let len = min(query_len, suffix_len);
+
                     if len > 0 {
                         skip + seed_mask.positions[skip..skip + len]
                             .iter()
@@ -260,7 +274,7 @@ where
                         skip
                     }
                 };
-                (lcp, seed_mask.weight)
+                (lcp, max_query_len)
             }
         };
 

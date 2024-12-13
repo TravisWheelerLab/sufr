@@ -3,7 +3,7 @@ use crate::{
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
         ExtractOptions, ExtractResult, ExtractSequence, FromUsize, Int, LocatePosition,
-        LocateResult, SearchOptions, SearchResult, SuffixSortType, SeedMask
+        LocateResult, SearchOptions, SearchResult, SeedMask, SuffixSortType,
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
@@ -13,7 +13,7 @@ use log::info;
 use rayon::prelude::*;
 use std::{
     cell::RefCell,
-    cmp::{max, min},
+    cmp::min,
     fs::{self, File},
     io::{Read, Seek, Write},
     mem,
@@ -324,19 +324,35 @@ where
     }
 
     // --------------------------------------------------
-    pub fn set_suffix_array_mem(&mut self, mut max_query_len: usize) -> Result<()> {
-        // If ".sufr" file was built with a nonzero (T::default) max_query_len
+    pub fn set_suffix_array_mem(
+        &mut self,
+        max_query_len: Option<usize>,
+    ) -> Result<()> {
+        let mut max_query_len = max_query_len.unwrap_or(0);
+
+        // If ".sufr" file was built with a nonzero max_query_len or seed mask
         // Then this is the value we must use
-        if self.max_query_len > T::default() {
+        let built_max_query_len = match &self.sort_type {
+            SuffixSortType::MaxQueryLen(mql) => {
+                if mql > &0 {
+                    *mql
+                } else {
+                    self.text_len.to_usize()
+                }
+            }
+            SuffixSortType::Mask(seed_mask) => seed_mask.weight,
+        };
+
+        if built_max_query_len > 0 {
             if max_query_len > 0 {
-                max_query_len = min(max_query_len, self.max_query_len.to_usize());
+                max_query_len = min(max_query_len, built_max_query_len);
             } else {
-                max_query_len = self.max_query_len.to_usize();
+                max_query_len = built_max_query_len;
             }
         }
 
         // The requested MQL matches how the SA was built
-        if max_query_len == self.max_query_len.to_usize() {
+        if max_query_len == built_max_query_len {
             // Stuff entire SA into memory
             let now = Instant::now();
             self.suffix_array_file.reset();
@@ -475,19 +491,11 @@ where
         args: &SearchOptions,
     ) -> Result<Vec<SearchResult<T>>> {
         self.query_low_memory = args.low_memory;
+
         if !self.query_low_memory {
-            let max_query_len =
-                args.max_query_len.unwrap_or(self.max_query_len.to_usize());
-            self.set_suffix_array_mem(max_query_len)?;
+            self.set_suffix_array_mem(args.max_query_len)?;
         }
 
-        let args_mql = args.max_query_len.unwrap_or_default();
-        let file_mql = self.max_query_len.to_usize();
-        let max_query_len = if file_mql > 0 && args_mql > 0 {
-            min(file_mql, args_mql)
-        } else {
-            max(file_mql, args_mql)
-        };
         let now = Instant::now();
         let new_search = || -> Result<RefCell<SufrSearch<T>>> {
             let search_file: FileAccess<T> = FileAccess::new(
@@ -495,17 +503,17 @@ where
                 self.suffix_array_pos as u64,
                 self.len_suffixes.to_usize(),
             )?;
-            let args = SufrSearchArgs {
+            let search_args = SufrSearchArgs {
                 text: &self.text,
                 file: search_file,
                 suffix_array: &self.suffix_array_mem,
                 rank: &self.suffix_array_rank_mem,
                 query_low_memory: args.low_memory,
-                max_query_len,
                 len_suffixes: self.len_suffixes.to_usize(),
-                seed_mask: self.seed_mask.clone(),
+                sort_type: &self.sort_type,
+                max_query_len: args.max_query_len,
             };
-            Ok(RefCell::new(SufrSearch::new(args)))
+            Ok(RefCell::new(SufrSearch::new(search_args)))
         };
 
         let thread_local_search: ThreadLocal<RefCell<SufrSearch<T>>> =
@@ -643,6 +651,7 @@ mod test {
     // --------------------------------------------------
     #[test]
     fn test_extract() -> Result<()> {
+        // cargo run -- ex data/expected/1.sufr AC GT XX
         let mut sufr_file: SufrFile<u32> = SufrFile::read("../data/expected/1.sufr")?;
 
         let opts = ExtractOptions {

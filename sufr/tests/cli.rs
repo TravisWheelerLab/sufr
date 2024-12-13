@@ -1,9 +1,6 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::{
-    types::OUTFILE_VERSION,
-    util::{parse_seed_mask, seed_mask_positions},
-};
+use libsufr::types::{SeedMask, OUTFILE_VERSION};
 use pretty_assertions::assert_eq;
 use regex::Regex;
 use std::{
@@ -30,7 +27,6 @@ struct CreateOptions {
     is_dna: bool,
     allow_ambiguity: bool,
     ignore_softmask: bool,
-    save_lcp: bool,
     sequence_delimiter: Option<char>,
     seed_mask: Option<String>,
 }
@@ -77,10 +73,6 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
 
     if opts.ignore_softmask {
         args.push("--ignore-softmask".to_string());
-    }
-
-    if opts.save_lcp {
-        args.push("--save-lcp".to_string());
     }
 
     if let Some(delim) = opts.sequence_delimiter {
@@ -142,7 +134,6 @@ fn create_seq1() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -159,7 +150,6 @@ fn create_seq1_allow_ambiguity() -> Result<()> {
             is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -176,7 +166,6 @@ fn create_seq2() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -193,7 +182,6 @@ fn create_seq2_sequence_delimiter() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_delimiter: Some('N'),
             seed_mask: None,
         },
@@ -210,7 +198,6 @@ fn create_seq2_allow_ambiguity() -> Result<()> {
             is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -227,7 +214,6 @@ fn create_seq2_ignore_softmask() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: true,
-            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -244,7 +230,6 @@ fn create_seq2_allow_ambiguity_ignore_softmask() -> Result<()> {
             is_dna: true,
             allow_ambiguity: true,
             ignore_softmask: true,
-            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -261,7 +246,6 @@ fn create_seq3() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -278,7 +262,6 @@ fn create_long_dna() -> Result<()> {
             is_dna: true,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -295,7 +278,6 @@ fn create_protein() -> Result<()> {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: true,
             sequence_delimiter: None,
             seed_mask: None,
         },
@@ -312,7 +294,6 @@ fn create_protein_masked() -> Result<()> {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
-            save_lcp: false,
             sequence_delimiter: None,
             seed_mask: Some("10111011".to_string()),
         },
@@ -1086,7 +1067,7 @@ fn summarize_sufr1() -> Result<()> {
 }
 
 // --------------------------------------------------
-fn file_is_sorted(filename: &str, seed_mask: Option<&str>) -> Result<()> {
+fn file_is_sorted(filename: &str, mask: Option<&str>) -> Result<()> {
     // Create the sufr file
     let sufr_file = NamedTempFile::new()?;
     let sufr_path = &sufr_file.path().to_string_lossy();
@@ -1097,7 +1078,8 @@ fn file_is_sorted(filename: &str, seed_mask: Option<&str>) -> Result<()> {
         filename.to_string(),
     ];
 
-    if let Some(mask) = seed_mask {
+    let seed_mask: Option<SeedMask> = mask.map(SeedMask::new).transpose()?;
+    if let Some(mask) = &seed_mask {
         args.push("-s".to_string());
         args.push(mask.to_string());
     }
@@ -1121,13 +1103,13 @@ fn file_is_sorted(filename: &str, seed_mask: Option<&str>) -> Result<()> {
     assert!(list_file.path().exists());
 
     // Read the lines of the sorted suffixes and ensure they are sorted
-    let mask_pos = seed_mask.map(|v| seed_mask_positions(&parse_seed_mask(v)));
     let list_file = BufReader::new(File::open(list_file.path())?);
     let mut prev_line: Option<String> = None;
     for mut line in list_file.lines().map_while(Result::ok) {
-        if let Some(pos) = &mask_pos {
+        if let Some(mask) = &seed_mask {
             let chars: Vec<char> = line.chars().collect();
-            let masked: String = pos.iter().filter_map(|&p| chars.get(p)).collect();
+            let masked: String =
+                mask.positions.iter().filter_map(|&p| chars.get(p)).collect();
             line = masked;
         }
 

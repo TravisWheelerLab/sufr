@@ -60,27 +60,27 @@ def main() -> None:
     if args.build:
         runner("cargo build --release")
 
-    runner(f'{SUFR} create --dna --save-lcp -o {OUTDIR}/1.sufr {SEQ1}')
+    runner(f'{SUFR} create --dna -o {OUTDIR}/1.sufr {SEQ1}')
 
-    runner(f'{SUFR} create --dna --save-lcp -o {OUTDIR}/2.sufr {SEQ2}')
+    runner(f'{SUFR} create --dna -o {OUTDIR}/2.sufr {SEQ2}')
 
     runner(f'{SUFR} create --dna -o {OUTDIR}/3.sufr {SEQ3}')
 
-    runner(f'{SUFR} create --dna --save-lcp --sequence-delimiter N '
+    runner(f'{SUFR} create --dna --sequence-delimiter N '
            f'-o {OUTDIR}/2d.sufr {SEQ2}')
 
     runner(f'{SUFR} create -o {OUTDIR}/abba.sufr {ABBA}')
 
-    runner(f'{SUFR} create --dna --allow-ambiguity --save-lcp -o {OUTDIR}/1n.sufr {SEQ1}')
+    runner(f'{SUFR} create --dna --allow-ambiguity -o {OUTDIR}/1n.sufr {SEQ1}')
 
-    runner(f'{SUFR} create --dna --allow-ambiguity --save-lcp -o {OUTDIR}/2n.sufr {SEQ2}')
+    runner(f'{SUFR} create --dna --allow-ambiguity -o {OUTDIR}/2n.sufr {SEQ2}')
 
-    runner(f'{SUFR} create --dna --ignore-softmask --save-lcp -o {OUTDIR}/2s.sufr {SEQ2}')
+    runner(f'{SUFR} create --dna --ignore-softmask -o {OUTDIR}/2s.sufr {SEQ2}')
 
     runner(f'{SUFR} create --dna --allow-ambiguity --ignore-softmask '
-           f'--save-lcp -o {OUTDIR}/2ns.sufr {SEQ2}')
+           f'-o {OUTDIR}/2ns.sufr {SEQ2}')
 
-    runner(f'{SUFR} create --dna --save-lcp -o {OUTDIR}/long_dna_sequence.sufr {LONG}')
+    runner(f'{SUFR} create --dna -o {OUTDIR}/long_dna_sequence.sufr {LONG}')
 
     runner(f'{SUFR} create -o {OUTDIR}/uniprot.sufr {UNIPROT}')
 
