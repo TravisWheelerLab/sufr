@@ -55,9 +55,6 @@ where
     pub sort_type: SuffixSortType,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
-    //pub seed_mask_orig: Vec<u8>,
-    //pub seed_mask_pos: Vec<usize>,
-    //pub seed_mask_diff: Vec<usize>,
 }
 
 // --------------------------------------------------
@@ -95,33 +92,6 @@ where
             SuffixSortType::MaxQueryLen(args.max_query_len.unwrap_or(0))
         };
 
-        // Validate seed mask before max_query_len
-        //let (seed_mask_orig, seed_mask_pos): (Vec<u8>, Vec<usize>) =
-        //    match args.seed_mask {
-        //        Some(mask) => {
-        //            if !valid_seed_mask(&mask) {
-        //                bail!("Invalid mask: {mask}");
-        //            }
-        //            let nums = parse_seed_mask(&mask);
-        //            let mask_pos = seed_mask_positions(&nums);
-        //            if mask_pos.is_empty() {
-        //                bail!("Seed mask must contain at least one 1");
-        //            }
-        //            (nums, mask_pos)
-        //        }
-        //        None => (vec![], vec![]),
-        //    };
-
-        // Having a seed mask implies max_query_len
-        //let max_query_len = if seed_mask_pos.is_empty() {
-        //    args.max_query_len.map_or(T::default(), T::from_usize)
-        //} else {
-        //    // Number of 1s/care positions
-        //    T::from_usize(seed_mask_pos.len())
-        //};
-        //let seed_mask_diff = seed_mask_difference(&seed_mask_pos);
-        //println!("seed_mask_pos {seed_mask_pos:?} seed_mask_diff {seed_mask_diff:?}");
-
         let mut sa = SufrBuilder {
             version: OUTFILE_VERSION,
             is_dna: args.is_dna,
@@ -140,9 +110,6 @@ where
             headers: args.headers,
             partitions: vec![],
             sequence_delimiter: args.sequence_delimiter,
-            //seed_mask_orig,
-            //seed_mask_pos,
-            //seed_mask_diff,
         };
         sa.sort(args.num_partitions, args.random_seed)?;
         Ok(sa)
@@ -160,26 +127,26 @@ where
     // --------------------------------------------------
     #[inline(always)]
     pub fn find_lcp(&self, start1: T, start2: T, len: T, skip: usize) -> T {
-        //println!("find_lcp start1 {start1} start2 {start2} len {len} skip {skip}");
-        //if self.seed_mask_pos.is_empty() {
         match &self.sort_type {
             SuffixSortType::Mask(mask) => {
-                // Use the seed diff vector to select only the "care" positions
-                // up to the length of the text
+                // Use the seed diff vector to select only the
+                // "care" positions up to the length of the text
                 let a_vals = mask
                     .positions
                     .iter()
                     .skip(skip)
                     .map(|&offset| start1.to_usize() + offset)
                     .filter(|&v| v < self.text_len.to_usize());
+
                 let b_vals = mask
                     .positions
                     .iter()
                     .skip(skip)
                     .map(|&offset| start2.to_usize() + offset)
                     .filter(|&v| v < self.text_len.to_usize());
+
                 unsafe {
-                    return T::from_usize(
+                    T::from_usize(
                         skip + a_vals
                             .zip(b_vals)
                             .take_while(|(a, b)| {
@@ -187,7 +154,7 @@ where
                                     == self.text.get_unchecked(*b)
                             })
                             .count(),
-                    );
+                    )
                 }
             }
             SuffixSortType::MaxQueryLen(max_query_len) => {
@@ -202,7 +169,7 @@ where
                 let end1 = min(start1 + len, text_len);
                 let end2 = min(start2 + len, text_len);
                 unsafe {
-                    return T::from_usize(
+                    T::from_usize(
                         skip + (start1..end1)
                             .zip(start2..end2)
                             .take_while(|(a, b)| {
@@ -210,64 +177,11 @@ where
                                     == self.text.get_unchecked(*b)
                             })
                             .count(),
-                    );
+                    )
                 }
             }
         }
     }
-
-    // --------------------------------------------------
-    //#[inline(always)]
-    //pub fn find_lcp(&self, start1: T, start2: T, len: T, skip: usize) -> T {
-    //    //println!("find_lcp start1 {start1} start2 {start2} len {len} skip {skip}");
-    //    if self.seed_mask_pos.is_empty() {
-    //        let text_len = self.text_len.to_usize();
-    //        let len = if self.max_query_len > T::default() {
-    //            self.max_query_len.to_usize()
-    //        } else {
-    //            len.to_usize()
-    //        };
-    //        let start1 = start1.to_usize() + skip;
-    //        let start2 = start2.to_usize() + skip;
-    //        let end1 = min(start1 + len, text_len);
-    //        let end2 = min(start2 + len, text_len);
-    //        unsafe {
-    //            return T::from_usize(
-    //                skip + (start1..end1)
-    //                    .zip(start2..end2)
-    //                    .take_while(|(a, b)| {
-    //                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-    //                    })
-    //                    .count(),
-    //            );
-    //        }
-    //    } else {
-    //        // Use the seed diff vector to select only the "care" positions
-    //        // up to the length of the text
-    //        let a_vals = self
-    //            .seed_mask_pos
-    //            .iter()
-    //            .skip(skip)
-    //            .map(|&offset| start1.to_usize() + offset)
-    //            .filter(|&v| v < self.text_len.to_usize());
-    //        let b_vals = self
-    //            .seed_mask_pos
-    //            .iter()
-    //            .skip(skip)
-    //            .map(|&offset| start2.to_usize() + offset)
-    //            .filter(|&v| v < self.text_len.to_usize());
-    //        unsafe {
-    //            return T::from_usize(
-    //                skip + a_vals
-    //                    .zip(b_vals)
-    //                    .take_while(|(a, b)| {
-    //                        self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-    //                    })
-    //                    .count(),
-    //            );
-    //        }
-    //    }
-    //}
 
     // --------------------------------------------------
     #[inline(always)]
@@ -607,24 +521,9 @@ where
                     m = l_x;
                 }
                 Ordering::Equal => {
-                    //println!(" >>> EQUAL");
-                    // Length of shorter suffix
                     let shorter_suffix = max(x[idx_x], y[idx_y]);
                     let max_n = self.text_len - shorter_suffix;
 
-                    // Prefix-context length for the suffixes
-                    //let context = if !self.seed_mask_pos.is_empty() {
-                    //    T::from_usize(
-                    //        self.seed_mask_pos
-                    //            .iter()
-                    //            .filter(|&i| *i < max_n.to_usize())
-                    //            .count(),
-                    //    )
-                    //} else if self.max_query_len > T::default() {
-                    //    min(self.max_query_len, max_n)
-                    //} else {
-                    //    max_n
-                    //};
                     let context = match &self.sort_type {
                         SuffixSortType::Mask(seed_mask) => T::from_usize(
                             seed_mask
@@ -798,6 +697,7 @@ where
                     break;
                 }
             }
+
             // Sort the selected pivots
             let mut pivot_sa: Vec<T> = pivot_sa.iter().cloned().collect();
             let mut sa_w = pivot_sa.clone();
