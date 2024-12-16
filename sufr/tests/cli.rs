@@ -1050,7 +1050,7 @@ fn summarize_sufr1() -> Result<()> {
     summarize(
         SUFR1,
         vec![
-            ("File Size", "180 bytes"),
+            ("File Size", "172 bytes"),
             ("File Version", &OUTFILE_VERSION.to_string()),
             ("DNA", "true"),
             ("Allow Ambiguity", "false"),

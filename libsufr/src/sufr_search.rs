@@ -207,7 +207,7 @@ where
 
     // --------------------------------------------------
     pub fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
-        //println!(
+        //eprintln!(
         //    "\nskip {skip} query {:?} suffix {suffix_pos} = {:?} \
         //    max_query_len {:?}",
         //    String::from_utf8(query.to_vec()),
@@ -219,16 +219,28 @@ where
         //    ),
         //    self.max_query_len,
         //);
+        //eprintln!("sort_type {:?}", self.sort_type);
 
         let (lcp, max_query_len) = match &self.sort_type {
             SuffixSortType::MaxQueryLen(mql) => {
-                let lcp = if (mql > &0) && (skip >= *mql) {
+                // The "MaxQueryLen(mql)" refers to how the suffix array
+                // was built, but there may be a runtime value in self.max_query_len.
+                // If both are present, take the lowest.
+                let max_query_len: usize = if mql > &0 && self.max_query_len.is_some() {
+                    min(*mql, self.max_query_len.unwrap_or(0))
+                } else if let Some(val) = self.max_query_len {
+                    val
+                } else {
+                    *mql
+                };
+
+                let lcp = if (max_query_len > 0) && (skip >= max_query_len) {
                     // If we've already seen enough
                     skip
                 } else {
                     let text_start = suffix_pos + skip;
-                    let text_end = if mql > &0 {
-                        min(self.text.len(), text_start + mql)
+                    let text_end = if max_query_len > 0 {
+                        min(self.text.len(), text_start + max_query_len)
                     } else {
                         self.text.len()
                     };
@@ -241,11 +253,13 @@ where
                         .count()
                         + skip
                 };
-                (lcp, *mql)
+                (lcp, max_query_len)
             }
             SuffixSortType::Mask(seed_mask) => {
                 let max_query_len = self.max_query_len.unwrap_or(0);
-                let lcp = if skip >= seed_mask.weight || skip >= max_query_len {
+                let lcp = if skip >= seed_mask.weight
+                    || (max_query_len > 0 && skip >= max_query_len)
+                {
                     skip
                 } else {
                     let end = if max_query_len > 0 {
