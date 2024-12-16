@@ -1000,15 +1000,14 @@ fn locate_uniprot_masked_absolute() -> Result<()> {
 fn locate_long_dna_low_memory() -> Result<()> {
     // cargo run -- lo data/expected/long_dna_sequence.sufr \
     // CATGTTGTCACG CCATGGGAC GGATGAAGAAAAGCA
-    //
     // CATGTTGTCACG
-    // Seq3 566
+    // Seq1 2566
     // //
     // CCATGGGAC
-    // Seq4 14
+    // Seq1 3014
     // //
     // GGATGAAGAAAAGCA
-    // Seq2 26
+    // Seq1 1026
     // //
     locate(
         "../data/expected/long_dna_sequence.sufr",

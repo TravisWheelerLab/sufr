@@ -32,9 +32,9 @@ pub struct SeedMask {
 // --------------------------------------------------
 impl SeedMask {
     pub fn new(mask: &str) -> Result<Self> {
-        if !Self::valid(mask) {
-            bail!("Invalid seed mask '{mask}'")
-        }
+        //if !Self::valid(mask) {
+        //    bail!("Invalid seed mask '{mask}'")
+        //}
 
         let bytes = Self::parse(mask);
         let positions = Self::get_positions(&bytes);
