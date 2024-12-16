@@ -17,9 +17,8 @@ where
     pub text: &'a [u8],
     pub file: FileAccess<T>,
     pub suffix_array: &'a [T],
-    pub rank: &'a [usize],
+    pub rank: &'a [T],
     pub query_low_memory: bool,
-    //pub max_query_len: usize,
     pub len_suffixes: usize,
     pub sort_type: &'a SuffixSortType,
     pub max_query_len: Option<usize>,
@@ -34,7 +33,7 @@ where
     text: &'a [u8],
     suffix_array_file: FileAccess<T>,
     suffix_array_mem: &'a [T],
-    suffix_array_rank_mem: &'a [usize],
+    suffix_array_rank_mem: &'a [T],
     query_low_memory: bool,
     len_suffixes: usize,
     sort_type: &'a SuffixSortType,
@@ -47,7 +46,6 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     pub fn new(args: SufrSearchArgs<'a, T>) -> SufrSearch<'a, T> {
-        //let seed_mask_pos = seed_mask_positions(&args.seed_mask);
         SufrSearch {
             text: args.text,
             suffix_array_file: args.file,
@@ -91,12 +89,12 @@ where
                         self.len_suffixes
                     } else {
                         // Use the next LCP rank
-                        self.suffix_array_rank_mem[start + 1]
+                        self.suffix_array_rank_mem[start + 1].to_usize()
                     }
                 } else {
-                    self.suffix_array_rank_mem[end] + 1
+                    self.suffix_array_rank_mem[end].to_usize() + 1
                 };
-                start_rank..end_rank
+                start_rank.to_usize()..end_rank
             };
 
             // Getting suffixes may require going to disk

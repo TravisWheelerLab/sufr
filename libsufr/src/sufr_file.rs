@@ -47,7 +47,7 @@ where
     pub text: Vec<u8>,
     pub suffix_array_mem: Vec<T>,
     pub suffix_array_mem_mql: Option<usize>,
-    pub suffix_array_rank_mem: Vec<usize>,
+    pub suffix_array_rank_mem: Vec<T>,
     pub suffix_array_file: FileAccess<T>,
     pub lcp_file: FileAccess<T>,
 }
@@ -265,30 +265,16 @@ where
     pub fn subsample_suffix_array(
         &mut self,
         max_query_len: usize,
-    ) -> (Vec<T>, Vec<usize>) {
+    ) -> (Vec<T>, Vec<T>) {
         let max_query_len = T::from_usize(max_query_len);
 
         // Ensure we start from the beginning of the SA/LCP files
         self.lcp_file.reset();
         self.suffix_array_file.reset();
 
-        // 37s to process 15/hs1
         let max_len = self.len_suffixes.to_usize();
         let mut suffix_array: Vec<T> = Vec::with_capacity(max_len);
-        let mut rank: Vec<usize> = Vec::with_capacity(max_len);
-
-        //for (i, suffix) in self
-        //    .lcp_file
-        //    .iter()
-        //    .zip(self.suffix_array_file.iter())
-        //    .enumerate()
-        //    .filter_map(|(i, (lcp, suffix))| {
-        //        (lcp < max_query_len).then_some((i, suffix))
-        //    })
-        //{
-        //    suffix_array.push(suffix);
-        //    rank.push(i);
-        //}
+        let mut rank: Vec<T> = Vec::with_capacity(max_len);
 
         for (i, (lcp, suffix)) in self
             .lcp_file
@@ -298,27 +284,10 @@ where
         {
             if lcp < max_query_len {
                 suffix_array.push(suffix);
-                //rank.push(T::from_usize(i));
-                rank.push(i);
+                rank.push(T::from_usize(i));
+                //rank.push(i);
             }
         }
-
-        // 78s to process 15/hs1
-        //let ranked_suffixes: Vec<(usize, T)> = self
-        //    .lcp_file
-        //    .iter()
-        //    .zip(self.suffix_array_file.iter())
-        //    .enumerate()
-        //    .filter_map(|(rank, (lcp, suffix))| {
-        //        (lcp < max_query_len).then_some((rank, suffix))
-        //    })
-        //    .collect();
-        //let mut suffix_array: Vec<T> = Vec::with_capacity(ranked_suffixes.len());
-        //let mut rank: Vec<usize> = Vec::with_capacity(ranked_suffixes.len());
-        //for (suffix_rank, suffix) in ranked_suffixes {
-        //    suffix_array.push(suffix);
-        //    rank.push(suffix_rank);
-        //}
 
         (suffix_array, rank)
     }
