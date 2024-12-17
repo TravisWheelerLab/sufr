@@ -1,12 +1,16 @@
 use crate::{
     file_access::FileAccess,
     types::{
-        Comparison, FromUsize, Int, SearchResult, SearchResultLocations, SuffixSortType,
+        Comparison, FromUsize, Int, LowMemoryUsage, SearchResult,
+        SearchResultLocations, SuffixSortType,
     },
     util::find_lcp_full_offset,
 };
 use anyhow::Result;
-use std::cmp::{min, Ordering};
+use std::{
+    cmp::{min, Ordering},
+    ops::Range,
+};
 
 // --------------------------------------------------
 #[derive(Debug)]
@@ -15,10 +19,12 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     pub text: &'a [u8],
+    pub text_len: usize,
+    pub text_file: FileAccess<u8>,
     pub file: FileAccess<T>,
     pub suffix_array: &'a [T],
     pub rank: &'a [T],
-    pub query_low_memory: bool,
+    pub query_low_memory: Option<LowMemoryUsage>,
     pub len_suffixes: usize,
     pub sort_type: &'a SuffixSortType,
     pub max_query_len: Option<usize>,
@@ -31,10 +37,12 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     text: &'a [u8],
+    text_len: usize,
+    text_file: FileAccess<u8>,
     suffix_array_file: FileAccess<T>,
     suffix_array_mem: &'a [T],
     suffix_array_rank_mem: &'a [T],
-    query_low_memory: bool,
+    query_low_memory: Option<LowMemoryUsage>,
     len_suffixes: usize,
     sort_type: &'a SuffixSortType,
     max_query_len: Option<usize>,
@@ -48,6 +56,8 @@ where
     pub fn new(args: SufrSearchArgs<'a, T>) -> SufrSearch<'a, T> {
         SufrSearch {
             text: args.text,
+            text_len: args.text_len,
+            text_file: args.text_file,
             suffix_array_file: args.file,
             suffix_array_mem: args.suffix_array,
             suffix_array_rank_mem: args.rank,
@@ -204,14 +214,19 @@ where
     }
 
     // --------------------------------------------------
-    pub fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
+    pub fn compare(
+        &mut self,
+        query: &[u8],
+        suffix_pos: usize,
+        skip: usize,
+    ) -> Comparison {
+        //let end = min(suffix_pos + query.len(), self.text_len);
         //eprintln!(
         //    "\nskip {skip} query {:?} suffix {suffix_pos} = {:?} \
         //    max_query_len {:?}",
         //    String::from_utf8(query.to_vec()),
         //    String::from_utf8(
-        //        self.text
-        //            .get(suffix_pos..suffix_pos + query.len())
+        //        self.get_text_range(suffix_pos..end)
         //            .expect("OK")
         //            .to_vec()
         //    ),
@@ -238,9 +253,9 @@ where
                 } else {
                     let text_start = suffix_pos + skip;
                     let text_end = if max_query_len > 0 {
-                        min(self.text.len(), text_start + max_query_len)
+                        min(self.text_len, text_start + max_query_len)
                     } else {
-                        self.text.len()
+                        self.text_len
                     };
 
                     query
@@ -271,7 +286,7 @@ where
                     let suffix_len = mask_pos
                         .iter()
                         .map(|offset| suffix_pos + offset) // add offset to start of suffix
-                        .filter(|&v| v < self.text.len()) // don't go off end of text
+                        .filter(|&v| v < self.text_len) // don't go off end of text
                         .count();
                     let len = min(query_len, suffix_len);
 
@@ -290,56 +305,12 @@ where
             }
         };
 
-        //let lcp = if (self.max_query_len > 0) && (skip >= self.max_query_len) {
-        //    // If we've already seen enough
-        //    skip
-        //} else if self.seed_mask_pos.is_empty() {
-        //    let text_start = suffix_pos + skip;
-        //    let text_end = if self.max_query_len > 0 {
-        //        min(self.text.len(), text_start + self.max_query_len)
-        //    } else {
-        //        self.text.len()
-        //    };
-        //
-        //    query
-        //        .iter()
-        //        .skip(skip)
-        //        .zip(self.text.get(text_start..text_end).unwrap())
-        //        .map_while(|(a, b)| (a == b).then_some(a))
-        //        .count()
-        //        + skip
-        //} else {
-        //    let mask_end = if self.max_query_len > 0 {
-        //        self.max_query_len
-        //    } else {
-        //        self.seed_mask_pos.len()
-        //    };
-        //    let mask_pos = &self.seed_mask_pos[skip..mask_end];
-        //    let query_len = mask_pos.iter().filter(|&v| v < &query.len()).count();
-        //    let suffix_len = mask_pos
-        //        .iter()
-        //        .map(|offset| suffix_pos + offset) // add offset to start of suffix
-        //        .filter(|&v| v < self.text.len()) // don't go off end of text
-        //        .count();
-        //    let len = min(query_len, suffix_len);
-        //    if len > 0 {
-        //        skip + self.seed_mask_pos[skip..skip + len]
-        //            .iter()
-        //            .take_while(|&offset| {
-        //                query[*offset] == self.text[suffix_pos + offset]
-        //            })
-        //            .count()
-        //    } else {
-        //        skip
-        //    }
-        //};
-
         let cmp = if (max_query_len > 0) && (lcp >= max_query_len) {
             // We've seen enough
             Ordering::Equal
         } else {
             // Get the next chars
-            let full_offset = find_lcp_full_offset(lcp, &self.sort_type);
+            let full_offset = find_lcp_full_offset(lcp, self.sort_type);
             //println!(
             //    "full_offset {full_offset} next query {:?} next text {:?} = {res:?}",
             //    query.get(full_offset).map(|v| *v as char),
@@ -348,7 +319,8 @@ where
             //res
             match (
                 query.get(full_offset),
-                self.text.get(suffix_pos + full_offset),
+                //self.text.get(suffix_pos + full_offset),
+                &self.get_text(suffix_pos + full_offset),
             ) {
                 // Entire query matched
                 (None, _) => Ordering::Equal,
@@ -365,8 +337,24 @@ where
     }
 
     // --------------------------------------------------
+    fn get_text(&mut self, pos: usize) -> Option<u8> {
+        match self.query_low_memory {
+            Some(LowMemoryUsage::VeryLow) => self.text_file.get(pos),
+            _ => self.text.get(pos).copied(),
+        }
+    }
+
+    // --------------------------------------------------
+    pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
+        match self.query_low_memory {
+            Some(LowMemoryUsage::VeryLow) => self.text_file.get_range(pos),
+            _ => Ok(self.text.get(pos).expect("foo").to_vec()),
+        }
+    }
+
+    // --------------------------------------------------
     fn get_suffix(&mut self, pos: usize) -> Option<T> {
-        if self.query_low_memory {
+        if self.query_low_memory.is_some() {
             self.suffix_array_file.get(pos)
         } else {
             self.suffix_array_mem.get(pos).copied()

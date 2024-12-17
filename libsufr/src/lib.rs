@@ -42,7 +42,7 @@ mod tests {
         assert!(res.is_ok());
         assert!(outfile.path().exists());
 
-        let res: Result<SufrFile<u32>> = SufrFile::read(outpath);
+        let res: Result<SufrFile<u32>> = SufrFile::read(outpath, false);
         assert!(res.is_ok());
 
         let mut sufr_file = res.unwrap();
@@ -90,7 +90,7 @@ mod tests {
         assert!(res.is_ok());
         assert!(outfile.path().exists());
 
-        let res: Result<SufrFile<u64>> = SufrFile::read(outpath);
+        let res: Result<SufrFile<u64>> = SufrFile::read(outpath, false);
         assert!(res.is_ok());
 
         let mut sufr_file = res.unwrap();
@@ -135,7 +135,7 @@ mod tests {
         assert!(res.is_ok());
         assert_eq!(sufr.num_suffixes, 364);
 
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath)?;
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath, false)?;
         let full_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
         let full_lcp: Vec<_> = sufr_file.lcp_file.iter().collect();
         assert_eq!(full_sa.len(), 364);
@@ -222,7 +222,7 @@ mod tests {
         assert!(res.is_ok());
         assert_eq!(sufr.num_suffixes, 8);
 
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath)?;
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath, false)?;
         let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
         assert_eq!(suffix_array.len(), 8);
         assert_eq!(suffix_array, vec![7, 6, 5, 4, 2, 0, 1, 3]);
@@ -274,7 +274,7 @@ mod tests {
         assert!(res.is_ok());
         assert_eq!(sufr.num_suffixes, 17);
 
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath)?;
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath, false)?;
         let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
         assert_eq!(suffix_array.len(), 17);
         assert_eq!(
@@ -312,7 +312,7 @@ mod tests {
         assert!(res.is_ok());
         assert_eq!(sufr.num_suffixes, 43);
 
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath)?;
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(outpath, false)?;
         let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
         assert_eq!(suffix_array.len(), 43);
         assert_eq!(

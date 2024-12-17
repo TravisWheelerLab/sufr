@@ -116,11 +116,18 @@ impl Display for SeedMask {
 }
 
 // --------------------------------------------------
+#[derive(Debug, Clone)]
+pub enum LowMemoryUsage {
+    Low,
+    VeryLow
+}
+
+// --------------------------------------------------
 #[derive(Debug)]
 pub struct SearchOptions {
     pub queries: Vec<String>,
     pub max_query_len: Option<usize>,
-    pub low_memory: bool,
+    pub low_memory: Option<LowMemoryUsage>,
     pub find_suffixes: bool,
 }
 
@@ -174,6 +181,12 @@ pub trait Int:
     fn to_usize(&self) -> usize;
 }
 
+impl Int for u8 {
+    fn to_usize(&self) -> usize {
+        *self as usize
+    }
+}
+
 impl Int for u32 {
     fn to_usize(&self) -> usize {
         *self as usize
@@ -188,6 +201,12 @@ impl Int for u64 {
 
 pub trait FromUsize<T> {
     fn from_usize(val: usize) -> T;
+}
+
+impl FromUsize<u8> for u8 {
+    fn from_usize(val: usize) -> u8 {
+        val as u8
+    }
 }
 
 impl FromUsize<u32> for u32 {
@@ -207,7 +226,7 @@ impl FromUsize<u64> for u64 {
 pub struct ExtractOptions {
     pub queries: Vec<String>,
     pub max_query_len: Option<usize>,
-    pub low_memory: bool,
+    pub low_memory: Option<LowMemoryUsage>,
     pub prefix_len: Option<usize>,
     pub suffix_len: Option<usize>,
 }
