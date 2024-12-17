@@ -663,11 +663,11 @@ fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
     }
 
     if opts.show_lcp {
-        args.push("-L".to_string());
+        args.push("-p".to_string());
     }
 
     if let Some(len) = opts.suffix_len {
-        args.push("-l".to_string());
+        args.push("-n".to_string());
         args.push(len.to_string());
     }
 
@@ -818,6 +818,7 @@ fn list_sufr1_show_rank() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn list_sufr1_len_3() -> Result<()> {
+    // cargo run -- ls data data/expected/1.sufr
     list(
         SUFR1,
         ListOptions {

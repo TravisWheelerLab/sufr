@@ -5,7 +5,9 @@ use format_num::NumberFormat;
 use libsufr::{
     sufr_builder::{SufrBuilder, SufrBuilderArgs},
     sufr_file::SufrFile,
-    types::{ExtractOptions, FromUsize, Int, SearchOptions, SuffixSortType},
+    types::{
+        ExtractOptions, FromUsize, Int, LowMemoryUsage, SearchOptions, SuffixSortType,
+    },
     util::{read_sequence_file, read_text_length},
 };
 use log::info;
@@ -131,9 +133,13 @@ pub struct ExtractArgs {
     #[arg(short, long, value_name = "LEN")]
     pub max_query_len: Option<usize>,
 
-    /// Low-memory
+    /// Low memory
     #[arg(short, long)]
     pub low_memory: bool,
+
+    /// Very low memory
+    #[arg(short, long, conflicts_with = "low_memory")]
+    pub very_low_memory: bool,
 
     /// Prefix length
     #[arg(short, long, value_name = "PREFIX_LEN")]
@@ -163,16 +169,20 @@ pub struct ListArgs {
     #[arg(short('r'), long)]
     pub show_rank: bool,
 
-    /// Show suffix column
+    /// Show suffix position column
     #[arg(short('s'), long)]
     pub show_suffix: bool,
 
     /// Show LCP column
-    #[arg(short('L'), long)]
+    #[arg(short('p'), long)]
     pub show_lcp: bool,
 
+    /// Very low memory
+    #[arg(short, long)]
+    pub very_low_memory: bool,
+
     /// Length of suffixes to show
-    #[arg(short, long, value_name = "LEN")]
+    #[arg(short('n'), long, value_name = "LEN")]
     pub len: Option<usize>,
 
     /// Output
@@ -203,6 +213,10 @@ pub struct CountArgs {
     #[arg(short, long)]
     pub low_memory: bool,
 
+    /// Very low memory
+    #[arg(short, long, conflicts_with = "low_memory")]
+    pub very_low_memory: bool,
+
     /// Sufr file
     #[arg(value_name = "SUFR")]
     pub file: String,
@@ -223,9 +237,13 @@ pub struct LocateArgs {
     #[arg(short, long, value_name = "LEN")]
     pub max_query_len: Option<usize>,
 
-    /// Low-memory
+    /// Low memory
     #[arg(short, long)]
     pub low_memory: bool,
+
+    /// Very low memory
+    #[arg(short, long, conflicts_with = "low_memory")]
+    pub very_low_memory: bool,
 
     /// Show absolute position in text
     #[arg(short, long)]
@@ -271,11 +289,12 @@ impl ValueEnum for LogLevel {
 // --------------------------------------------------
 pub fn check(args: &CheckArgs) -> Result<()> {
     let text_len = read_text_length(&args.file)? as u64;
+    // TODO: Make sure we always want to avoid holding text?
     if text_len < u32::MAX as u64 {
-        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file)?;
+        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file, true)?;
         _check(sufr_file, args)
     } else {
-        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file)?;
+        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file, true)?;
         _check(sufr_file, args)
     }
 }
@@ -313,11 +332,14 @@ where
 // --------------------------------------------------
 pub fn count(args: &CountArgs) -> Result<()> {
     let text_len = read_text_length(&args.file)? as u64;
+
     if text_len < u32::MAX as u64 {
-        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file)?;
+        let sufr_file: SufrFile<u32> =
+            SufrFile::read(&args.file, args.very_low_memory)?;
         _count(sufr_file, args)
     } else {
-        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file)?;
+        let sufr_file: SufrFile<u64> =
+            SufrFile::read(&args.file, args.very_low_memory)?;
         _count(sufr_file, args)
     }
 }
@@ -335,10 +357,18 @@ where
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
+    let low_memory = if args.low_memory {
+        Some(LowMemoryUsage::Low)
+    } else if args.very_low_memory {
+        Some(LowMemoryUsage::VeryLow)
+    } else {
+        None
+    };
+
     let loc_args = SearchOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory: args.low_memory,
+        low_memory,
         find_suffixes: false,
     };
 
@@ -425,12 +455,14 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
     let text_len = read_text_length(&args.file)? as u64;
     if text_len < u32::MAX as u64 {
         let now = Instant::now();
-        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file)?;
+        let sufr_file: SufrFile<u32> =
+            SufrFile::read(&args.file, args.very_low_memory)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _extract(sufr_file, args)
     } else {
         let now = Instant::now();
-        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file)?;
+        let sufr_file: SufrFile<u64> =
+            SufrFile::read(&args.file, args.very_low_memory)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _extract(sufr_file, args)
     }
@@ -448,10 +480,17 @@ where
 
     let queries = parse_locate_queries(&args.query)?;
     let now = Instant::now();
+    let low_memory = if args.low_memory {
+        Some(LowMemoryUsage::Low)
+    } else if args.very_low_memory {
+        Some(LowMemoryUsage::VeryLow)
+    } else {
+        None
+    };
     let loc_args = ExtractOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory: args.low_memory,
+        low_memory,
         prefix_len: args.prefix_len,
         suffix_len: args.suffix_len,
     };
@@ -487,12 +526,12 @@ pub fn list(args: &ListArgs) -> Result<()> {
     let text_len = read_text_length(&args.file)? as u64;
     if text_len < u32::MAX as u64 {
         let now = Instant::now();
-        let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
+        let sa: SufrFile<u32> = SufrFile::read(&args.file, args.very_low_memory)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _list(sa, args)
     } else {
         let now = Instant::now();
-        let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
+        let sa: SufrFile<u64> = SufrFile::read(&args.file, args.very_low_memory)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _list(sa, args)
     }
@@ -548,13 +587,20 @@ where
         writeln!(
             output,
             "{rank_display}{suffix_display}{lcp_display}{}",
-            String::from_utf8(sufr_file.text[suffix..end].to_vec())?
+            String::from_utf8(sufr_file.text_file.get_range(suffix..end)?)?
         )?;
         Ok(())
     };
 
     if ranks.is_empty() {
         for (rank, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
+            //let suffix = suffix.to_usize();
+            //let end = if suffix + suffix_len > text_len {
+            //    text_len
+            //} else {
+            //    suffix + suffix_len
+            //};
+            //let suffix_str = String::from_utf8(sufr_file.text_file.get_range(suffix..end)?)?;
             print(
                 rank,
                 suffix.to_usize(),
@@ -564,6 +610,13 @@ where
     } else {
         for rank in ranks {
             if let Some(suffix) = sufr_file.suffix_array_file.get(rank) {
+                //let suffix = suffix.to_usize();
+                //let end = if suffix + suffix_len > text_len {
+                //    text_len
+                //} else {
+                //    suffix + suffix_len
+                //};
+                //let suffix_str = String::from_utf8(sufr_file.get_text_range(suffix..end)?)?;
                 print(
                     rank,
                     suffix.to_usize(),
@@ -604,12 +657,12 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
     let len = read_text_length(&args.file)? as u64;
     if len < u32::MAX as u64 {
         let now = Instant::now();
-        let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
+        let sa: SufrFile<u32> = SufrFile::read(&args.file, args.very_low_memory)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _locate(sa, args)
     } else {
         let now = Instant::now();
-        let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
+        let sa: SufrFile<u64> = SufrFile::read(&args.file, args.very_low_memory)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _locate(sa, args)
     }
@@ -628,10 +681,17 @@ where
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
+    let low_memory = if args.low_memory {
+        Some(LowMemoryUsage::Low)
+    } else if args.very_low_memory {
+        Some(LowMemoryUsage::VeryLow)
+    } else {
+        None
+    };
     let loc_args = SearchOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory: args.low_memory,
+        low_memory,
         find_suffixes: true,
     };
 
@@ -726,14 +786,15 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 // --------------------------------------------------
 pub fn summarize(args: &SummarizeArgs) -> Result<()> {
     let text_len = read_text_length(&args.file)? as u64;
+    // TODO: Make sure we always want to avoid holding text?
     if text_len < u32::MAX as u64 {
         let now = Instant::now();
-        let sa: SufrFile<u32> = SufrFile::read(&args.file)?;
+        let sa: SufrFile<u32> = SufrFile::read(&args.file, true)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _summarize(sa, args)
     } else {
         let now = Instant::now();
-        let sa: SufrFile<u64> = SufrFile::read(&args.file)?;
+        let sa: SufrFile<u64> = SufrFile::read(&args.file, true)?;
         info!("Read sufr file in {:?}", now.elapsed());
         _summarize(sa, args)
     }

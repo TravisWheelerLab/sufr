@@ -3,7 +3,8 @@ use crate::{
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
         ExtractOptions, ExtractResult, ExtractSequence, FromUsize, Int, LocatePosition,
-        LocateResult, SearchOptions, SearchResult, SeedMask, SuffixSortType,
+        LocateResult, LowMemoryUsage, SearchOptions, SearchResult, SeedMask,
+        SuffixSortType,
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
@@ -17,6 +18,7 @@ use std::{
     fs::{self, File},
     io::{Read, Seek, Write},
     mem,
+    ops::Range,
     path::{Path, PathBuf},
     slice,
     time::Instant,
@@ -34,7 +36,7 @@ where
     pub is_dna: bool,
     pub allow_ambiguity: bool,
     pub ignore_softmask: bool,
-    pub query_low_memory: bool,
+    pub query_low_memory: Option<LowMemoryUsage>,
     pub text_pos: usize,
     pub suffix_array_pos: usize,
     pub lcp_pos: usize,
@@ -48,6 +50,7 @@ where
     pub suffix_array_mem: Vec<T>,
     pub suffix_array_mem_mql: Option<usize>,
     pub suffix_array_rank_mem: Vec<T>,
+    pub text_file: FileAccess<u8>,
     pub suffix_array_file: FileAccess<T>,
     pub lcp_file: FileAccess<T>,
 }
@@ -58,7 +61,7 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
     // Read serialized ".sufr" file
-    pub fn read(filename: &str) -> Result<SufrFile<T>> {
+    pub fn read(filename: &str, low_memory: bool) -> Result<SufrFile<T>> {
         let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
         // Meta
@@ -125,8 +128,18 @@ where
         };
 
         // Text
-        let mut text = vec![0; text_len];
-        file.read_exact(&mut text)?;
+        let text = if low_memory {
+            file.seek_relative(text_len as i64)?;
+            vec![]
+        } else {
+            let mut tmp = vec![0; text_len];
+            file.read_exact(&mut tmp)?;
+            tmp
+        };
+
+        // Text file access
+        let text_file: FileAccess<u8> =
+            FileAccess::new(filename, text_pos as u64, text_len)?;
 
         // Suffix Array
         let suffix_array_file: FileAccess<T> =
@@ -156,7 +169,7 @@ where
             is_dna,
             allow_ambiguity,
             ignore_softmask,
-            query_low_memory: false,
+            query_low_memory: None,
             text_pos,
             suffix_array_pos,
             lcp_pos,
@@ -169,10 +182,27 @@ where
             text,
             suffix_array_file,
             lcp_file,
+            text_file,
             suffix_array_mem: vec![],
             suffix_array_mem_mql: None,
             suffix_array_rank_mem: vec![],
         })
+    }
+
+    // --------------------------------------------------
+    pub fn get_text(&mut self, pos: usize) -> Option<u8> {
+        match self.query_low_memory {
+            Some(LowMemoryUsage::VeryLow) => self.text_file.get(pos),
+            _ => self.text.get(pos).copied(),
+        }
+    }
+
+    // --------------------------------------------------
+    pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
+        match self.query_low_memory {
+            Some(LowMemoryUsage::VeryLow) => self.text_file.get_range(pos),
+            _ => Ok(self.text[pos].to_vec()),
+        }
     }
 
     // --------------------------------------------------
@@ -191,47 +221,50 @@ where
 
     // --------------------------------------------------
     pub fn check(&mut self) -> Result<Vec<String>> {
-        let mut previous: Option<usize> = None;
-        let mut errors: Vec<String> = vec![];
-        let text_len = self.text_len.to_usize();
-        let len_suffixes = self.len_suffixes.to_usize();
+        // TODO: Handle MQL/spaced seeds
+        //let mut previous: Option<usize> = None;
+        //let mut errors: Vec<String> = vec![];
+        //let text_len = self.text_len.to_usize();
+        //let len_suffixes = self.len_suffixes.to_usize();
 
-        for i in 0..len_suffixes {
-            if i > 0 && i % 1_000_000 == 0 {
-                info!("Checked {i}");
-            }
-            let cur_sa = self.suffix_array_file.get(i).expect("sa").to_usize();
-            let cur_lcp = self.lcp_file.get(i).expect("lcp").to_usize();
-
-            if let Some(prev_sa) = previous {
-                let check_lcp = self.find_lcp(cur_sa, prev_sa, text_len);
-                if check_lcp != cur_lcp {
-                    errors.push(format!(
-                        "{cur_sa} (r. {i}): LCP {cur_lcp} should be {check_lcp}"
-                    ));
-                }
-
-                let is_less = match (
-                    self.text.get(prev_sa + cur_lcp),
-                    self.text.get(cur_sa + cur_lcp),
-                ) {
-                    (Some(a), Some(b)) => a < b,
-                    (None, Some(_)) => true,
-                    _ => false,
-                };
-
-                if !is_less {
-                    errors.push(format!("{cur_sa} (r. {i}): greater than previous"));
-                }
-
-                if !errors.is_empty() {
-                    dbg!(errors);
-                    panic!("blah");
-                }
-            }
-            previous = Some(cur_sa);
-        }
-        Ok(errors)
+        //for i in 0..len_suffixes {
+        //    if i > 0 && i % 1_000_000 == 0 {
+        //        info!("Checked {i}");
+        //    }
+        //    let cur_sa = self.suffix_array_file.get(i).expect("sa").to_usize();
+        //    let cur_lcp = self.lcp_file.get(i).expect("lcp").to_usize();
+        //
+        //    if let Some(prev_sa) = previous {
+        //        println!("Check prev {prev_sa} cur {cur_sa}");
+        //        let check_lcp = self.find_lcp(cur_sa, prev_sa, text_len);
+        //        if check_lcp != cur_lcp {
+        //            errors.push(format!(
+        //                "{cur_sa} (r. {i}): LCP {cur_lcp} should be {check_lcp}"
+        //            ));
+        //        }
+        //
+        //        let is_less = match (
+        //            self.text.get(prev_sa + cur_lcp),
+        //            self.text.get(cur_sa + cur_lcp),
+        //        ) {
+        //            (Some(a), Some(b)) => a < b,
+        //            (None, Some(_)) => true,
+        //            _ => false,
+        //        };
+        //
+        //        if !is_less {
+        //            errors.push(format!("{cur_sa} (r. {i}): greater than previous"));
+        //        }
+        //
+        //        if !errors.is_empty() {
+        //            dbg!(errors);
+        //            panic!("blah");
+        //        }
+        //    }
+        //    previous = Some(cur_sa);
+        //}
+        //Ok(errors)
+        Ok(vec![])
     }
 
     // --------------------------------------------------
@@ -262,10 +295,7 @@ where
     }
 
     // --------------------------------------------------
-    pub fn subsample_suffix_array(
-        &mut self,
-        max_query_len: usize,
-    ) -> (Vec<T>, Vec<T>) {
+    pub fn subsample_suffix_array(&mut self, max_query_len: usize) -> (Vec<T>, Vec<T>) {
         let max_query_len = T::from_usize(max_query_len);
 
         // Ensure we start from the beginning of the SA/LCP files
@@ -293,10 +323,7 @@ where
     }
 
     // --------------------------------------------------
-    pub fn set_suffix_array_mem(
-        &mut self,
-        max_query_len: Option<usize>,
-    ) -> Result<()> {
+    pub fn set_suffix_array_mem(&mut self, max_query_len: Option<usize>) -> Result<()> {
         let mut max_query_len = max_query_len.unwrap_or(0);
 
         // If ".sufr" file was built with a nonzero max_query_len or seed mask
@@ -459,25 +486,32 @@ where
         &mut self,
         args: &SearchOptions,
     ) -> Result<Vec<SearchResult<T>>> {
-        self.query_low_memory = args.low_memory;
+        self.query_low_memory = args.low_memory.clone();
 
-        if !self.query_low_memory {
+        if self.query_low_memory.is_none() {
             self.set_suffix_array_mem(args.max_query_len)?;
         }
 
         let now = Instant::now();
         let new_search = || -> Result<RefCell<SufrSearch<T>>> {
-            let search_file: FileAccess<T> = FileAccess::new(
+            let suffix_array_file: FileAccess<T> = FileAccess::new(
                 &self.filename,
                 self.suffix_array_pos as u64,
                 self.len_suffixes.to_usize(),
             )?;
+            let text_file: FileAccess<u8> = FileAccess::new(
+                &self.filename,
+                self.text_pos as u64,
+                self.text_len.to_usize(),
+            )?;
             let search_args = SufrSearchArgs {
                 text: &self.text,
-                file: search_file,
+                text_len: self.text_len.to_usize(),
+                text_file,
+                file: suffix_array_file,
                 suffix_array: &self.suffix_array_mem,
                 rank: &self.suffix_array_rank_mem,
-                query_low_memory: args.low_memory,
+                query_low_memory: args.low_memory.clone(),
                 len_suffixes: self.len_suffixes.to_usize(),
                 sort_type: &self.sort_type,
                 max_query_len: args.max_query_len,
@@ -612,7 +646,7 @@ mod test {
         sufr_file::SufrFile,
         types::{
             ExtractOptions, ExtractResult, ExtractSequence, LocatePosition,
-            LocateResult, SearchOptions,
+            LocateResult, LowMemoryUsage, SearchOptions,
         },
     };
     use anyhow::Result;
@@ -621,12 +655,13 @@ mod test {
     #[test]
     fn test_extract() -> Result<()> {
         // cargo run -- ex data/expected/1.sufr AC GT XX
-        let mut sufr_file: SufrFile<u32> = SufrFile::read("../data/expected/1.sufr")?;
+        let mut sufr_file: SufrFile<u32> =
+            SufrFile::read("../data/expected/1.sufr", false)?;
 
         let opts = ExtractOptions {
             queries: vec!["AC".to_string(), "GT".to_string(), "XX".to_string()],
             max_query_len: None,
-            low_memory: false,
+            low_memory: None,
             prefix_len: Some(1),
             suffix_len: Some(3),
         };
@@ -710,13 +745,13 @@ mod test {
         // 14   8: BBABAB#
 
         let mut sufr_file: SufrFile<u32> =
-            SufrFile::read("../data/expected/abba.sufr")?;
+            SufrFile::read("../data/expected/abba.sufr", false)?;
 
         for val in &[true, false] {
             let args = SearchOptions {
                 queries: vec!["A".to_string()],
                 max_query_len: None,
-                low_memory: *val,
+                low_memory: val.then_some(LowMemoryUsage::Low),
                 find_suffixes: true,
             };
             let res = sufr_file.locate(args);
@@ -781,7 +816,7 @@ mod test {
             let args = SearchOptions {
                 queries: vec!["B".to_string()],
                 max_query_len: None,
-                low_memory: *val,
+                low_memory: val.then_some(LowMemoryUsage::Low),
                 find_suffixes: true,
             };
             let res = sufr_file.locate(args);
@@ -846,7 +881,7 @@ mod test {
             let args = SearchOptions {
                 queries: vec!["ABAB".to_string()],
                 max_query_len: None,
-                low_memory: *val,
+                low_memory: val.then_some(LowMemoryUsage::Low),
                 find_suffixes: true,
             };
             let res = sufr_file.locate(args);
@@ -893,7 +928,7 @@ mod test {
             let args = SearchOptions {
                 queries: vec!["ABABB".to_string()],
                 max_query_len: None,
-                low_memory: *val,
+                low_memory: val.then_some(LowMemoryUsage::Low),
                 find_suffixes: true,
             };
             let res = sufr_file.locate(args);
@@ -919,7 +954,7 @@ mod test {
             let args = SearchOptions {
                 queries: vec!["BBBB".to_string()],
                 max_query_len: None,
-                low_memory: *val,
+                low_memory: val.then_some(LowMemoryUsage::Low),
                 find_suffixes: true,
             };
             let res = sufr_file.locate(args);
@@ -944,7 +979,7 @@ mod test {
     #[test]
     fn test_file_access() -> Result<()> {
         let input_file = "../data/expected/abba.sufr";
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(input_file)?;
+        let mut sufr_file: SufrFile<u32> = SufrFile::read(input_file, false)?;
         let suf_by_rank = [
             14, //  0: #
             0,  //  1: AABABABABBABAB#
