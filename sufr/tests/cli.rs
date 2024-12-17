@@ -50,6 +50,7 @@ struct LocateOptions {
     queries: Vec<String>,
     absolute: bool,
     low_memory: bool,
+    max_query_len: Option<usize>
 }
 
 // --------------------------------------------------
@@ -843,11 +844,14 @@ fn locate(filename: &str, opts: LocateOptions, expected_file: &str) -> Result<()
         args.push("-l".to_string());
     }
 
+    if let Some(max_query_len) = opts.max_query_len {
+        args.push("-m".to_string());
+        args.push(max_query_len.to_string());
+    }
+
     for query in opts.queries {
         args.push(query.to_string());
     }
-
-    //dbg!(Command::cargo_bin(PRG)?.args(&args));
 
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
     assert!(output.status.success());
@@ -878,6 +882,7 @@ fn locate_seq1_relative() -> Result<()> {
             queries: vec!["AC".to_string(), "GT".to_string()],
             absolute: false,
             low_memory: false,
+            max_query_len: None,
         },
         "../data/expected/locate1.out",
     )
@@ -889,12 +894,14 @@ fn locate_seq1_absolute() -> Result<()> {
     // cargo run -- lo data/expected/2.sufr AC GT -a
     // AC 13 4 9 0
     // GT 15 6 11 2
+
     locate(
         SUFR2,
         LocateOptions {
             queries: vec!["AC".to_string(), "GT".to_string()],
             absolute: true,
             low_memory: false,
+            max_query_len: None,
         },
         "../data/expected/locate-abs.out",
     )
@@ -913,6 +920,7 @@ fn locate_uniprot() -> Result<()> {
     // GSGLSLLSD
     // sp|Q6GZW6|009L_FRG3G 394
     // //
+
     locate(
         "../data/expected/uniprot.sufr",
         LocateOptions {
@@ -923,6 +931,7 @@ fn locate_uniprot() -> Result<()> {
             ],
             absolute: false,
             low_memory: false,
+            max_query_len: None,
         },
         "../data/expected/uniprot-search1.out",
     )
@@ -974,8 +983,30 @@ fn locate_uniprot_masked() -> Result<()> {
             queries: vec!["RNEL".to_string(), "DTPT".to_string(), "GSGL".to_string()],
             absolute: false,
             low_memory: false,
+            max_query_len: None,
         },
         "../data/expected/uniprot-search-masked.out",
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_uniprot_masked_max_query_len() -> Result<()> {
+    // cargo run -- lo data/expected/uniprot-masked.sufr -m 3 RNELNNEEA DTPTNCPT GSGLSLLSD
+
+    locate(
+        "../data/expected/uniprot-masked.sufr",
+        LocateOptions {
+            queries: vec![
+                "RNELNNEEA".to_string(),
+                "DTPTNCPT".to_string(),
+                "GSGLSLLSD".to_string(),
+            ],
+            absolute: false,
+            low_memory: false,
+            max_query_len: Some(3),
+        },
+        "../data/expected/uniprot-search-masked-mql-3.out",
     )
 }
 
@@ -984,12 +1015,14 @@ fn locate_uniprot_masked() -> Result<()> {
 fn locate_uniprot_masked_absolute() -> Result<()> {
     // cargo run -- lo data/expected/uniprot-masked.sufr RNEL -a
     // RNEL 54791 46515 37970 62005 52278 6386 4124
+
     locate(
         "../data/expected/uniprot-masked.sufr",
         LocateOptions {
             queries: vec!["RNEL".to_string()],
             absolute: true,
             low_memory: false,
+            max_query_len: None,
         },
         "../data/expected/uniprot-search-masked-absolute.out",
     )
@@ -1009,6 +1042,7 @@ fn locate_long_dna_low_memory() -> Result<()> {
     // GGATGAAGAAAAGCA
     // Seq1 1026
     // //
+
     locate(
         "../data/expected/long_dna_sequence.sufr",
         LocateOptions {
@@ -1019,8 +1053,40 @@ fn locate_long_dna_low_memory() -> Result<()> {
             ],
             absolute: false,
             low_memory: true,
+            max_query_len: None,
         },
         "../data/expected/locate_long_dna.out",
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_long_dna_max_query_len() -> Result<()> {
+    // cargo run -- lo data/expected/long_dna_sequence.sufr CATGTTGTCACG -m 6
+    // 
+    // CATGTTGTCACG
+    // Seq1 2566,11056,18444
+    // //
+    // CCATGGGAC
+    // Seq1 3014
+    // //
+    // GGATGAAGAAAAGCA
+    // Seq1 1026,2905,11253,11508,12250,12624,18465
+    // //
+ 
+    locate(
+        "../data/expected/long_dna_sequence.sufr",
+        LocateOptions {
+            queries: vec![
+                "CATGTTGTCACG".to_string(),
+                "CCATGGGAC".to_string(),
+                "GGATGAAGAAAAGCA".to_string(),
+            ],
+            absolute: false,
+            low_memory: true,
+            max_query_len: Some(6),
+        },
+        "../data/expected/locate_long_dna_mql_6.out",
     )
 }
 
