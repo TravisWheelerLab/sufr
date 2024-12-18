@@ -261,8 +261,8 @@ where
                     query
                         .iter()
                         .skip(skip)
-                        .zip(self.text.get(text_start..text_end).unwrap())
-                        .map_while(|(a, b)| (a == b).then_some(a))
+                        .zip(self.get_text_range(text_start..text_end).unwrap())
+                        .map_while(|(a, b)| (a == &b).then_some(a))
                         .count()
                         + skip
                 };
