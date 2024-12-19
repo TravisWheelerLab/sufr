@@ -220,7 +220,7 @@ where
         suffix_pos: usize,
         skip: usize,
     ) -> Comparison {
-        //let end = min(suffix_pos + query.len(), self.text_len);
+        let end = min(suffix_pos + query.len(), self.text_len);
         //eprintln!(
         //    "\nskip {skip} query {:?} suffix {suffix_pos} = {:?} \
         //    max_query_len {:?}",
@@ -232,7 +232,7 @@ where
         //    ),
         //    self.max_query_len,
         //);
-        //eprintln!("sort_type {:?}", self.sort_type);
+        //eprintln!("sort_type {:?} mem {:?}", self.sort_type, self.query_low_memory);
 
         let (lcp, max_query_len) = match &self.sort_type {
             SuffixSortType::MaxQueryLen(mql) => {
@@ -347,6 +347,7 @@ where
     // --------------------------------------------------
     pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
         match self.query_low_memory {
+            // this is too expensive, copies loooooong stretches of text into vec
             Some(LowMemoryUsage::VeryLow) => self.text_file.get_range(pos),
             _ => Ok(self.text.get(pos).expect("foo").to_vec()),
         }
