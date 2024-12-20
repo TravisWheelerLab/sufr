@@ -220,7 +220,7 @@ where
         suffix_pos: usize,
         skip: usize,
     ) -> Comparison {
-        let end = min(suffix_pos + query.len(), self.text_len);
+        //let end = min(suffix_pos + query.len(), self.text_len);
         //eprintln!(
         //    "\nskip {skip} query {:?} suffix {suffix_pos} = {:?} \
         //    max_query_len {:?}",
@@ -255,7 +255,7 @@ where
                     let text_end = if max_query_len > 0 {
                         min(self.text_len, text_start + max_query_len)
                     } else {
-                        self.text_len
+                        min(self.text_len, text_start + query.len())
                     };
 
                     query
@@ -294,7 +294,9 @@ where
                         skip + seed_mask.positions[skip..skip + len]
                             .iter()
                             .take_while(|&offset| {
-                                query[*offset] == self.text[suffix_pos + offset]
+                                self.text
+                                    .get(suffix_pos + offset)
+                                    .map_or(false, |&val| query[*offset] == val)
                             })
                             .count()
                     } else {
