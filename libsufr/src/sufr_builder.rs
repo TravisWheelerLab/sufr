@@ -14,6 +14,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{BufWriter, Seek, SeekFrom, Write},
     mem,
+    ops::Range,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Instant,
@@ -55,6 +56,7 @@ where
     pub sort_type: SuffixSortType,
     pub partitions: Vec<Partition<T>>,
     pub sequence_delimiter: u8,
+    pub n_ranges: Vec<Range<usize>>,
 }
 
 // --------------------------------------------------
@@ -67,6 +69,7 @@ where
             .text
             .iter()
             .map(|b| {
+                // Check for lowercase
                 if (97..=122).contains(b) {
                     if args.ignore_softmask {
                         b'N'
@@ -92,6 +95,28 @@ where
             SuffixSortType::MaxQueryLen(args.max_query_len.unwrap_or(0))
         };
 
+        let mut n_ranges: Vec<Range<usize>> = vec![];
+        if args.allow_ambiguity {
+            let mut n_start: Option<usize> = None;
+            let min_n = 1000;
+            let now = Instant::now();
+            for (i, &byte) in text.iter().enumerate() {
+                if byte == b'N' {
+                    if n_start.is_none() {
+                        n_start = Some(i);
+                    }
+                } else {
+                    if let Some(prev) = n_start {
+                        if i - prev >= min_n {
+                            n_ranges.push(prev..i);
+                        }
+                    }
+                    n_start = None;
+                }
+            }
+            info!("Scanned for runs of Ns in {:?}", now.elapsed());
+        }
+
         let mut sa = SufrBuilder {
             version: OUTFILE_VERSION,
             is_dna: args.is_dna,
@@ -110,6 +135,7 @@ where
             headers: args.headers,
             partitions: vec![],
             sequence_delimiter: args.sequence_delimiter,
+            n_ranges,
         };
         sa.sort(args.num_partitions, args.random_seed)?;
         Ok(sa)
@@ -122,6 +148,24 @@ where
             .get(pos..)
             .map(|v| String::from_utf8(v.to_vec()).unwrap())
             .unwrap()
+    }
+
+    // --------------------------------------------------
+    fn find_n_run(&self, suffix: usize) -> Option<usize> {
+        let res = self.n_ranges.binary_search_by(|range| {
+            if range.contains(&suffix) {
+                Ordering::Equal
+            } else if range.start < suffix {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        });
+
+        match res {
+            Ok(i) => Some(self.n_ranges[i].end),
+            _ => None,
+        }
     }
 
     // --------------------------------------------------
@@ -158,26 +202,36 @@ where
                 }
             }
             SuffixSortType::MaxQueryLen(max_query_len) => {
-                let text_len = self.text_len.to_usize();
-                let len = if max_query_len > &0 {
-                    *max_query_len
-                } else {
-                    len.to_usize()
-                };
-                let start1 = start1.to_usize() + skip;
-                let start2 = start2.to_usize() + skip;
-                let end1 = min(start1 + len, text_len);
-                let end2 = min(start2 + len, text_len);
-                unsafe {
-                    T::from_usize(
-                        skip + (start1..end1)
-                            .zip(start2..end2)
-                            .take_while(|(a, b)| {
-                                self.text.get_unchecked(*a)
-                                    == self.text.get_unchecked(*b)
-                            })
-                            .count(),
-                    )
+                match (
+                    &self.find_n_run(start1.to_usize()),
+                    &self.find_n_run(start2.to_usize()),
+                ) {
+                    // If the two suffixes start in long stretches of Ns
+                    // Then use the min of the end positions
+                    (Some(end1), Some(end2)) => T::from_usize(*min(end1, end2)),
+                    _ => {
+                        let text_len = self.text_len.to_usize();
+                        let len = if max_query_len > &0 {
+                            *max_query_len
+                        } else {
+                            len.to_usize()
+                        };
+                        let start1 = start1.to_usize() + skip;
+                        let start2 = start2.to_usize() + skip;
+                        let end1 = min(start1 + len, text_len);
+                        let end2 = min(start2 + len, text_len);
+                        unsafe {
+                            T::from_usize(
+                                skip + (start1..end1)
+                                    .zip(start2..end2)
+                                    .take_while(|(a, b)| {
+                                        self.text.get_unchecked(*a)
+                                            == self.text.get_unchecked(*b)
+                                    })
+                                    .count(),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -253,11 +307,6 @@ where
         // Randomly select some pivots
         let now = Instant::now();
         let pivot_sa = self.select_pivots(self.text.len(), num_partitions, random_seed);
-        //let pivots: Vec<_> = pivot_sa
-        //    .iter()
-        //    .map(|&v| format!("{v:2} {}", self.string_at(v.to_usize())))
-        //    .collect();
-        //println!(">>> PIVOTS <<<\n{}", pivots.join("\n"));
         let num_pivots = pivot_sa.len();
         info!(
             "Selected {num_pivots} pivot{} in {:?}",
