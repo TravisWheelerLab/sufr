@@ -152,20 +152,18 @@ where
 
     // --------------------------------------------------
     fn find_n_run(&self, suffix: usize) -> Option<usize> {
-        let res = self.n_ranges.binary_search_by(|range| {
-            if range.contains(&suffix) {
-                Ordering::Equal
-            } else if range.start < suffix {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        });
-
-        match res {
-            Ok(i) => Some(self.n_ranges[i].end),
-            _ => None,
-        }
+        self.n_ranges
+            .binary_search_by(|range| {
+                if range.contains(&suffix) {
+                    Ordering::Equal
+                } else if range.start < suffix {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            })
+            .ok()
+            .map(|i| self.n_ranges[i].end)
     }
 
     // --------------------------------------------------
