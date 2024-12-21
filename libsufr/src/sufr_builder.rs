@@ -54,7 +54,7 @@ where
     pub headers: Vec<String>,
     pub text: Vec<u8>,
     pub sort_type: SuffixSortType,
-    pub partitions: Vec<Partition<T>>,
+    pub partitions: Vec<Partition>,
     pub sequence_delimiter: u8,
     pub n_ranges: Vec<Range<usize>>,
 }
@@ -168,7 +168,7 @@ where
 
     // --------------------------------------------------
     #[inline(always)]
-    pub fn find_lcp(&self, start1: T, start2: T, len: T, skip: usize) -> T {
+    pub fn find_lcp(&self, start1: usize, start2: usize, len: T, skip: usize) -> T {
         match &self.sort_type {
             SuffixSortType::Mask(mask) => {
                 // Use the seed diff vector to select only the
@@ -177,14 +177,14 @@ where
                     .positions
                     .iter()
                     .skip(skip)
-                    .map(|&offset| start1.to_usize() + offset)
+                    .map(|&offset| start1 + offset)
                     .filter(|&v| v < self.text_len.to_usize());
 
                 let b_vals = mask
                     .positions
                     .iter()
                     .skip(skip)
-                    .map(|&offset| start2.to_usize() + offset)
+                    .map(|&offset| start2 + offset)
                     .filter(|&v| v < self.text_len.to_usize());
 
                 unsafe {
@@ -201,12 +201,12 @@ where
             }
             SuffixSortType::MaxQueryLen(max_query_len) => {
                 match (
-                    &self.find_n_run(start1.to_usize()),
-                    &self.find_n_run(start2.to_usize()),
+                    &self.find_n_run(start1),
+                    &self.find_n_run(start2),
                 ) {
                     // If the two suffixes start in long stretches of Ns
                     // Then use the min of the end positions
-                    (Some(end1), Some(end2)) => T::from_usize(*min(end1, end2)),
+                    (Some(end1), Some(end2)) => T::from_usize(min(end1 - start1, end2 - start2)),
                     _ => {
                         let text_len = self.text_len.to_usize();
                         let len = if max_query_len > &0 {
@@ -214,8 +214,8 @@ where
                         } else {
                             len.to_usize()
                         };
-                        let start1 = start1.to_usize() + skip;
-                        let start2 = start2.to_usize() + skip;
+                        let start1 = start1 + skip;
+                        let start2 = start2 + skip;
                         let end1 = min(start1 + len, text_len);
                         let end2 = min(start2 + len, text_len);
                         unsafe {
@@ -253,7 +253,7 @@ where
             };
 
             let len_lcp = find_lcp_full_offset(
-                self.find_lcp(s1, s2, max_query_len, 0).to_usize(),
+                self.find_lcp(s1.to_usize(), s2.to_usize(), max_query_len, 0).to_usize(),
                 &self.sort_type,
             );
 
@@ -426,7 +426,7 @@ where
             );
         }
 
-        let mut partitions: Vec<Option<Partition<T>>> =
+        let mut partitions: Vec<Option<Partition>> =
             (0..num_partitions).map(|_| None).collect();
 
         partitions.par_iter_mut().enumerate().try_for_each(
@@ -464,8 +464,8 @@ where
                     *partition = Some(Partition {
                         order: partition_num,
                         len,
-                        first_suffix: *part_sa.first().unwrap(),
-                        last_suffix: *part_sa.last().unwrap(),
+                        first_suffix: part_sa.first().unwrap().to_usize(),
+                        last_suffix: part_sa.last().unwrap().to_usize(),
                         sa_path,
                         lcp_path,
                     });
@@ -592,8 +592,8 @@ where
                     // LCP(X_i, Y_j)
                     let (len_lcp, full_len_lcp) = if m < context {
                         let lcp = self.find_lcp(
-                            x[idx_x],
-                            y[idx_y],
+                            x[idx_x].to_usize(),
+                            y[idx_y].to_usize(),
                             context - m,
                             m.to_usize(), // skip
                         );
@@ -863,14 +863,11 @@ where
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct Partition<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct Partition {
     order: usize,
     len: usize,
-    first_suffix: T,
-    last_suffix: T,
+    first_suffix: usize,
+    last_suffix: usize,
     sa_path: PathBuf,
     lcp_path: PathBuf,
 }
