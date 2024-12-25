@@ -5,7 +5,7 @@ We copied many ideas from the original C++ implementation [CaPS-SA](https://gith
 
 ## Setup
 
-* [Install Rust](https://www.rust-lang.org/tools/install)
+* [Install Rust](https://www.rust-lang.org/tools/install)   (this is easy)
 * Run **`cargo install sufr`** to install the CLI
 * Alternately, execute `cargo run` in the source code directory to build a debug version of the program from source
 
