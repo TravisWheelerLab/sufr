@@ -80,7 +80,10 @@ def main() -> None:
     runner(f'{SUFR} create --dna --allow-ambiguity --ignore-softmask '
            f'-o {OUTDIR}/2ns.sufr {SEQ2}')
 
-    runner(f'{SUFR} create --dna -o {OUTDIR}/long_dna_sequence.sufr {LONG}')
+    runner(f'{SUFR} create {LONG} --dna -o {OUTDIR}/long_dna_sequence.sufr')
+
+    runner(f'{SUFR} create {LONG} --dna --allow-ambiguity '
+           f'-o {OUTDIR}/long_dna_sequence_allow_ambiguity.sufr')
 
     runner(f'{SUFR} create -o {OUTDIR}/uniprot.sufr {UNIPROT}')
 

@@ -200,13 +200,12 @@ where
                 }
             }
             SuffixSortType::MaxQueryLen(max_query_len) => {
-                match (
-                    &self.find_n_run(start1),
-                    &self.find_n_run(start2),
-                ) {
+                match (&self.find_n_run(start1), &self.find_n_run(start2)) {
                     // If the two suffixes start in long stretches of Ns
                     // Then use the min of the end positions
-                    (Some(end1), Some(end2)) => T::from_usize(min(end1 - start1, end2 - start2)),
+                    (Some(end1), Some(end2)) => {
+                        T::from_usize(min(end1 - start1, end2 - start2))
+                    }
                     _ => {
                         let text_len = self.text_len.to_usize();
                         let len = if max_query_len > &0 {
@@ -253,7 +252,8 @@ where
             };
 
             let len_lcp = find_lcp_full_offset(
-                self.find_lcp(s1.to_usize(), s2.to_usize(), max_query_len, 0).to_usize(),
+                self.find_lcp(s1.to_usize(), s2.to_usize(), max_query_len, 0)
+                    .to_usize(),
                 &self.sort_type,
             );
 

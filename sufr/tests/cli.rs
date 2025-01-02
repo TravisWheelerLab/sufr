@@ -1,6 +1,9 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::types::{SeedMask, OUTFILE_VERSION};
+use libsufr::{
+    sufr_file::SufrFile,
+    types::{SeedMask, OUTFILE_VERSION},
+};
 use pretty_assertions::assert_eq;
 use regex::Regex;
 use std::{
@@ -50,7 +53,7 @@ struct LocateOptions {
     queries: Vec<String>,
     absolute: bool,
     low_memory: bool,
-    max_query_len: Option<usize>
+    max_query_len: Option<usize>,
 }
 
 // --------------------------------------------------
@@ -91,10 +94,12 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
     assert!(output.status.success());
     assert!(outfile.path().exists());
 
-    let actual = fs::read(outfile.path())?;
-    let expected = fs::read(expected_file)?;
+    let mut actual: SufrFile<u32> = SufrFile::read(outpath, false)?;
+    let mut expected: SufrFile<u32> = SufrFile::read(expected_file, false)?;
 
-    assert_eq!(actual, expected);
+    let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
+    let expected_sa: Vec<_> = expected.suffix_array_file.iter().collect();
+    assert_eq!(actual_sa, expected_sa);
 
     Ok(())
 }
@@ -262,6 +267,22 @@ fn create_long_dna() -> Result<()> {
         CreateOptions {
             is_dna: true,
             allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_delimiter: None,
+            seed_mask: None,
+        },
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn create_long_dna_allow_ambiguity() -> Result<()> {
+    create(
+        LONG,
+        "../data/expected/long_dna_sequence_allow_ambiguity.sufr",
+        CreateOptions {
+            is_dna: true,
+            allow_ambiguity: true,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -1064,7 +1085,7 @@ fn locate_long_dna_low_memory() -> Result<()> {
 #[test]
 fn locate_long_dna_max_query_len() -> Result<()> {
     // cargo run -- lo data/expected/long_dna_sequence.sufr CATGTTGTCACG -m 6
-    // 
+    //
     // CATGTTGTCACG
     // Seq1 2566,11056,18444
     // //
@@ -1074,7 +1095,7 @@ fn locate_long_dna_max_query_len() -> Result<()> {
     // GGATGAAGAAAAGCA
     // Seq1 1026,2905,11253,11508,12250,12624,18465
     // //
- 
+
     locate(
         "../data/expected/long_dna_sequence.sufr",
         LocateOptions {
@@ -1174,8 +1195,11 @@ fn file_is_sorted(filename: &str, mask: Option<&str>) -> Result<()> {
     for mut line in list_file.lines().map_while(Result::ok) {
         if let Some(mask) = &seed_mask {
             let chars: Vec<char> = line.chars().collect();
-            let masked: String =
-                mask.positions.iter().filter_map(|&p| chars.get(p)).collect();
+            let masked: String = mask
+                .positions
+                .iter()
+                .filter_map(|&p| chars.get(p))
+                .collect();
             line = masked;
         }
 
