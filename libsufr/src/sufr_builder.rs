@@ -822,6 +822,7 @@ where
             let buffer = fs::read(&partition.sa_path)?;
             bytes_out += &buffer.len();
             file.write_all(&buffer)?;
+            fs::remove_file(&partition.sa_path)?;
         }
 
         let lcp_pos = bytes_out;
@@ -846,6 +847,7 @@ where
                 }
                 file.write_all(vec_to_slice_u8(&lcp))?;
             }
+            fs::remove_file(&partition.lcp_path)?;
         }
 
         // Headers are variable in length so they are at the end
