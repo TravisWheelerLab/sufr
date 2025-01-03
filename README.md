@@ -408,5 +408,5 @@ Run **`cargo test`**.
 ## Authors
 
 * Ken Youens-Clark <kyclark@arizona.edu>
-* Jack Roddy <jroddy@pharmacy.arizona.edu>
+* Jack Roddy <jroddy@arizona.edu>
 * Travis Wheeler <twheeler@arizona.edu>
