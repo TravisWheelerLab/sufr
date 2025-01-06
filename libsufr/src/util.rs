@@ -3,7 +3,7 @@ use crate::types::{
 };
 use anyhow::{anyhow, bail, Result};
 use needletail::parse_fastx_file;
-use std::{fs::File, io::Read, slice};
+use std::{fs::File, io::Read, slice, path::Path};
 
 // --------------------------------------------------
 pub fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
@@ -25,60 +25,6 @@ pub fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
         _ => { lcp }
     }
 }
-
-//pub fn find_lcp_full_offset(lcp: usize, seed_mask_pos: &[usize]) -> usize {
-//    //println!("lcp {lcp} seed mask_pos {seed_mask_pos:?}");
-//    if lcp == 0 || lcp > seed_mask_pos.len() {
-//        lcp
-//    } else {
-//        // E.g., LCP = 1, so get the 0th offset
-//        let offset = seed_mask_pos[lcp - 1];
-//        let next_offset = *seed_mask_pos.get(lcp).unwrap_or(&0);
-//        //println!("offset {offset} next_offset {next_offset}");
-//        if (next_offset > offset) && (next_offset - offset) > 1 {
-//            next_offset
-//        } else {
-//            offset + 1
-//        }
-//    }
-//}
-
-// --------------------------------------------------
-//pub fn seed_mask_difference(positions: &[usize]) -> Vec<usize> {
-//    // Mask: 1001101
-//    // M: [0, 3, 4, 6]
-//    // U: [0, 1, 2, 3]
-//    // D: [0, 2, 2, 3]
-//    positions.iter().enumerate().map(|(i, &m)| m - i).collect()
-//}
-
-// --------------------------------------------------
-//pub fn seed_mask_positions(bytes: &[u8]) -> Vec<usize> {
-//    // b"101" -> [0, 2]
-//    bytes
-//        .iter()
-//        .enumerate()
-//        .filter_map(|(i, &b)| (b == 1).then_some(i))
-//        .collect()
-//}
-
-// --------------------------------------------------
-//pub fn parse_seed_mask(mask: &str) -> Vec<u8> {
-//    mask.as_bytes()
-//        .iter()
-//        .flat_map(|b| match b {
-//            b'1' => Some(1),
-//            b'0' => Some(0),
-//            _ => None,
-//        })
-//        .collect()
-//}
-
-// --------------------------------------------------
-//pub fn valid_seed_mask(mask: &str) -> bool {
-//    let seed_re = Regex::new("^1+0[01]*1$").unwrap();
-//    seed_re.is_match(mask)
-//}
 
 // --------------------------------------------------
 pub fn vec_to_slice_u8<T>(vec: &[T]) -> &[u8]
@@ -126,10 +72,10 @@ pub fn read_text_length(filename: &str) -> Result<usize> {
 // Utility function to read FASTA/Q file for sequence
 // data needed by SufrBuilder
 pub fn read_sequence_file(
-    filename: &str,
+    path: &Path,
     sequence_delimiter: u8,
 ) -> Result<SequenceFileData> {
-    let mut reader = parse_fastx_file(filename)?;
+    let mut reader = parse_fastx_file(path)?;
     let mut seq: Vec<u8> = Vec::with_capacity(u32::MAX as usize);
     let mut headers: Vec<String> = vec![];
     let mut start_positions: Vec<usize> = vec![];
@@ -193,12 +139,13 @@ mod tests {
     };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
+    use std::path::Path;
 
     #[test]
     fn test_read_sequence_file() -> Result<()> {
-        let file = "../data/inputs/2.fa";
+        let file = Path::new("../data/inputs/2.fa");
         let sequence_delimiter = b'N';
-        let res = read_sequence_file(file, sequence_delimiter);
+        let res = read_sequence_file(&file, sequence_delimiter);
         assert!(res.is_ok());
         let data = res.unwrap();
         assert_eq!(data.seq, b"ACGTacgtNacgtACGT$");

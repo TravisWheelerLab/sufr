@@ -437,6 +437,7 @@ where
                     let buffer = fs::read(path)?;
                     let mut part: Vec<T> = slice_u8_to_vec(&buffer, *len);
                     part_sa.append(&mut part);
+                    fs::remove_file(path)?;
                 }
 
                 let len = part_sa.len();
@@ -920,7 +921,7 @@ where
         self.len += 1;
         if self.len == self.capacity {
             self.write()?;
-            // Reset
+            // Reset; TODO: Is this necessary? Speed up if I skip?
             for i in 0..self.len {
                 self.vals[i] = T::default();
             }

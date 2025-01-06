@@ -53,7 +53,6 @@ pub enum Command {
 
     // Check sufr file for correctness
     //Check(CheckArgs),
-
     /// Extract suffixes from a sufr file
     Extract(ExtractArgs),
 
@@ -391,7 +390,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     // Read sequence input
     let now = Instant::now();
     let sequence_delimiter = args.sequence_delimiter as u8;
-    let seq_data = read_sequence_file(&args.input, sequence_delimiter)?;
+    let seq_data = read_sequence_file(&Path::new(&args.input), sequence_delimiter)?;
     let text_len = seq_data.seq.len();
     let num_fmt = NumberFormat::new();
     info!(

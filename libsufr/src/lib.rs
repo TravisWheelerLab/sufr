@@ -15,13 +15,14 @@ mod tests {
         util::read_sequence_file,
     };
     use anyhow::Result;
+    use std::path::Path;
     use tempfile::NamedTempFile;
 
     #[test]
     fn test_write_read_suffix_file_32() -> Result<()> {
-        let seq_file = "../data/inputs/2.fa";
+        let seq_file = Path::new("../data/inputs/2.fa");
         let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let seq_data = read_sequence_file(&seq_file, sequence_delimiter)?;
         let args = SufrBuilderArgs {
             text: seq_data.seq,
             max_query_len: None,
@@ -66,9 +67,9 @@ mod tests {
 
     #[test]
     fn test_write_read_suffix_file_64() -> Result<()> {
-        let seq_file = "../data/inputs/1.fa";
+        let seq_file = Path::new("../data/inputs/1.fa");
         let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let seq_data = read_sequence_file(&seq_file, sequence_delimiter)?;
         let args = SufrBuilderArgs {
             text: seq_data.seq,
             max_query_len: None,
@@ -112,9 +113,9 @@ mod tests {
 
     #[test]
     fn test_subsample_suffix_array() -> Result<()> {
-        let seq_file = "../data/inputs/smol.fa";
+        let seq_file = Path::new("../data/inputs/smol.fa");
         let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let seq_data = read_sequence_file(&seq_file, sequence_delimiter)?;
         let builder_args = SufrBuilderArgs {
             text: seq_data.seq,
             max_query_len: None,
@@ -189,9 +190,9 @@ mod tests {
 
     #[test]
     fn test_spaced_seeds_1() -> Result<()> {
-        let seq_file = "../data/inputs/mostlya1.fa";
+        let seq_file = Path::new("../data/inputs/mostlya1.fa");
         let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let seq_data = read_sequence_file(&seq_file, sequence_delimiter)?;
         let builder_args = SufrBuilderArgs {
             text: seq_data.seq,
             max_query_len: None,
@@ -232,9 +233,9 @@ mod tests {
 
     #[test]
     fn test_spaced_seeds_2() -> Result<()> {
-        let seq_file = "../data/inputs/mostlya2.fa";
+        let seq_file = Path::new("../data/inputs/mostlya2.fa");
         let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let seq_data = read_sequence_file(&seq_file, sequence_delimiter)?;
         let builder_args = SufrBuilderArgs {
             text: seq_data.seq,
             max_query_len: None,
@@ -288,9 +289,9 @@ mod tests {
     // --------------------------------------------------
     #[test]
     fn test_spaced_seeds_3() -> Result<()> {
-        let seq_file = "../data/inputs/spaced_input.fa";
+        let seq_file = Path::new("../data/inputs/spaced_input.fa");
         let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let seq_data = read_sequence_file(&seq_file, sequence_delimiter)?;
         let builder_args = SufrBuilderArgs {
             text: seq_data.seq,
             max_query_len: None,
