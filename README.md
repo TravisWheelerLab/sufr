@@ -17,7 +17,6 @@ Usage: sufr [OPTIONS] [COMMAND]
 
 Commands:
   create     Create sufr file
-  check      Check sufr file for correctness
   extract    Extract suffixes from a sufr file
   list       List the suffix array from a sufr file
   count      Count occurrences of sequences in a sufr file
@@ -45,7 +44,6 @@ Usage: sufr [OPTIONS] [COMMAND]
 
 Commands:
   create     Create sufr file
-  check      Check sufr file for correctness
   extract    Extract suffixes from a sufr file
   list       List the suffix array from a sufr file
   count      Count occurrences of sequences in a sufr file
@@ -85,10 +83,12 @@ Options:
   -a, --allow-ambiguity             Allow suffixes starting with ambiguity codes
   -i, --ignore-softmask             Ignore suffixes in soft-mask/lowercase regions
   -D, --sequence-delimiter <DELIM>  Character to separate sequences [default: %]
+  -s, --seed-mask <MASK>            Spaced seeds mask
+  -r, --random-seed <RANDSEED>      Random seed [default: 42]
   -h, --help                        Print help
 ```
 
-The resulting output file will contain:
+The resulting binary-encoded output file will contain:
 
 * metadata about the input
 * the entire input text encoded as `u8` (bytes)
@@ -98,7 +98,7 @@ The resulting output file will contain:
 The input file is a required positional argument and should be a FASTA/Q-formatted file with one or more sequences.
 
 ```
-$ cat sufr/tests/inputs/2.fa
+$ cat data/inputs/2.fa
 >ABC
 acgtacgt
 >DEF
@@ -119,14 +119,14 @@ The `sufr` CLI will create an output file containing a binary-encoded representa
 For instance, with the _1.fa_ file, the default output file will be _1.sufr_:
 
 ```
-$ sufr --log debug create sufr/tests/inputs/1.fa -n 2 --dna
-[2024-11-22T22:28:45Z INFO  sufr] Using 8 threads
-[2024-11-22T22:28:45Z INFO  sufr] Read input of len 11 in 1.0535ms
-[2024-11-22T22:28:45Z INFO  libsufr::sufr_builder] Selected 1 pivot in 59.25µs
-[2024-11-22T22:28:45Z INFO  libsufr::sufr_builder] Wrote 9 unsorted suffixes to partition in 356.833µs
-[2024-11-22T22:28:45Z INFO  libsufr::sufr_builder] Sorted 9 suffixes in 2 partitions (avg 4) in 834.542µs
-[2024-11-22T22:28:45Z INFO  sufr] Wrote 164 bytes to '1.sufr' in 593.875µs
-[2024-11-22T22:28:45Z INFO  sufr] Total time: 4.518709ms
+$ sufr --log debug create data/inputs/1.fa -n 2 --dna
+[2025-01-06T20:28:54Z INFO  sufr] Using 8 threads
+[2025-01-06T20:28:54Z INFO  sufr] Read input of len 11 in 982.625µs
+[2025-01-06T20:28:54Z INFO  libsufr::sufr_builder] Selected 1 pivot in 74.291µs
+[2025-01-06T20:28:54Z INFO  libsufr::sufr_builder] Wrote 9 unsorted suffixes to partition in 469.833µs
+[2025-01-06T20:28:54Z INFO  libsufr::sufr_builder] Sorted 9 suffixes in 2 partitions (avg 4) in 356.833µs
+[2025-01-06T20:28:54Z INFO  sufr] Wrote 172 bytes to '1.sufr' in 422.042µs
+[2025-01-06T20:28:54Z INFO  sufr] Total time: 2.836917ms
 ```
 
 ### Summarize a sufr file
@@ -153,11 +153,11 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | Filename        | 1.sufr           |
 +-----------------+------------------+
-| Modified        | 2024-11-15 09:21 |
+| Modified        | 2025-01-06 13:28 |
 +-----------------+------------------+
-| File Size       | 164 bytes        |
+| File Size       | 172 bytes        |
 +-----------------+------------------+
-| File Version    | 4                |
+| File Version    | 6                |
 +-----------------+------------------+
 | DNA             | true             |
 +-----------------+------------------+
@@ -167,7 +167,7 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | Text Length     | 11               |
 +-----------------+------------------+
-| Num Suffixes    | 9                |
+| Len Suffixes    | 9                |
 +-----------------+------------------+
 | Max query len   | 0                |
 +-----------------+------------------+
@@ -177,32 +177,6 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | Headers         | 1                |
 +-----------------+------------------+
-```
-
-### Check a suffix array
-
-Use the `check` (`ch`) action to verify the order of the suffix array:
-
-```
-$ sufr check -h
-Check sufr file for correctness
-
-Usage: sufr check [OPTIONS] <SUFR>
-
-Arguments:
-  <SUFR>  Sufr file
-
-Options:
-  -v, --verbose  List errors
-  -h, --help     Print help
-```
-
-For instance:
-
-```
-$ sufr check 1.sufr
-Checked 9 suffixes, found 0 errors in suffix array.
-Finished checking in 1.112417ms.
 ```
 
 ### Listing suffixes in a sufr file
@@ -220,47 +194,48 @@ Arguments:
   [RANK]...  Ranks of suffixes to show
 
 Options:
-  -l, --len <LEN>     Length of suffixes to show
-  -o, --output <OUT>  Output
-  -h, --help          Print help
+  -r, --show-rank        Show rank column
+  -s, --show-suffix      Show suffix position column
+  -p, --show-lcp         Show LCP column
+  -v, --very-low-memory  Very low memory
+  -n, --len <LEN>        Length of suffixes to show
+  -o, --output <OUT>     Output
+  -h, --help             Print help
 ```
 
-For example, to view the _1.sufr_ file:
+For example, to view the _1.sufr_ file including rank, suffix, and LCP:
 
 ```
-$ sufr ls 1.sufr
- R  S  L
- 0 10  0: $
- 1  6  0: ACGT$
- 2  0  4: ACGTNNACGT$
- 3  7  0: CGT$
- 4  1  3: CGTNNACGT$
- 5  8  0: GT$
- 6  2  2: GTNNACGT$
- 7  9  0: T$
- 8  3  1: TNNACGT$
+$ sufr ls -rsp 1.sufr
+ 0 10  0 $
+ 1  6  0 ACGT$
+ 2  0  4 ACGTNNACGT$
+ 3  7  0 CGT$
+ 4  1  3 CGTNNACGT$
+ 5  8  0 GT$
+ 6  2  2 GTNNACGT$
+ 7  9  0 T$
+ 8  3  1 TNNACGT$
 ```
 
 An optional positional argument for the _ranks_ allows you to select only a portion:
 
 ```
 $ sufr ls 1.sufr 0-5
- R  S  L
- 0 10  0: $
- 1  6  0: ACGT$
- 2  0  4: ACGTNNACGT$
- 3  7  0: CGT$
- 4  1  3: CGTNNACGT$
- 5  8  0: GT$
+$
+ACGT$
+ACGTNNACGT$
+CGT$
+CGTNNACGT$
+GT$
 ```
 
 As suffixes can get quite long, use the `-l|--len` option to restrict the length of the shown suffix:
 
 ```
-$ sufr ls 1.sufr 2-3 -l 3
- R  S  L
- 2  0  4: ACG
- 3  7  0: CGT
+$ sufr ls 1.sufr 2-3 -n 3
+ACG
+CGT
 ```
 
 ### Count occurrences of suffixes
@@ -281,10 +256,12 @@ Options:
   -m, --max-query-len <LEN>  Maximum query length
   -o, --output <OUT>         Output
   -l, --low-memory           Low-memory
+  -v, --very-low-memory      Very low memory
   -h, --help                 Print help
 ```
 
 The `-l|--low-memory` option will force the suffixes to be read from disk rather than loaded into memory. 
+The `-v|--very-low-memory` option will also force the text to be read from disk rather than loaded into memory. 
 The time to load a large index (e.g., human genome) into memory may take longer than the actual search, so you may find this is faster for only a few queries but slower for a large number.
 
 For example:
@@ -313,9 +290,10 @@ Arguments:
   <QUERY>...  Query
 
 Options:
-  -m, --max-query-len <LEN>  Maximum query length
   -o, --output <OUT>         Output
-  -l, --low-memory           Low-memory
+  -m, --max-query-len <LEN>  Maximum query length
+  -l, --low-memory           Low memory
+  -v, --very-low-memory      Very low memory
   -a, --abs                  Show absolute position in text
   -h, --help                 Print help
 ```
@@ -323,7 +301,7 @@ Options:
 For instance, given the _3.fa_ input:
 
 ```
-$ cat sufr/tests/inputs/3.fa
+$ cat data/inputs/3.fa
 >1
 AGCTTTTCATTCTGACTGCAACGG
 GCAATANNNNNNNNNNTGTCTC
@@ -337,7 +315,7 @@ CCTGCCGTGAGTAAAT
 The suffix "ACT" is found at position 14 in sequence _1_ and 16 in sequence _3_, "GT" is found at position 20 in sequence _3_, and "X" is not found and is printed to `STDERR`:
 
 ```
-$ sufr lo 3.sufr ACT GTT
+$ sufr lo data/expected/3.sufr ACT GTT X
 ACT
 1 14
 3 16
@@ -362,22 +340,24 @@ Or use the `-l|--low-memory` option to search the suffix array on disk, which is
 
 ### Extract suffixes
 
-Use the `extract` (`ex`) to get suffixes by their position in the text:
+Use the `extract` (`ex`) to print suffixes in FASTA format:
 
 ```
 $ sufr ex -h
 Extract suffixes from a sufr file
 
-Usage: sufr extract [OPTIONS] <SUFR> [SUFFIX]...
+Usage: sufr extract [OPTIONS] <SUFR> <QUERY>...
 
 Arguments:
-  <SUFR>       Sufr file
-  [SUFFIX]...  Suffixes to extract
+  <SUFR>      Sufr file
+  <QUERY>...  Query
 
 Options:
+  -m, --max-query-len <LEN>      Maximum query length
+  -l, --low-memory               Low memory
+  -v, --very-low-memory          Very low memory
   -p, --prefix-len <PREFIX_LEN>  Prefix length
   -s, --suffix-len <SUFFIX_LEN>  Suffix length
-  -l, --lcp                      Show LCP
   -o, --output <OUT>             Output
   -h, --help                     Print help
 ```
@@ -386,20 +366,28 @@ Using the preceding `locate` results, I can extract the suffixes at those positi
 As the suffixes can get quite long, I will use the `-s|--suffix-len` option to limit them to 15bp:
 
 ```
-$ sufr ex 3.sufr 14 88 92 -s 15
+$ sufr ex data/expected/3.sufr ACT GTT -s 15
+>1:14-29 ACT 0
 ACTGCAACGGGCAAT
+>3:16-31 ACT 0
 ACTGGTTACCTGCCG
+>3:20-35 GTT 0
 GTTACCTGCCGTGAG
 ```
 
 Combine this with the `-p|--prefix-len` to control the amount of preceding text, which might be useful when identifying alignment seeds:
 
 ```
-$ sufr ex 3.sufr 14 88 92 -s 15 -p 5
-TTCTGACTGCAACGGGCAAT
-TCTGAACTGGTTACCTGCCG
-AACTGGTTACCTGCCGTGAG
+$ sufr ex data/expected/3.sufr ACT GTT -s 15 -p 3
+>1:11-29 ACT 3
+CTGACTGCAACGGGCAAT
+>3:13-31 ACT 3
+TGAACTGGTTACCTGCCG
+>3:17-35 GTT 3
+CTGGTTACCTGCCGTGAG
 ```
+
+The FASTA header contains the matching sequence ID, a colon, the start/stop position of the extracted sequence, followed by the query, and finally the location of the query in the extracted sequence, which is only relevant if you included a prefix.
 
 ## Testing
 
