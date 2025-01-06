@@ -40,10 +40,11 @@ fn run(args: Cli) -> Result<()> {
         .unwrap();
 
     match &args.command {
-        Some(Command::Check(args)) => {
-            sufr::check(args)?;
-            Ok(())
-        }
+        // TODO: enable once "check" is usable
+        //Some(Command::Check(args)) => {
+        //    sufr::check(args)?;
+        //    Ok(())
+        //}
         Some(Command::Count(args)) => {
             sufr::count(args)?;
             Ok(())

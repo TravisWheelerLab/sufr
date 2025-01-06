@@ -105,20 +105,27 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
 }
 
 // --------------------------------------------------
-fn check(filename: &str) -> Result<()> {
-    let output = Command::cargo_bin(PRG)?
-        .args(["check", filename])
-        .output()
-        .expect("fail");
-
-    assert!(output.status.success());
-
-    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
-
-    assert!(stdout.contains("found 0 errors"));
-
-    Ok(())
-}
+// TODO: revive once check is useful
+//fn check(filename: &str) -> Result<()> {
+//    let output = Command::cargo_bin(PRG)?
+//        .args(["check", filename])
+//        .output()
+//        .expect("fail");
+//
+//    assert!(output.status.success());
+//
+//    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+//
+//    assert!(stdout.contains("found 0 errors"));
+//
+//    Ok(())
+//}
+//
+// --------------------------------------------------
+//#[test]
+//fn check_seq1() -> Result<()> {
+//    check("../data/expected/1.sufr")
+//}
 
 // --------------------------------------------------
 #[test]
@@ -320,12 +327,6 @@ fn create_protein_masked() -> Result<()> {
             seed_mask: Some("10111011".to_string()),
         },
     )
-}
-
-// --------------------------------------------------
-#[test]
-fn check_seq1() -> Result<()> {
-    check("../data/expected/1.sufr")
 }
 
 // --------------------------------------------------

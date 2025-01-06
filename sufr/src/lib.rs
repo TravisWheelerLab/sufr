@@ -51,8 +51,8 @@ pub enum Command {
     /// Create sufr file
     Create(CreateArgs),
 
-    /// Check sufr file for correctness
-    Check(CheckArgs),
+    // Check sufr file for correctness
+    //Check(CheckArgs),
 
     /// Extract suffixes from a sufr file
     Extract(ExtractArgs),
@@ -70,17 +70,17 @@ pub enum Command {
     Summarize(SummarizeArgs),
 }
 
-#[derive(Debug, Parser)]
-#[command(about, alias = "ch")]
-pub struct CheckArgs {
-    /// Sufr file
-    #[arg(value_name = "SUFR")]
-    pub file: String,
-
-    /// List errors
-    #[arg(short, long)]
-    pub verbose: bool,
-}
+//#[derive(Debug, Parser)]
+//#[command(about, alias = "ch")]
+//pub struct CheckArgs {
+//    /// Sufr file
+//    #[arg(value_name = "SUFR")]
+//    pub file: String,
+//
+//    /// List errors
+//    #[arg(short, long)]
+//    pub verbose: bool,
+//}
 
 #[derive(Debug, Parser)]
 #[command(about, alias = "cr")]
@@ -287,47 +287,47 @@ impl ValueEnum for LogLevel {
 }
 
 // --------------------------------------------------
-pub fn check(args: &CheckArgs) -> Result<()> {
-    let text_len = read_text_length(&args.file)? as u64;
-    // TODO: Make sure we always want to avoid holding text?
-    if text_len < u32::MAX as u64 {
-        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file, true)?;
-        _check(sufr_file, args)
-    } else {
-        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file, true)?;
-        _check(sufr_file, args)
-    }
-}
+//pub fn check(args: &CheckArgs) -> Result<()> {
+//    let text_len = read_text_length(&args.file)? as u64;
+//    // TODO: Make sure we always want to avoid holding text?
+//    if text_len < u32::MAX as u64 {
+//        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file, true)?;
+//        _check(sufr_file, args)
+//    } else {
+//        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file, true)?;
+//        _check(sufr_file, args)
+//    }
+//}
 
 // --------------------------------------------------
-fn _check<T>(mut sufr_file: SufrFile<T>, args: &CheckArgs) -> Result<()>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-{
-    let now = Instant::now();
-    let errors = sufr_file.check()?;
-    let num_errors = errors.len();
-    let num_fmt = NumberFormat::new();
-    println!(
-        "Checked {} suffix{}, found {} error{} in suffix array.",
-        num_fmt.format(",.0", sufr_file.len_suffixes.to_usize() as f64),
-        if sufr_file.len_suffixes.to_usize() == 1 {
-            ""
-        } else {
-            "es"
-        },
-        num_fmt.format(",.0", num_errors as f64),
-        if num_errors == 1 { "" } else { "s" },
-    );
-
-    if args.verbose {
-        for err in errors {
-            println!("{err}");
-        }
-    }
-    println!("Finished checking in {:?}.", now.elapsed());
-    Ok(())
-}
+//fn _check<T>(mut sufr_file: SufrFile<T>, args: &CheckArgs) -> Result<()>
+//where
+//    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
+//{
+//    let now = Instant::now();
+//    let errors = sufr_file.check()?;
+//    let num_errors = errors.len();
+//    let num_fmt = NumberFormat::new();
+//    println!(
+//        "Checked {} suffix{}, found {} error{} in suffix array.",
+//        num_fmt.format(",.0", sufr_file.len_suffixes.to_usize() as f64),
+//        if sufr_file.len_suffixes.to_usize() == 1 {
+//            ""
+//        } else {
+//            "es"
+//        },
+//        num_fmt.format(",.0", num_errors as f64),
+//        if num_errors == 1 { "" } else { "s" },
+//    );
+//
+//    if args.verbose {
+//        for err in errors {
+//            println!("{err}");
+//        }
+//    }
+//    println!("Finished checking in {:?}.", now.elapsed());
+//    Ok(())
+//}
 
 // --------------------------------------------------
 pub fn count(args: &CountArgs) -> Result<()> {
