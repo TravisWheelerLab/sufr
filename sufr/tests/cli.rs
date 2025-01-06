@@ -1084,16 +1084,17 @@ fn locate_long_dna_low_memory() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn locate_long_dna_max_query_len() -> Result<()> {
-    // cargo run -- lo data/expected/long_dna_sequence.sufr CATGTTGTCACG -m 6
+    // cargo run -- lo data/expected/long_dna_sequence.sufr \
+    // CATGTTGTCACG CCATGGGAC GGATGAAGAAAAGCA -m 6
     //
     // CATGTTGTCACG
-    // Seq1 2566,11056,18444
+    // Seq1 2566,13056,20444
     // //
     // CCATGGGAC
     // Seq1 3014
     // //
     // GGATGAAGAAAAGCA
-    // Seq1 1026,2905,11253,11508,12250,12624,18465
+    // Seq1 1026,2905,13253,13508,14250,14624,20465
     // //
 
     locate(
