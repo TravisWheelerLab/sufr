@@ -62,7 +62,7 @@ impl SeedMask {
         if mask.is_empty() {
             bail!("Bytes must be 1 or 0");
         }
-        let positions = Self::get_positions(&bytes);
+        let positions = Self::get_positions(bytes);
         let differences = Self::get_differences(&positions);
         let weight = positions.len();
 
