@@ -181,8 +181,12 @@ pub struct ListArgs {
     pub very_low_memory: bool,
 
     /// Length of suffixes to show
-    #[arg(short('n'), long, value_name = "LEN")]
+    #[arg(short, long, value_name = "LEN")]
     pub len: Option<usize>,
+
+    /// Number of suffixes to show
+    #[arg(short, long, value_name = "LEN")]
+    pub number: Option<usize>,
 
     /// Output
     #[arg(short, long, value_name = "OUT")]
@@ -591,31 +595,22 @@ where
         Ok(())
     };
 
+    let number = args.number.unwrap_or(0);
     if ranks.is_empty() {
         for (rank, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
-            //let suffix = suffix.to_usize();
-            //let end = if suffix + suffix_len > text_len {
-            //    text_len
-            //} else {
-            //    suffix + suffix_len
-            //};
-            //let suffix_str = String::from_utf8(sufr_file.text_file.get_range(suffix..end)?)?;
             print(
                 rank,
                 suffix.to_usize(),
                 sufr_file.lcp_file.get(rank).unwrap(),
             )?;
+
+            if number > 0 && rank == number {
+                break;
+            }
         }
     } else {
         for rank in ranks {
             if let Some(suffix) = sufr_file.suffix_array_file.get(rank) {
-                //let suffix = suffix.to_usize();
-                //let end = if suffix + suffix_len > text_len {
-                //    text_len
-                //} else {
-                //    suffix + suffix_len
-                //};
-                //let suffix_str = String::from_utf8(sufr_file.get_text_range(suffix..end)?)?;
                 print(
                     rank,
                     suffix.to_usize(),
