@@ -328,10 +328,13 @@ where
                     || !self.is_dna // Allow anything else if not DNA
                     || (b"ACGT".contains(&val) || self.allow_ambiguity)
                 {
-                    let partition_num = self.upper_bound(T::from_usize(i), &pivot_sa);
+                    let suffix = T::from_usize(i);
+                    let partition_num = self.upper_bound(suffix, &pivot_sa);
                     match builders[partition_num].lock() {
-                        Ok(mut guard) => {
-                            guard.add(T::from_usize(i))?;
+                        Ok(mut partition) => {
+                            if partition.add(suffix).is_err() {
+                                panic!("Unable to write data to disk")
+                            }
                         }
                         Err(e) => panic!("Failed to lock: {e}"),
                     }
@@ -921,10 +924,6 @@ where
         self.len += 1;
         if self.len == self.capacity {
             self.write()?;
-            // Reset; TODO: Is this necessary? Speed up if I skip?
-            for i in 0..self.len {
-                self.vals[i] = T::default();
-            }
             self.len = 0;
         }
 

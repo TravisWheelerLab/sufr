@@ -296,7 +296,7 @@ where
                             .take_while(|&offset| {
                                 self.text
                                     .get(suffix_pos + offset)
-                                    .map_or(false, |&val| query[*offset] == val)
+                                    .is_some_and(|&val| query[*offset] == val)
                             })
                             .count()
                     } else {

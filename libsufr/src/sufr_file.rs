@@ -360,9 +360,7 @@ where
         } else {
             // Do nothing if we've already loaded the correct SA/MQL
             if !self.suffix_array_mem.is_empty()
-                && self
-                    .suffix_array_mem_mql
-                    .map_or(false, |cur_mql| cur_mql == max_query_len)
+                && self.suffix_array_mem_mql == Some(max_query_len)
             {
                 info!("Using existing suffix_array_mem");
                 return Ok(());

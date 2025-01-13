@@ -47,6 +47,7 @@ struct ListOptions {
     show_suffix: bool,
     show_lcp: bool,
     suffix_len: Option<usize>,
+    number: Option<usize>,
 }
 
 struct LocateOptions {
@@ -406,8 +407,6 @@ fn extract(
         args.push(query.to_string());
     }
 
-    dbg!(Command::cargo_bin(PRG)?.args(&args));
-
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
     assert!(output.status.success());
 
@@ -689,8 +688,13 @@ fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
     }
 
     if let Some(len) = opts.suffix_len {
-        args.push("-n".to_string());
+        args.push("-l".to_string());
         args.push(len.to_string());
+    }
+
+    if let Some(num) = opts.number {
+        args.push("-n".to_string());
+        args.push(num.to_string());
     }
 
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
@@ -712,6 +716,7 @@ fn list_sufr1_no_opts() -> Result<()> {
             show_suffix: false,
             show_rank: false,
             suffix_len: None,
+            number: None,
         },
         &[
             "$",
@@ -739,6 +744,7 @@ fn list_sufr1_show_suffix() -> Result<()> {
             show_suffix: true,
             show_rank: false,
             suffix_len: None,
+            number: None,
         },
         &[
             "10 $",
@@ -766,6 +772,7 @@ fn list_sufr1_show_lcp() -> Result<()> {
             show_suffix: false,
             show_rank: false,
             suffix_len: None,
+            number: None,
         },
         &[
             " 0 $",
@@ -794,6 +801,7 @@ fn list_sufr1_show_rank_suffix_lcp() -> Result<()> {
             show_suffix: true,
             show_rank: true,
             suffix_len: None,
+            number: None,
         },
         &[
             " 0 10  0 $",
@@ -821,6 +829,7 @@ fn list_sufr1_show_rank() -> Result<()> {
             show_suffix: false,
             show_rank: true,
             suffix_len: None,
+            number: None,
         },
         &[
             " 0 $",
@@ -837,10 +846,11 @@ fn list_sufr1_show_rank() -> Result<()> {
         .join("\n"),
     )
 }
+
 // --------------------------------------------------
 #[test]
 fn list_sufr1_len_3() -> Result<()> {
-    // cargo run -- ls data data/expected/1.sufr
+    // cargo run -- ls -l 3 data/expected/1.sufr
     list(
         SUFR1,
         ListOptions {
@@ -848,6 +858,7 @@ fn list_sufr1_len_3() -> Result<()> {
             show_suffix: false,
             show_rank: false,
             suffix_len: Some(3),
+            number: None,
         },
         &[
             "$", "ACG", "ACG", "CGT", "CGT", "GT$", "GTN", "T$", "TNN", "",
@@ -855,6 +866,24 @@ fn list_sufr1_len_3() -> Result<()> {
         .join("\n"),
     )
 }
+
+// --------------------------------------------------
+#[test]
+fn list_sufr1_limit_3() -> Result<()> {
+    // cargo run -- ls -n 3 data/expected/1.sufr
+    list(
+        SUFR1,
+        ListOptions {
+            show_lcp: false,
+            show_suffix: false,
+            show_rank: false,
+            suffix_len: None,
+            number: Some(3),
+        },
+        &["$", "ACGT$", "ACGTNNACGT$", ""].join("\n"),
+    )
+}
+
 // --------------------------------------------------
 fn locate(filename: &str, opts: LocateOptions, expected_file: &str) -> Result<()> {
     let mut args = vec!["locate".to_string(), filename.to_string()];
