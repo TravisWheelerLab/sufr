@@ -333,10 +333,10 @@ where
                     match builders[partition_num].lock() {
                         Ok(mut partition) => {
                             if partition.add(suffix).is_err() {
-                                panic!("Unable to write data to disk")
+                                bail!("Unable to write data to disk")
                             }
                         }
-                        Err(e) => panic!("Failed to lock: {e}"),
+                        Err(e) => bail!("{e}"),
                     }
                 }
                 Ok(())
