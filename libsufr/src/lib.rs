@@ -1,9 +1,28 @@
-pub mod file_access;
+#![warn(missing_docs)]
+
+//! # Parallel Construction of Suffix Arrays in Rust
+//!
+//! Inspired by the merge sort approach described in "Cache-friendly, 
+//! Parallel, and Samplesort-based Constructor for Suffix Arrays and LCP 
+//! Arrays." [^patro]
+//!
+//! [^patro]: <https://doi.org/10.4230/LIPIcs.WABI.2023.16>
+//!
+//! * To create a new suffix array/_.sufr_ file, see [sufr_builder]
+//! * To interact and query an existing suffix array/_.sufr_ file, see [sufr_file]
+//!
+//! ## Authors
+//! * Ken Youens-Clark <kyclark@gmail.com>
+//! * Jack Roddy <jroddy@arizona.edu>
+//! * Travis Wheeler <twheeler@arizona.edu>
+
 pub mod sufr_builder;
 pub mod sufr_file;
 pub mod sufr_search;
+pub mod file_access;
 pub mod types;
 pub mod util;
+
 
 // --------------------------------------------------
 #[cfg(test)]
@@ -30,9 +49,8 @@ mod tests {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: seq_data.start_positions.into_iter().collect(),
-            headers: seq_data.headers,
+            sequence_names: seq_data.sequence_names,
             num_partitions: 2,
-            sequence_delimiter,
             seed_mask: None,
             random_seed: 0,
         };
@@ -52,7 +70,7 @@ mod tests {
         assert_eq!(sufr_file.text_len, 18);
         assert_eq!(sufr_file.num_sequences, 2);
         assert_eq!(sufr_file.sequence_starts, [0, 9]);
-        assert_eq!(sufr_file.headers, ["ABC", "DEF"]);
+        assert_eq!(sufr_file.sequence_names, ["ABC", "DEF"]);
         assert_eq!(sufr_file.text, b"ACGTACGTNACGTACGT$");
 
         let file_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
@@ -77,9 +95,8 @@ mod tests {
             allow_ambiguity: true,
             ignore_softmask: false,
             sequence_starts: seq_data.start_positions.into_iter().collect(),
-            headers: seq_data.headers,
+            sequence_names: seq_data.sequence_names,
             num_partitions: 2,
-            sequence_delimiter,
             seed_mask: None,
             random_seed: 0,
         };
@@ -100,7 +117,7 @@ mod tests {
         assert_eq!(sufr_file.text_len, 11);
         assert_eq!(sufr_file.num_sequences, 1);
         assert_eq!(sufr_file.sequence_starts, [0]);
-        assert_eq!(sufr_file.headers, ["1"]);
+        assert_eq!(sufr_file.sequence_names, ["1"]);
         assert_eq!(sufr_file.text, b"ACGTNNACGT$");
         assert_eq!(sufr_file.len_suffixes, 11);
 
@@ -123,9 +140,8 @@ mod tests {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: seq_data.start_positions,
-            headers: seq_data.headers,
+            sequence_names: seq_data.sequence_names,
             num_partitions: 2,
-            sequence_delimiter,
             seed_mask: None,
             random_seed: 0,
         };
@@ -200,9 +216,8 @@ mod tests {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: seq_data.start_positions,
-            headers: seq_data.headers,
+            sequence_names: seq_data.sequence_names,
             num_partitions: 1,
-            sequence_delimiter,
             seed_mask: Some("101".to_string()),
             random_seed: 0,
         };
@@ -243,9 +258,8 @@ mod tests {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: seq_data.start_positions,
-            headers: seq_data.headers,
+            sequence_names: seq_data.sequence_names,
             num_partitions: 1,
-            sequence_delimiter,
             seed_mask: Some("11011".to_string()),
             random_seed: 0,
         };
@@ -299,9 +313,8 @@ mod tests {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: seq_data.start_positions,
-            headers: seq_data.headers,
+            sequence_names: seq_data.sequence_names,
             num_partitions: 1,
-            sequence_delimiter,
             seed_mask: Some("11000111".to_string()),
             random_seed: 0,
         };

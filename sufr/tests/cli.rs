@@ -1179,7 +1179,7 @@ fn summarize_sufr1() -> Result<()> {
             ("Seed mask", "None"),
             ("Num sequences", "1"),
             ("Sequence starts", "0"),
-            ("Headers", "1"),
+            ("Sequence names", "1"),
         ],
     )
 }

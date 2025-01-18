@@ -1,3 +1,41 @@
+//! # Creating Suffix Arrays
+//!
+//! Sufr builds the suffix and LCP (longest common prefix) arrays on disk.
+//! The suffixes are partitioned into temporary files, and these are sorted
+//! in parallel.
+//! Call the `write` method to serialized the data structures to 
+//! a file (preferably with the _.sufr_ extension) that can be read 
+//! by `sufr_file`.
+//!
+//!```
+//!fn create(input: &Path) -> Result<()> {
+//!    let sequence_delimiter = b'%';
+//!    let seq_data = read_sequence_file(input, sequence_delimiter)?;
+//!    let builder_args = SufrBuilderArgs {
+//!        text: seq_data.seq,
+//!        max_query_len: None,
+//!        is_dna: true,
+//!        allow_ambiguity: false,
+//!        ignore_softmask: true,
+//!        sequence_starts: seq_data.start_positions.into_iter().collect(),
+//!        sequence_names: seq_data.sequence_names,
+//!        num_partitions: 1024,
+//!        seed_mask: None,
+//!        random_seed: 42,
+//!    };
+//!
+//!    let text_len = seq_data.seq.len();
+//!    let outfile = "out.sufr";
+//!    if (text_len as u64) < u32::MAX as u64 {
+//!        let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
+//!        sufr_builder.write(outfile);
+//!    } else {
+//!        let sufr_builder: SufrBuilder<u64> = SufrBuilder::new(builder_args)?;
+//!        sufr_builder.write(outfile);
+//!    }
+//!}
+//!```
+
 use crate::{
     types::{
         FromUsize, Int, SeedMask, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER,
@@ -22,40 +60,109 @@ use std::{
 use tempfile::NamedTempFile;
 
 // --------------------------------------------------
+/// The arguments for creating a `SufrBuilder` struct
 #[derive(Debug)]
 pub struct SufrBuilderArgs {
+    /// Text as raw U8 bytes. cf. `libsufr::utils::read_sequence_file`
+    /// Note: this value will be kept in memory during the build process.
     pub text: Vec<u8>,
+
+    /// Maximum query length determines a prefix length of the suffixes.
+    /// Without this value, suffixes will be fully sorted.
     pub max_query_len: Option<usize>,
+
+    /// Indicates that the input is nucleotides, which has implications
+    /// for ignoring ambiguity characters (not A, C, G, or T) and
+    /// soft-masked/lowercase characters (usually indicating low-complexity
+    /// regions).
     pub is_dna: bool,
+
+    /// Whether or not to allow ambiguity characters (not A, C, G, or T)
+    /// when handling nucleotides.
     pub allow_ambiguity: bool,
+
+    /// Whether or not to ignore lowercased/softmasked nucleotide
+    /// values (when `is_dna` is true).
     pub ignore_softmask: bool,
+
+    /// When the `text` holds multiple sequences, this value contains
+    /// the start positions of the sequences for locate queries.
     pub sequence_starts: Vec<usize>,
-    pub headers: Vec<String>,
+
+    /// When the `text` holds multiple sequences, this value contains
+    /// the names of the sequences for locate queries.
+    pub sequence_names: Vec<String>,
+
+    /// The number of on-disk partitions to use when building the suffix array.
+    /// Recommended to be at least the number of available CPUs, but
+    /// a good number would place a 1-3 million suffixes into each partition,
+    /// depending on the amount of available memory. 
+    /// The partitions are sorted independently and in parallel.
+    /// Max memory usage will be determined by the average size of the 
+    /// partitions (which includes the number of suffixes in a partition 
+    /// and the integer size [`u32`, `u64`] to represent the suffixes)
+    /// times the number of threads used to process concurrently.
     pub num_partitions: usize,
-    pub sequence_delimiter: u8,
+
+    /// An optional seed mask of 1/0 for care/don't-care positions,
+    /// cf. `SeedMask`.
     pub seed_mask: Option<String>,
+
+    /// A seed value for reproducibility when randomly choosing the
+    /// suffixes for partitioning.
     pub random_seed: u64,
 }
 
 // --------------------------------------------------
+/// A struct for partitioning, sorting, and writing suffixes to disk
 #[derive(Debug)]
 pub struct SufrBuilder<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    /// The serialization version.
     pub version: u8,
+
+    /// Whether or not the sequence is nucleotide.
     pub is_dna: bool,
+
+    /// Whether or not the nucleotide sequence allows characters
+    /// other than A, C, G, or T.
     pub allow_ambiguity: bool,
+
+    /// Whether or not the nucleotide sequence ignores
+    /// softmasked/lowercase bases.
     pub ignore_softmask: bool,
+
+    /// The length of the given text.
     pub text_len: T,
+
+    /// The number of suffixes that were indexed from the text, which
+    /// could be less than `text_len` when ambiguity/softmasked values
+    /// are ignored.
     pub num_suffixes: T,
+
+    /// The number of sequences represented in the text.
     pub num_sequences: T,
+
+    /// The positions in the text where each sequence starts.
     pub sequence_starts: Vec<T>,
-    pub headers: Vec<String>,
+
+    /// The names of the sequences in the text. Should be the same length
+    /// as `sequence_starts`.
+    pub sequence_names: Vec<String>,
+
+    /// The text that was indexed.
     pub text: Vec<u8>,
+
+    /// Whether the text is sorted fully, using a maximum query length,
+    /// or a seed mask.
     pub sort_type: SuffixSortType,
-    pub partitions: Vec<Partition>,
-    pub sequence_delimiter: u8,
+
+    /// The number of partitions to use when building.
+    partitions: Vec<Partition>,
+
+    /// The locations of long runs of Ns in nucleotide text.
     pub n_ranges: Vec<Range<usize>>,
 }
 
@@ -64,6 +171,12 @@ impl<T> SufrBuilder<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
+    /// Create a new suffix/LCP array.
+    /// The results will live in temporary files on-disk.
+    /// The integer values representing the positions of each suffix will
+    /// be `u32` when the length of the text is less than 2^32 and `u64`,
+    /// otherwise. Use the resulting `SufrBuilder` to write the temp files
+    /// to a permanent location.
     pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T>> {
         let text: Vec<_> = args
             .text
@@ -95,6 +208,7 @@ where
             SuffixSortType::MaxQueryLen(args.max_query_len.unwrap_or(0))
         };
 
+        // Check for long runs of Ns when ambiguous bases are allowed.
         let mut n_ranges: Vec<Range<usize>> = vec![];
         if args.allow_ambiguity {
             let mut n_start: Option<usize> = None;
@@ -132,9 +246,8 @@ where
                 .into_iter()
                 .map(T::from_usize)
                 .collect::<Vec<_>>(),
-            headers: args.headers,
+            sequence_names: args.sequence_names,
             partitions: vec![],
-            sequence_delimiter: args.sequence_delimiter,
             n_ranges,
         };
         sa.sort(args.num_partitions, args.random_seed)?;
@@ -142,7 +255,11 @@ where
     }
 
     // --------------------------------------------------
-    // Assumes pos is always found -- danger
+    /// Return the string at a given suffix position
+    /// Warning: Assumes pos is always found.
+    ///
+    /// Args:
+    /// * `pos`: the suffix position
     pub fn string_at(&self, pos: usize) -> String {
         self.text
             .get(pos..)
@@ -151,6 +268,10 @@ where
     }
 
     // --------------------------------------------------
+    /// If a suffix is in a long run of Ns, return the position of the final N
+    ///
+    /// Args:
+    /// * `suffix`: suffix position
     fn find_n_run(&self, suffix: usize) -> Option<usize> {
         self.n_ranges
             .binary_search_by(|range| {
@@ -167,8 +288,20 @@ where
     }
 
     // --------------------------------------------------
+    /// Find the longest common prefix between two suffixes.
+    ///
+    /// Args:
+    /// * `start1`: position of first suffix
+    /// * `start2`: position of second suffix
+    /// * `len`: the maximum length to check, e.g., the maximum query
+    ///   length or the weight of the seed mask (number of 1/"care" positions)
+    /// * `skip`: skip over the this many characters at the beginning.
+    ///   Because of the incremental way the LCPs are calculated, we may know
+    ///   that two suffixes share the `skip` number in common already.
     #[inline(always)]
-    pub fn find_lcp(&self, start1: usize, start2: usize, len: T, skip: usize) -> T {
+    fn find_lcp(&self, start1: usize, start2: usize, len: T, skip: usize) -> T {
+        // TODO: Could we use traits for SortType, parameterize the builder
+        // on initialization and avoid conditionals here?
         match &self.sort_type {
             SuffixSortType::Mask(mask) => {
                 // Use the seed diff vector to select only the
@@ -235,9 +368,17 @@ where
     }
 
     // --------------------------------------------------
+    /// Determine whether or not the first suffix position is lexicographically
+    /// less than the second.
+    /// This function is used to place suffixes into the highest partition
+    /// for sorting.
+    ///
+    /// Args:
+    /// * `start1`: the position of the first suffix
+    /// * `start2`: the position of the second suffix
     #[inline(always)]
-    pub fn is_less(&self, s1: T, s2: T) -> bool {
-        if s1 == s2 {
+    fn is_less(&self, start1: T, start2: T) -> bool {
+        if start1 == start2 {
             false
         } else {
             let max_query_len = match &self.sort_type {
@@ -252,7 +393,7 @@ where
             };
 
             let len_lcp = find_lcp_full_offset(
-                self.find_lcp(s1.to_usize(), s2.to_usize(), max_query_len, 0)
+                self.find_lcp(start1.to_usize(), start2.to_usize(), max_query_len, 0)
                     .to_usize(),
                 &self.sort_type,
             );
@@ -263,8 +404,8 @@ where
             } else {
                 // Look at the next character
                 match (
-                    self.text.get(s1.to_usize() + len_lcp),
-                    self.text.get(s2.to_usize() + len_lcp),
+                    self.text.get(start1.to_usize() + len_lcp),
+                    self.text.get(start2.to_usize() + len_lcp),
                 ) {
                     (Some(a), Some(b)) => a < b,
                     (None, Some(_)) => true,
@@ -275,13 +416,25 @@ where
     }
 
     // --------------------------------------------------
+    /// Find the highest partition to place a suffix for sorting.
+    ///
+    /// Args:
+    /// * `suffix`: a suffix position
+    /// * `pivots`: randomly selected suffix positions sorted lexicographically
     #[inline(always)]
-    pub fn upper_bound(&self, target: T, pivots: &[T]) -> usize {
+    fn upper_bound(&self, suffix: T, pivots: &[T]) -> usize {
         // Returns 0 when pivots is empty
-        pivots.partition_point(|&p| self.is_less(p, target))
+        pivots.partition_point(|&p| self.is_less(p, suffix))
     }
 
     // --------------------------------------------------
+    /// Write the suffixes into temporary files for sorting
+    ///
+    /// Args:
+    /// * `num_partitions`: how many partitions to create
+    /// * `random_seed`: a value for initializing the pseudo-random number
+    ///   generator for reproducibility when selecting the suffixes used
+    ///   for partitioning
     fn partition(
         &mut self,
         num_partitions: usize,
@@ -368,23 +521,13 @@ where
     }
 
     // --------------------------------------------------
+    /// Sort the suffixes.
+    ///
+    /// Args:
+    /// * `num_partitions`: the number of partitions to used
+    /// * `random_seed`: a value for initializing the RNG
     pub fn sort(&mut self, num_partitions: usize, random_seed: u64) -> Result<()> {
         let mut partition_build = self.partition(num_partitions, random_seed)?;
-
-        //for (part_num, part) in partition_build.builders.iter().enumerate() {
-        //    match part.lock() {
-        //        Ok(builder) => {
-        //            let buffer = fs::read(&builder.path)?;
-        //            let part_sa: Vec<T> = slice_u8_to_vec(&buffer, builder.len);
-        //            let vals: Vec<_> = part_sa
-        //                .iter()
-        //                .map(|&v| format!("{v:2} {}", self.string_at(v.to_usize())))
-        //                .collect();
-        //            println!(">>> PARTITION {part_num} <<<\n{}\n", vals.join("\n"));
-        //        }
-        //        _ => println!("ouch"),
-        //    }
-        //}
 
         // Be sure to round up to get all the suffixes
         let num_per_partition = (partition_build.num_suffixes as f64
@@ -459,12 +602,6 @@ where
                     let (_, sa_path) = sa_file.keep()?;
                     let (_, lcp_path) = lcp_file.keep()?;
 
-                    //let vals: Vec<_> = part_sa
-                    //    .iter()
-                    //    .map(|s| format!("{s:2} {}", self.string_at(s.to_usize())))
-                    //    .collect();
-                    //println!("\n>>> SORTED <<<\n{}\n", vals.join("\n"));
-
                     *partition = Some(Partition {
                         order: partition_num,
                         len,
@@ -496,7 +633,7 @@ where
     }
 
     // --------------------------------------------------
-    pub fn merge_sort(
+    fn merge_sort(
         &self,
         x: &mut [T],
         y: &mut [T],
@@ -672,20 +809,6 @@ where
                 mem::swap(&mut lcp_x, &mut lcp_y);
                 mem::swap(&mut idx_x, &mut idx_y);
             }
-
-            //println!(
-            //    "  TARGET IDX {idx_target} ({}): {}",
-            //    target_sa
-            //        .iter()
-            //        .map(|v| v.to_string())
-            //        .collect::<Vec<_>>()
-            //        .join(", "),
-            //    target_sa
-            //        .iter()
-            //        .map(|s| self.string_at(s.to_usize()))
-            //        .collect::<Vec<_>>()
-            //        .join(", ")
-            //);
             idx_target += 1;
         }
 
@@ -711,12 +834,6 @@ where
                 idx_target += 1;
             }
         }
-
-        //let vals: Vec<_> = target_sa
-        //    .iter()
-        //    .map(|s| format!("{s:2} {}", self.string_at(s.to_usize())))
-        //    .collect();
-        //println!("END OF MERGE:\n{}", vals.join("\n"))
     }
 
     // --------------------------------------------------
@@ -763,7 +880,11 @@ where
     }
 
     // --------------------------------------------------
-    // Serialize data to a ".sufr" file
+    /// Serialize contents of the sorted partitions to a _.sufr_ file.
+    /// Returns the number of bytes written to disk.
+    ///
+    /// Args:
+    /// * `filename`: the name of the output file.
     pub fn write(&self, filename: &str) -> Result<usize> {
         let mut file = BufWriter::new(
             File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
@@ -854,8 +975,8 @@ where
             fs::remove_file(&partition.lcp_path)?;
         }
 
-        // Headers are variable in length so they are at the end
-        bytes_out += file.write(&bincode::serialize(&self.headers)?)?;
+        // Sequence names are variable in length so they are at the end
+        bytes_out += file.write(&bincode::serialize(&self.sequence_names)?)?;
 
         // Go back to header and record the locations
         file.seek(SeekFrom::Start(locs_pos))?;
@@ -868,27 +989,44 @@ where
 }
 
 // --------------------------------------------------
+/// Represents the partition values written to disk
 #[derive(Debug)]
-pub struct Partition {
+struct Partition {
+    /// The sorted position of this parition.
     order: usize,
+
+    /// The number of suffixes/LCP values contained in this partition.
     len: usize,
+
+    /// The value of the first suffix. Used in stitching together the LCPs.
     first_suffix: usize,
+
+    /// The value of the last suffix. Used in stitching together the LCPs.
     last_suffix: usize,
+
+    /// The path to the file containing the suffix array.
     sa_path: PathBuf,
+
+    /// The path to the file containing the LCP array.
     lcp_path: PathBuf,
 }
 
 // --------------------------------------------------
+/// This struct provides access to the on-disk partitions.
 #[derive(Debug)]
 struct PartitionBuildResult<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    /// A thread-safe vector of `PartitionBuilder` values
     builders: Vec<Arc<Mutex<PartitionBuilder<T>>>>,
+
+    /// The total number of suffixes that were written to disk.
     num_suffixes: usize,
 }
 
 // --------------------------------------------------
+/// A struct for writing suffixes to disk.
 #[derive(Debug)]
 struct PartitionBuilder<T>
 where
@@ -906,11 +1044,22 @@ impl<T> PartitionBuilder<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    /// Create a new `PartitionBuilder`. This struct is used to write it's
+    /// suffix positions to a temporary file. 
+    ///
+    /// Args:
+    /// * `capacity`: the number of suffixes to hold in memory until the
+    ///   writing to disk. This minimizes the number of times we access the disk
+    ///   while also limiting the amount of memory used. Currently set to 4096
+    ///   but it might be worth tuning this, perhaps use more memory to hit 
+    ///   disk less? Or if memory use is too high, lower and take a performance 
+    ///   hit for disk access?
     fn new(capacity: usize) -> Result<Self> {
         let tmp = NamedTempFile::new()?;
         let (_, path) = tmp.keep()?;
 
         Ok(PartitionBuilder {
+            // Re-use a static vector to avoid repeated allocations
             vals: vec![T::default(); capacity],
             len: 0,
             total_len: 0,
@@ -919,6 +1068,11 @@ where
         })
     }
 
+    /// Add a suffix to the partition. When the internal array of values hits
+    /// `capacity`, then write all the values to disk.
+    ///
+    /// Args:
+    /// * `val`: the suffix position to add
     pub fn add(&mut self, val: T) -> Result<()> {
         self.vals[self.len] = val;
         self.len += 1;
@@ -930,6 +1084,8 @@ where
         Ok(())
     }
 
+    /// Write the suffixes to disk. This must be called at the end to flush
+    /// any remaining values after the last call(s) from `add`.
     pub fn write(&mut self) -> Result<()> {
         if self.len > 0 {
             let mut file = OpenOptions::new()
@@ -961,9 +1117,8 @@ mod test {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
+            sequence_names: vec!["1".to_string()],
             num_partitions: 2,
-            sequence_delimiter: b'N',
             seed_mask: None,
             random_seed: 0,
         };
@@ -999,9 +1154,8 @@ mod test {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
+            sequence_names: vec!["1".to_string()],
             num_partitions: 2,
-            sequence_delimiter: b'N',
             seed_mask: None,
             random_seed: 0,
         };
@@ -1040,9 +1194,8 @@ mod test {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
+            sequence_names: vec!["1".to_string()],
             num_partitions: 2,
-            sequence_delimiter: b'N',
             seed_mask: Some("101".to_string()),
             random_seed: 0,
         };
@@ -1082,9 +1235,8 @@ mod test {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
+            sequence_names: vec!["1".to_string()],
             num_partitions: 2,
-            sequence_delimiter: b'N',
             seed_mask: None,
             random_seed: 0,
         };
@@ -1126,9 +1278,8 @@ mod test {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
+            sequence_names: vec!["1".to_string()],
             num_partitions: 2,
-            sequence_delimiter: b'N',
             seed_mask: Some("1101".to_string()),
             random_seed: 42,
         };
@@ -1161,9 +1312,8 @@ mod test {
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: vec![0],
-            headers: vec!["1".to_string()],
+            sequence_names: vec!["1".to_string()],
             num_partitions: 2,
-            sequence_delimiter: b'N',
             seed_mask: None,
             random_seed: 42,
         };
@@ -1186,17 +1336,16 @@ mod test {
         //           0123456789
         let text = b"ACGTNNACGT".to_vec();
         let args = SufrBuilderArgs {
-            text,                           // 10 $
-            max_query_len: None,            //  6 ACGT$
-            is_dna: false,                  //  0 ACGTNNACGT$
-            allow_ambiguity: false,         //  7 CGT$
-            ignore_softmask: false,         //  1 CGTNNACGT$
-            sequence_starts: vec![0],       //  8 GT$
-            headers: vec!["1".to_string()], //  2 GTNNACGT$
-            num_partitions: 2,              //  5 NACGT$
-            sequence_delimiter: b'N',       //  4 NNACGT$
-            seed_mask: None,                //  9 T$
-            random_seed: 42,                //  3 TNNACGT$
+            text,
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            sequence_names: vec!["1".to_string()],
+            num_partitions: 2,
+            seed_mask: None,
+            random_seed: 42,
         };
 
         let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
@@ -1237,16 +1386,14 @@ mod test {
         //           0123456789
         let text = b"ACGTNNACGT".to_vec();
         let args = SufrBuilderArgs {
-            //  6 ACGT$
-            text,                           //  0 ACGTNNACGT$
-            max_query_len: None,            //  7 CGT$
-            is_dna: false,                  //  1 CGTNNACGT$
-            allow_ambiguity: false,         //  8 GT$
-            ignore_softmask: false,         //  2 GTNNACGT$
-            sequence_starts: vec![0],       //  4 NNACGT$
-            headers: vec!["1".to_string()], //  5 NACGT$
-            num_partitions: 2,              //  9 T$
-            sequence_delimiter: b'N',       //  3 TNNACGT$
+            text,
+            max_query_len: None,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sequence_starts: vec![0],
+            sequence_names: vec!["1".to_string()],
+            num_partitions: 2,
             seed_mask: Some("101".to_string()),
             random_seed: 42,
         };

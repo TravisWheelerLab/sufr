@@ -1,3 +1,5 @@
+//! # Search a suffix array
+
 use crate::{
     file_access::FileAccess,
     types::{
@@ -13,20 +15,41 @@ use std::{
 };
 
 // --------------------------------------------------
+/// Arguments to create a search
 #[derive(Debug)]
 pub struct SufrSearchArgs<'a, T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    /// The text being searched (which may be empty in the case of very 
+    /// low memory)
     pub text: &'a [u8],
+
+    /// The length of the text
     pub text_len: usize,
+
+    /// A `FileAccess` to the text
     pub text_file: FileAccess<u8>,
+
+    /// File?
     pub file: FileAccess<T>,
+
+    /// In-memory suffix array
     pub suffix_array: &'a [T],
+
+    /// In-memory rank array
     pub rank: &'a [T],
+
+    /// Options for low memory query
     pub query_low_memory: Option<LowMemoryUsage>,
+
+    /// ???
     pub len_suffixes: usize,
+
+    /// How the suffixes were built?
     pub sort_type: &'a SuffixSortType,
+
+    /// The maximum query length to use when querying
     pub max_query_len: Option<usize>,
 }
 
@@ -53,6 +76,10 @@ impl<'a, T> SufrSearch<'a, T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    /// Create a `SufrSearch` struct
+    ///
+    /// Args:
+    /// * `args`: a `SufrSearchArgs` struct
     pub fn new(args: SufrSearchArgs<'a, T>) -> SufrSearch<'a, T> {
         SufrSearch {
             text: args.text,
@@ -73,6 +100,13 @@ where
     }
 
     // --------------------------------------------------
+    /// Find a query string in a suffix array.
+    /// Returns a `SearchResult`
+    ///
+    /// Args:
+    /// * `query_num`: ordinal number of the query
+    /// * `query`: a string to search for
+    /// * `find_suffixes`: whether or not to return the suffixes locations
     pub fn search(
         &mut self,
         query_num: usize,
@@ -214,26 +248,22 @@ where
     }
 
     // --------------------------------------------------
-    pub fn compare(
+    /// Compare a query string to a suffix.
+    /// When the suffix array was sorted using a seed mask, only
+    /// compare the "care" positions; otherwise, compare all the positions
+    /// up to an optional maximum query length
+    /// Returns a `Comparison`
+    ///
+    /// Args:
+    /// * `query`: string to search for
+    /// * `suffix_pos`: suffix position
+    /// * `skip`: number of places to skip
+    fn compare(
         &mut self,
         query: &[u8],
         suffix_pos: usize,
         skip: usize,
     ) -> Comparison {
-        //let end = min(suffix_pos + query.len(), self.text_len);
-        //eprintln!(
-        //    "\nskip {skip} query {:?} suffix {suffix_pos} = {:?} \
-        //    max_query_len {:?}",
-        //    String::from_utf8(query.to_vec()),
-        //    String::from_utf8(
-        //        self.get_text_range(suffix_pos..end)
-        //            .expect("OK")
-        //            .to_vec()
-        //    ),
-        //    self.max_query_len,
-        //);
-        //eprintln!("sort_type {:?} mem {:?}", self.sort_type, self.query_low_memory);
-
         let (lcp, max_query_len) = match &self.sort_type {
             SuffixSortType::MaxQueryLen(mql) => {
                 // The "MaxQueryLen(mql)" refers to how the suffix array
@@ -313,12 +343,6 @@ where
         } else {
             // Get the next chars
             let full_offset = find_lcp_full_offset(lcp, self.sort_type);
-            //println!(
-            //    "full_offset {full_offset} next query {:?} next text {:?} = {res:?}",
-            //    query.get(full_offset).map(|v| *v as char),
-            //    self.text.get(suffix_pos + full_offset).map(|v| *v as char),
-            //);
-            //res
             match (
                 query.get(full_offset),
                 //self.text.get(suffix_pos + full_offset),

@@ -1,3 +1,5 @@
+//! # Low memory access to Sufr's on-disk arrays (text/SA/LCP)
+
 use anyhow::{bail, Result};
 use crate::{
     util::slice_u8_to_vec,
@@ -12,19 +14,38 @@ use std::{
 };
 
 // --------------------------------------------------
+/// Struct to mediate file access to on-disk arrays of text, suffix/LCP arrays
 #[derive(Debug)]
 pub struct FileAccess<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    /// A read-only filehandle to the _.sufr_ file 
     file: File,
+
+    /// Internal buffer for reading a portion of the file
     buffer: Vec<T>,
+
+    /// The maximum size in bytes of the buffer (currently 2^30)
     buffer_size: usize,
+
+    /// The current position when reading the buffer
     buffer_pos: usize,
+
+    /// The size in bytes for the entire text/SA/LCP
     pub size: usize,
+
+    /// The starting byte position of the structure being read (text/SA/LCP)
     start_position: u64,
+
+    /// The current position after reading a portion of the structure 
+    /// from disk and into the `buffer`
     current_position: u64,
+
+    /// The final byte position of the structure being read (text/SA/LCP)
     end_position: u64,
+
+    /// Whether or not the last read off disk made it to the end of the array
     exhausted: bool,
 }
 
@@ -32,6 +53,16 @@ impl<T> FileAccess<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    /// Create a read-only file access to a portion of a _.sufr_ file 
+    /// representing the text, suffix array, or LCP array.
+    /// This struct must be initialized using an `Int` of `u8` for the `text`
+    /// or `u32`/`u64` for the SA/LCP.
+    /// The metadata needed to create this can be found in the `SufrFile`.
+    ///
+    /// Args:
+    /// * `filename`: the _.sufr_ filename
+    /// * `start`: the byte position in the file of the array
+    /// * `num_elements`: the length of the text/SA/LCP
     pub fn new(filename: &str, start: u64, num_elements: usize) -> Result<Self> {
         let file = File::open(filename)?;
         let size = num_elements * mem::size_of::<T>();
@@ -48,6 +79,7 @@ where
         })
     }
 
+    /// Reset the buffer to start reading from the beginning.
     pub fn reset(&mut self) {
         self.buffer = vec![];
         self.buffer_pos = 0;
@@ -55,11 +87,17 @@ where
         self.exhausted = false;
     }
 
+    /// Create a `FileAccessIter` iterator.
     pub fn iter(&mut self) -> FileAccessIter<T> {
         FileAccessIter { file_access: self }
     }
 
     // --------------------------------------------------
+    /// Return a value (`u8`/character from text or a SA/LCP value)
+    ///
+    /// Args:
+    /// * `pos`: position in the array
+    //
     // TODO: Ignoring lots of Results to return Option
     pub fn get(&mut self, pos: usize) -> Option<T> {
         // Don't bother looking for something beyond the end
@@ -80,6 +118,10 @@ where
     }
 
     // --------------------------------------------------
+    /// Return a range of values (`u8`/characters from text or a SA/LCP values)
+    ///
+    /// Args:
+    /// * `range`: start/stop positions in the array
     pub fn get_range(&mut self, range: Range<usize>) -> Result<Vec<T>> {
         let start = self.start_position as usize + (range.start * mem::size_of::<T>());
         let end = self.start_position as usize + (range.end * mem::size_of::<T>());
@@ -97,6 +139,7 @@ where
 }
 
 // --------------------------------------------------
+/// An iterator over the values from a `FileAccess`
 #[derive(Debug)]
 pub struct FileAccessIter<'a, T>
 where

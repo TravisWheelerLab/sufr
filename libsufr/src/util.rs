@@ -1,11 +1,21 @@
+//! Utility functions
+
 use crate::types::{
-    FromUsize, Int, SequenceFileData, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER
+    FromUsize, Int, SequenceFileData, SuffixSortType, OUTFILE_VERSION,
+    SENTINEL_CHARACTER,
 };
 use anyhow::{anyhow, bail, Result};
 use needletail::parse_fastx_file;
-use std::{fs::File, io::Read, slice, path::Path};
+use std::{fs::File, io::Read, path::Path, slice};
 
 // --------------------------------------------------
+/// When using a seed mask, the LCP stored on disk is the number of "care"
+/// positions held in common, but the *actual* LCP between two strings
+/// should include any "don't-care" positions up to the next "care" position.
+///
+/// Args:
+/// * `lcp`: the LCP (probably from LCP array on disk)
+/// * `sort_type`: the suffixes are fully sorted or masked
 pub fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
     match sort_type {
         SuffixSortType::Mask(seed_mask) => {
@@ -21,63 +31,30 @@ pub fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
                     offset + 1
                 }
             }
-        },
-        _ => { lcp }
+        }
+        _ => lcp,
     }
 }
 
 // --------------------------------------------------
-pub fn vec_to_slice_u8<T>(vec: &[T]) -> &[u8]
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    unsafe {
-        slice::from_raw_parts(
-            vec.as_ptr() as *const _,
-            std::mem::size_of_val(vec), //vec.len() * mem::size_of::<T>(),
-        )
-    }
-}
-
-// --------------------------------------------------
-pub fn slice_u8_to_vec<T>(buffer: &[u8], len: usize) -> Vec<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
-    unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const _, len).to_vec() }
-}
-
-// --------------------------------------------------
-// Utility function to find length of the input text
-// determine whether to build u32 or u64
-pub fn read_text_length(filename: &str) -> Result<usize> {
-    let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
-
-    // Meta (version, is_dna)
-    let mut buffer = [0; 4];
-    file.read_exact(&mut buffer)?;
-
-    let outfile_version = buffer[0];
-    if outfile_version == OUTFILE_VERSION {
-        // Length of text is the next usize
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        Ok(usize::from_ne_bytes(buffer))
-    } else {
-        bail!("Unknown sufr version {outfile_version}");
-    }
-}
-
-// --------------------------------------------------
-// Utility function to read FASTA/Q file for sequence
-// data needed by SufrBuilder
+/// Read sequence data from file
+///
+/// Args:
+/// * `path`: to FASTA/FASTQ file
+/// * `sequence_delimiter`: the character/byte you wish to place
+///    between sequences. For many applications (both nucleotide and
+///    protein), you might choose a character like `%` that sorts below
+///    the alphabet (A-Z) but above the sentinel `$` that is placed at
+///    the end of the returned text; however, when building a suffix array 
+///    for use in a Burrows-Wheeler Transform, it might be better to use 
+///    `N` for nucleotides and `X` for protein.
 pub fn read_sequence_file(
     path: &Path,
     sequence_delimiter: u8,
 ) -> Result<SequenceFileData> {
     let mut reader = parse_fastx_file(path)?;
     let mut seq: Vec<u8> = Vec::with_capacity(u32::MAX as usize);
-    let mut headers: Vec<String> = vec![];
+    let mut sequence_names: Vec<String> = vec![];
     let mut start_positions: Vec<usize> = vec![];
     let mut i = 0;
     while let Some(rec) = reader.next() {
@@ -98,7 +75,7 @@ pub fn read_sequence_file(
             .next()
             .map_or((i + 1).to_string(), |v| v.to_string());
 
-        headers.push(id);
+        sequence_names.push(id);
     }
 
     // File delimiter
@@ -107,12 +84,53 @@ pub fn read_sequence_file(
     Ok(SequenceFileData {
         seq,
         start_positions,
-        headers,
+        sequence_names,
     })
 }
 
 // --------------------------------------------------
-// Utility function used by SufrBuilder
+/// Find length of the input text from a _.sufr_
+/// file to determine the `Int` type, `u32` or `u64`
+///
+/// Args:
+/// * `filename`: the _.sufr_ filename to read
+pub fn read_text_length(filename: &str) -> Result<usize> {
+    let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+
+    // Meta (version, is_dna)
+    let mut buffer = [0; 4];
+    file.read_exact(&mut buffer)?;
+
+    let outfile_version = buffer[0];
+    if outfile_version == OUTFILE_VERSION {
+        // Length of text is the next usize
+        let mut buffer = [0; 8];
+        file.read_exact(&mut buffer)?;
+        Ok(usize::from_ne_bytes(buffer))
+    } else {
+        bail!("Unknown sufr version {outfile_version}");
+    }
+}
+
+// --------------------------------------------------
+/// Convert a slice of raw U8 read from disk into a
+/// `Vec<T>` (where `T` is the `Int` 32/64)
+///
+/// Args:
+/// * `buffer`: vector of raw `u8` values (from disk)
+/// * `len`: the number of `T` values in the resulting vector
+pub fn slice_u8_to_vec<T>(buffer: &[u8], len: usize) -> Vec<T>
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const _, len).to_vec() }
+}
+
+// --------------------------------------------------
+/// Turn a `usize` into a vector of `u8` for serializing to disk.
+///
+/// Args:
+/// * `value`: a `usize`
 pub fn usize_to_bytes(value: usize) -> Vec<u8> {
     // Determine the size of usize in bytes
     let size = std::mem::size_of::<usize>();
@@ -129,14 +147,31 @@ pub fn usize_to_bytes(value: usize) -> Vec<u8> {
 }
 
 // --------------------------------------------------
+/// Convert a `Vec<T>` (where `T` is the `Int` 32/64) into a
+/// slice of raw U8 for serializing to disk
+///
+/// Args:
+/// * `vec`: a vector of `T` values
+pub fn vec_to_slice_u8<T>(vec: &[T]) -> &[u8]
+where
+    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
+{
+    unsafe {
+        slice::from_raw_parts(
+            vec.as_ptr() as *const _,
+            std::mem::size_of_val(vec), //vec.len() * mem::size_of::<T>(),
+        )
+    }
+}
+
+// --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use crate::types::{SeedMask, SuffixSortType};
     use super::{
-        find_lcp_full_offset, read_sequence_file, read_text_length,
-        slice_u8_to_vec, usize_to_bytes,
-        vec_to_slice_u8,
+        find_lcp_full_offset, read_sequence_file, read_text_length, slice_u8_to_vec,
+        usize_to_bytes, vec_to_slice_u8,
     };
+    use crate::types::{SeedMask, SuffixSortType};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::path::Path;
@@ -150,7 +185,7 @@ mod tests {
         let data = res.unwrap();
         assert_eq!(data.seq, b"ACGTacgtNacgtACGT$");
         assert_eq!(data.start_positions, [0, 9]);
-        assert_eq!(data.headers, ["ABC", "DEF"]);
+        assert_eq!(data.sequence_names, ["ABC", "DEF"]);
         Ok(())
     }
 

@@ -410,9 +410,8 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         allow_ambiguity: args.allow_ambiguity,
         ignore_softmask: args.ignore_softmask,
         sequence_starts: seq_data.start_positions.into_iter().collect(),
-        headers: seq_data.headers,
+        sequence_names: seq_data.sequence_names,
         num_partitions: args.num_partitions,
-        sequence_delimiter,
         seed_mask: args.seed_mask.clone(),
         random_seed: args.random_seed,
     };
@@ -860,10 +859,10 @@ where
         "Sequence starts".to_string(),
         textwrap::wrap(&seq_starts, 40).join("\n"),
     ]);
-    let seq_headers = sufr_file.headers.into_iter().collect::<Vec<_>>().join(", ");
+    let seq_names = sufr_file.sequence_names.into_iter().collect::<Vec<_>>().join(", ");
     rows.push(vec![
-        "Headers".to_string(),
-        textwrap::wrap(&seq_headers, 40).join("\n"),
+        "Sequence names".to_string(),
+        textwrap::wrap(&seq_names, 40).join("\n"),
     ]);
 
     let table = Table::from_iter(rows);

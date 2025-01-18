@@ -1,3 +1,21 @@
+//! # Read and query a suffix array
+//!
+//!```
+//!pub fn list(args: &ListArgs) -> Result<()> {
+//!    let text_len = read_text_length(&args.file)? as u64;
+//!    if text_len < u32::MAX as u64 {
+//!        let now = Instant::now();
+//!        let sa: SufrFile<u32> = SufrFile::read(&args.file, args.very_low_memory)?;
+//!        info!("Read sufr file in {:?}", now.elapsed());
+//!        _list(sa, args)
+//!    } else {
+//!        let now = Instant::now();
+//!        let sa: SufrFile<u64> = SufrFile::read(&args.file, args.very_low_memory)?;
+//!        info!("Read sufr file in {:?}", now.elapsed());
+//!        _list(sa, args)
+//!    }
+//!}
+//! ```
 use crate::{
     file_access::FileAccess,
     sufr_search::{SufrSearch, SufrSearchArgs},
@@ -26,33 +44,84 @@ use std::{
 use thread_local::ThreadLocal;
 
 // --------------------------------------------------
+/// Struct used to read a serialized _.sufr_ file representing 
+/// the suffix and LCP arrays for a given text.
+/// Provides methods to query suffix array.
 #[derive(Debug)]
 pub struct SufrFile<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
+    /// The _.sufr_ filename
     pub filename: String,
+
+    /// The serialization version.
     pub version: u8,
+
+    /// Whether or not the text represents nucleotides.
     pub is_dna: bool,
+
+    /// When `is_dna` is `true`, whether or not nucleotides other than 
+    /// A, C, G, or T were ignored.
     pub allow_ambiguity: bool,
+
+    /// When `is_dna` is `true`, whether or not softmasked/lowercase
+    /// nucleotides were ignored.
     pub ignore_softmask: bool,
+
+    /// Whether or not to query the suffix array in-memory or varying
+    /// levels of on-disk access to limit memory usage.
     pub query_low_memory: Option<LowMemoryUsage>,
+
+    /// The byte position in the file where the text begins.
     pub text_pos: usize,
+
+    /// The byte position in the file where the suffix array begins.
     pub suffix_array_pos: usize,
+
+    /// The byte position in the file where the LCP array begins.
     pub lcp_pos: usize,
+
+    /// How the suffixes were sorted (fully, max query length, spaced seeds)
     pub sort_type: SuffixSortType,
+
+    /// The length of the text. Needed for parameterization of the struct
+    /// as `u32` or `u64`. Cf. `libsufr::utils::read_text_length`.
     pub text_len: T,
+
+    /// The length of the suffix array.
     pub len_suffixes: T,
+
+    /// The number of sequences in `text`.
     pub num_sequences: T,
+
+    /// The start positions of the sequences in `text`
     pub sequence_starts: Vec<T>,
-    pub headers: Vec<String>,
+
+    /// The names of the sequences
+    pub sequence_names: Vec<String>,
+
+    /// The original text that was indexed. 
     pub text: Vec<u8>,
-    pub suffix_array_mem: Vec<T>,
-    pub suffix_array_mem_mql: Option<usize>,
-    pub suffix_array_rank_mem: Vec<T>,
+
+    /// File access wrapper to the `text`
     pub text_file: FileAccess<u8>,
+
+    /// File access wrapper to the suffix array
     pub suffix_array_file: FileAccess<T>,
+
+    /// File access wrapper to the LCP array
     pub lcp_file: FileAccess<T>,
+
+    /// In-memory access to the suffix array
+    suffix_array_mem: Vec<T>,
+
+    /// The maximum query length of the suffix array currently in 
+    /// `suffix_array_mem`
+    suffix_array_mem_mql: Option<usize>,
+
+    /// In-memory access to the suffix array ranks
+    suffix_array_rank_mem: Vec<T>,
 }
 
 // --------------------------------------------------
@@ -60,7 +129,12 @@ impl<T> SufrFile<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync,
 {
-    // Read serialized ".sufr" file
+    /// Read serialized Sufr file
+    ///
+    /// Args:
+    /// * `filename`: the _.sufr_ file
+    /// * `low_memory`: whether or not to use very low memory, which 
+    ///   will cause even the `text` value to be left on disk for queries
     pub fn read(filename: &str, low_memory: bool) -> Result<SufrFile<T>> {
         let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
@@ -151,10 +225,10 @@ where
             FileAccess::new(filename, lcp_pos as u64, len_suffixes)?;
         file.seek_relative(lcp_file.size as i64)?;
 
-        // Headers are variable in length so they are at the end
+        // Sequence names are variable in length so they are at the end
         let mut buffer = vec![];
         file.read_to_end(&mut buffer)?;
-        let headers: Vec<String> = bincode::deserialize(&buffer)?;
+        let sequence_names: Vec<String> = bincode::deserialize(&buffer)?;
 
         let sort_type = if seed_mask.is_empty() {
             SuffixSortType::MaxQueryLen(max_query_len.to_usize())
@@ -178,7 +252,7 @@ where
             sort_type,
             num_sequences,
             sequence_starts,
-            headers,
+            sequence_names,
             text,
             suffix_array_file,
             lcp_file,
@@ -190,6 +264,10 @@ where
     }
 
     // --------------------------------------------------
+    /// Get the suffix at a position
+    ///
+    /// Args:
+    /// * `pos`: suffix position
     pub fn get_text(&mut self, pos: usize) -> Option<u8> {
         match self.query_low_memory {
             Some(LowMemoryUsage::VeryLow) => self.text_file.get(pos),
@@ -198,6 +276,10 @@ where
     }
 
     // --------------------------------------------------
+    /// Get a slice of text starting at a given position
+    ///
+    /// Args:
+    /// * `pos`: a `Range` of start/stop suffix positions
     pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
         match self.query_low_memory {
             Some(LowMemoryUsage::VeryLow) => self.text_file.get_range(pos),
@@ -206,6 +288,12 @@ where
     }
 
     // --------------------------------------------------
+    /// Calculate the length of the longest common prefix for two suffixes.
+    /// Does not consult the on-disk LCP.
+    ///
+    /// Args:
+    /// * `start1`: start position of first suffix
+    /// * `start2`: start position of second suffix
     pub fn find_lcp(&self, start1: usize, start2: usize, len: usize) -> usize {
         let end1 = min(start1 + len, len);
         let end2 = min(start2 + len, len);
@@ -220,8 +308,15 @@ where
     }
 
     // --------------------------------------------------
+    /// Intended to be a manual check if the suffixes are sorted and 
+    /// the LCPs are correct. Very slow, but could be useful for double-checking
+    /// small inputs. Could return a vector of error strings noting problems.
+    /// Currently returns an empty list because checking became much harder
+    /// after the introduction of spaced seeds and MQL. 
+    /// Leaving this in place for now in case I want to revive it.
+    ///
+    // TODO: Handle MQL/spaced seeds or REMOVE
     pub fn check(&mut self) -> Result<Vec<String>> {
-        // TODO: Handle MQL/spaced seeds
         //let mut previous: Option<usize> = None;
         //let mut errors: Vec<String> = vec![];
         //let text_len = self.text_len.to_usize();
@@ -268,6 +363,12 @@ where
     }
 
     // --------------------------------------------------
+    /// Return a suffix at a given position
+    ///
+    /// Args:
+    /// * `pos`: suffix position
+    /// * `len`: optional prefix length; without this, the entire suffix
+    ///   will be returned, which could be the length of the `text`.
     pub fn string_at(&self, pos: usize, len: Option<usize>) -> String {
         let text_len = self.text_len.to_usize();
         let end = len.map_or(text_len, |n| {
@@ -285,6 +386,7 @@ where
     }
 
     // --------------------------------------------------
+    /// Find/create a hidden "~/.sufr" directory
     fn get_sufr_dir(&self) -> Result<PathBuf> {
         let home = home_dir().expect("Failed to get home directory");
         let sufr_dir = home.join(".sufr");
@@ -295,6 +397,10 @@ where
     }
 
     // --------------------------------------------------
+    /// Subsample a suffix array using a maximum query length
+    ///
+    /// Args:
+    /// * `max_query_len`: prefix length
     pub fn subsample_suffix_array(&mut self, max_query_len: usize) -> (Vec<T>, Vec<T>) {
         let max_query_len = T::from_usize(max_query_len);
 
@@ -323,7 +429,11 @@ where
     }
 
     // --------------------------------------------------
-    pub fn set_suffix_array_mem(&mut self, max_query_len: Option<usize>) -> Result<()> {
+    /// Read a suffix array into memory
+    ///
+    /// Args:
+    /// * `max_query_len`: prefix length
+    fn set_suffix_array_mem(&mut self, max_query_len: Option<usize>) -> Result<()> {
         let mut max_query_len = max_query_len.unwrap_or(0);
 
         // If ".sufr" file was built with a nonzero max_query_len or seed mask
@@ -480,6 +590,11 @@ where
     }
 
     // --------------------------------------------------
+    /// Search the suffix array.
+    /// Returns a vector of `SearchResult`
+    ///
+    /// Args:
+    /// * `args`: a vector of `SearchOptions`
     pub fn suffix_search(
         &mut self,
         args: &SearchOptions,
@@ -528,7 +643,6 @@ where
             .flat_map(|(query_num, query)| -> Result<SearchResult<T>> {
                 let mut search =
                     thread_local_search.get_or_try(new_search)?.borrow_mut();
-                //dbg!(&search);
                 search.search(query_num, &query, args.find_suffixes)
             })
             .collect();
@@ -544,6 +658,11 @@ where
     }
 
     // --------------------------------------------------
+    /// Extract the suffixes for a given set of queries
+    /// Returns a vector of `ExtractResult`
+    ///
+    /// Args:
+    /// * `args`: a vector of `ExtractOptions`
     pub fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
         let search_args = SearchOptions {
             queries: args.queries,
@@ -553,7 +672,7 @@ where
         };
         let search_result = &self.suffix_search(&search_args)?;
         let seq_starts = self.sequence_starts.clone();
-        let seq_names = self.headers.clone();
+        let seq_names = self.sequence_names.clone();
         let text_len = self.text_len.to_usize();
         let mut extract_result: Vec<ExtractResult> = vec![];
         let now = Instant::now();
@@ -603,10 +722,15 @@ where
     }
 
     // --------------------------------------------------
+    /// Find the positions of queries in a suffix array.
+    /// Returns a vector of `LocateResult`
+    ///
+    /// Args:
+    /// * `args`: a vector of `SearchOptions`
     pub fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult<T>>> {
         let search_result = &self.suffix_search(&args)?;
         let seq_starts = self.sequence_starts.clone();
-        let seq_names = self.headers.clone();
+        let seq_names = self.sequence_names.clone();
         let mut locate_result: Vec<LocateResult<T>> = vec![];
         let now = Instant::now();
 
