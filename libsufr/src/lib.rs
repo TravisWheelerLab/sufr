@@ -2,8 +2,8 @@
 
 //! # Parallel Construction of Suffix Arrays in Rust
 //!
-//! Inspired by the merge sort approach described in "Cache-friendly, 
-//! Parallel, and Samplesort-based Constructor for Suffix Arrays and LCP 
+//! Inspired by the merge sort approach described in "Cache-friendly,
+//! Parallel, and Samplesort-based Constructor for Suffix Arrays and LCP
 //! Arrays." [^patro]
 //!
 //! [^patro]: <https://doi.org/10.4230/LIPIcs.WABI.2023.16>
@@ -16,13 +16,12 @@
 //! * Jack Roddy <jroddy@arizona.edu>
 //! * Travis Wheeler <twheeler@arizona.edu>
 
+mod file_access;
 pub mod sufr_builder;
 pub mod sufr_file;
-pub mod sufr_search;
-pub mod file_access;
+mod sufr_search;
 pub mod types;
 pub mod util;
-
 
 // --------------------------------------------------
 #[cfg(test)]
