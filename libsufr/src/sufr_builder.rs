@@ -3,8 +3,8 @@
 //! Sufr builds the suffix and LCP (longest common prefix) arrays on disk.
 //! The suffixes are partitioned into temporary files, and these are sorted
 //! in parallel.
-//! Call the `write` method to serialized the data structures to 
-//! a file (preferably with the _.sufr_ extension) that can be read 
+//! Call the `write` method to serialized the data structures to
+//! a file (preferably with the _.sufr_ extension) that can be read
 //! by `sufr_file`.
 //!
 //!```
@@ -61,11 +61,18 @@ use tempfile::NamedTempFile;
 
 // --------------------------------------------------
 /// The arguments for creating a `SufrBuilder` struct
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SufrBuilderArgs {
     /// Text as raw U8 bytes. cf. `libsufr::utils::read_sequence_file`
     /// Note: this value will be kept in memory during the build process.
     pub text: Vec<u8>,
+
+    /// The path to the .sufr file that will be written.
+    pub path: Option<String>,
+
+    ///
+    ///
+    pub low_memory: bool,
 
     /// Maximum query length determines a prefix length of the suffixes.
     /// Without this value, suffixes will be fully sorted.
@@ -96,10 +103,10 @@ pub struct SufrBuilderArgs {
     /// The number of on-disk partitions to use when building the suffix array.
     /// Recommended to be at least the number of available CPUs, but
     /// a good number would place a 1-3 million suffixes into each partition,
-    /// depending on the amount of available memory. 
+    /// depending on the amount of available memory.
     /// The partitions are sorted independently and in parallel.
-    /// Max memory usage will be determined by the average size of the 
-    /// partitions (which includes the number of suffixes in a partition 
+    /// Max memory usage will be determined by the average size of the
+    /// partitions (which includes the number of suffixes in a partition
     /// and the integer size [`u32`, `u64`] to represent the suffixes)
     /// times the number of threads used to process concurrently.
     pub num_partitions: usize,
@@ -1045,14 +1052,14 @@ where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
     /// Create a new `PartitionBuilder`. This struct is used to write it's
-    /// suffix positions to a temporary file. 
+    /// suffix positions to a temporary file.
     ///
     /// Args:
     /// * `capacity`: the number of suffixes to hold in memory until the
     ///   writing to disk. This minimizes the number of times we access the disk
     ///   while also limiting the amount of memory used. Currently set to 4096
-    ///   but it might be worth tuning this, perhaps use more memory to hit 
-    ///   disk less? Or if memory use is too high, lower and take a performance 
+    ///   but it might be worth tuning this, perhaps use more memory to hit
+    ///   disk less? Or if memory use is too high, lower and take a performance
     ///   hit for disk access?
     fn new(capacity: usize) -> Result<Self> {
         let tmp = NamedTempFile::new()?;

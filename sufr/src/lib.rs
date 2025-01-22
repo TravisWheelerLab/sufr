@@ -4,7 +4,7 @@ use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
     sufr_builder::{SufrBuilder, SufrBuilderArgs},
-    sufr_file::SufrFile,
+    sufr_file::{SuffixArray, SufrFile},
     types::{
         ExtractOptions, FromUsize, Int, LowMemoryUsage, SearchOptions, SuffixSortType,
     },
@@ -403,8 +403,18 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         now.elapsed()
     );
 
+    let outfile = &args.output.clone().unwrap_or(format!(
+        "{}.sufr",
+        PathBuf::from(&args.input)
+            .file_stem()
+            .unwrap_or(OsStr::new("out"))
+            .to_string_lossy()
+    ));
+
     let builder_args = SufrBuilderArgs {
         text: seq_data.seq,
+        path: Some(outfile.to_string()),
+        low_memory: true,
         max_query_len: args.max_query_len,
         is_dna: args.is_dna,
         allow_ambiguity: args.allow_ambiguity,
@@ -416,30 +426,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         random_seed: args.random_seed,
     };
 
-    if (text_len as u64) < u32::MAX as u64 {
-        let sa: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
-        _create(sa, args, now)
-    } else {
-        let sa: SufrBuilder<u64> = SufrBuilder::new(builder_args)?;
-        _create(sa, args, now)
-    }
-}
-
-// --------------------------------------------------
-// Helper for "create" that checks/writes SA/LCP
-fn _create<T>(sa: SufrBuilder<T>, args: &CreateArgs, timer: Instant) -> Result<()>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-{
-    let outfile = &args.output.clone().unwrap_or(format!(
-        "{}.sufr",
-        PathBuf::from(&args.input)
-            .file_stem()
-            .unwrap_or(OsStr::new("out"))
-            .to_string_lossy()
-    ));
     let now = Instant::now();
-    let bytes_written = sa.write(outfile)?;
+    let (_, bytes_written) = SuffixArray::write(builder_args)?;
+
     let num_fmt = NumberFormat::new();
     info!(
         "Wrote {} byte{} to '{outfile}' in {:?}",
@@ -447,7 +436,6 @@ where
         if bytes_written == 1 { "" } else { "s" },
         now.elapsed()
     );
-    info!("Total time: {:?}", timer.elapsed());
 
     Ok(())
 }
@@ -647,25 +635,8 @@ fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
 
 // --------------------------------------------------
 pub fn locate(args: &LocateArgs) -> Result<()> {
-    let len = read_text_length(&args.file)? as u64;
-    if len < u32::MAX as u64 {
-        let now = Instant::now();
-        let sa: SufrFile<u32> = SufrFile::read(&args.file, args.very_low_memory)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _locate(sa, args)
-    } else {
-        let now = Instant::now();
-        let sa: SufrFile<u64> = SufrFile::read(&args.file, args.very_low_memory)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _locate(sa, args)
-    }
-}
+    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
 
-// --------------------------------------------------
-fn _locate<T>(mut sufr_file: SufrFile<T>, args: &LocateArgs) -> Result<()>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-{
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
@@ -681,6 +652,7 @@ where
     } else {
         None
     };
+
     let loc_args = SearchOptions {
         queries,
         max_query_len: args.max_query_len,
@@ -688,7 +660,7 @@ where
         find_suffixes: true,
     };
 
-    for mut res in sufr_file.locate(loc_args)? {
+    for mut res in suffix_array.locate(loc_args)? {
         if res.positions.is_empty() {
             eprintln!("{} not found", res.query);
             continue;
@@ -859,7 +831,11 @@ where
         "Sequence starts".to_string(),
         textwrap::wrap(&seq_starts, 40).join("\n"),
     ]);
-    let seq_names = sufr_file.sequence_names.into_iter().collect::<Vec<_>>().join(", ");
+    let seq_names = sufr_file
+        .sequence_names
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
     rows.push(vec![
         "Sequence names".to_string(),
         textwrap::wrap(&seq_names, 40).join("\n"),

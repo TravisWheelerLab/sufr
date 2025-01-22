@@ -14,7 +14,7 @@ use std::{
 /// Serialization version
 pub const OUTFILE_VERSION: u8 = 6;
 
-/// The sentinel character placed at the end of the text 
+/// The sentinel character placed at the end of the text
 /// (and so must not occur in the given text)
 pub const SENTINEL_CHARACTER: u8 = b'$';
 
@@ -23,7 +23,7 @@ pub const SENTINEL_CHARACTER: u8 = b'$';
 #[derive(Debug)]
 pub enum SuffixSortType {
     /// A maximum query length, which can be zero
-    MaxQueryLen(usize), 
+    MaxQueryLen(usize),
 
     /// A seed mask of 1/0 for care/don't-care positions
     Mask(SeedMask),
@@ -42,7 +42,7 @@ pub struct SeedMask {
     /// The offset positions of the "care" values (from the 1s)
     pub positions: Vec<usize>,
 
-    /// A vector of "difference" values to add to the 
+    /// A vector of "difference" values to add to the
     /// range 0..`weight` that will return the "care" positions
     pub differences: Vec<usize>,
 
@@ -76,7 +76,7 @@ impl SeedMask {
         })
     }
 
-    /// Instantiate a `SeedMask` from the byte representation 
+    /// Instantiate a `SeedMask` from the byte representation
     /// from a `SufrFile`
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mask: String = bytes
@@ -122,7 +122,7 @@ impl SeedMask {
             .collect()
     }
 
-    /// Find the differences to add to each index to get the offsets 
+    /// Find the differences to add to each index to get the offsets
     /// of the "care" positions.
     fn get_differences(positions: &[usize]) -> Vec<usize> {
         // Mask: "1001101"
@@ -151,7 +151,7 @@ impl Display for SeedMask {
 
 // --------------------------------------------------
 /// Describes how to query a suffix array.
-/// In the absence of these values, the suffix array will be 
+/// In the absence of these values, the suffix array will be
 /// read into memory, possibly using a maximum query length
 /// to downsample the values.
 #[derive(Debug, Clone)]
@@ -160,7 +160,7 @@ pub enum LowMemoryUsage {
     Low,
 
     /// Additionally keep `text` on disk
-    VeryLow
+    VeryLow,
 }
 
 // --------------------------------------------------
@@ -171,14 +171,14 @@ pub struct SearchOptions {
     pub queries: Vec<String>,
 
     /// A maximum query length to use.
-    /// If the suffix array was sorted with a shorter MQL, that 
+    /// If the suffix array was sorted with a shorter MQL, that
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
     /// How little memory to use.
     /// More memory will result in higher throughput/latency.
-    /// With `None`, the `text` and suffix array will be placed 
-    /// into memory. At low memory, the suffix array will be 
+    /// With `None`, the `text` and suffix array will be placed
+    /// into memory. At low memory, the suffix array will be
     /// read from disk. At very low, the text will also be left
     /// on disk.
     pub low_memory: Option<LowMemoryUsage>,
@@ -222,7 +222,7 @@ pub struct Comparison {
     /// Whether the suffix is greater, less, or equal
     pub cmp: Ordering,
 
-    /// The length of the longest common prefix (LCP) 
+    /// The length of the longest common prefix (LCP)
     /// between the query and the suffix
     pub lcp: usize,
 }
@@ -232,7 +232,7 @@ pub struct Comparison {
 /// for reading sequences from a FASTA/Q file.
 #[derive(Debug)]
 pub struct SequenceFileData {
-    /// The sequence as a vector of bytes. Multiple sequences are 
+    /// The sequence as a vector of bytes. Multiple sequences are
     /// separated by a user-supplied sequence delimiter.
     pub seq: Vec<u8>,
 
@@ -319,7 +319,7 @@ pub struct ExtractOptions {
     /// Optional length of prefix to append before found suffixes (context)
     pub prefix_len: Option<usize>,
 
-    /// Optional limit to the length of the suffix returned 
+    /// Optional limit to the length of the suffix returned
     pub suffix_len: Option<usize>,
 }
 
@@ -339,12 +339,12 @@ pub struct ExtractResult {
 
 // --------------------------------------------------
 /// A struct describing a found query in the context of a sequence
-/// This struct is used by the `sufr extract` command to print the 
+/// This struct is used by the `sufr extract` command to print the
 /// results of a search in FASTA format.
-/// Normally, the query will be at the beginning of the result, so the 
+/// Normally, the query will be at the beginning of the result, so the
 /// `sequence_start` will be 0.
 /// When looking for alignment seeds, the user may request some prior context
-/// via a `prefix_len`, in which case the sequence start will be whatever 
+/// via a `prefix_len`, in which case the sequence start will be whatever
 /// length of prefix appended before the actual found hit. Note that the user
 /// may request something like 100 characters of prefix but less than that is
 /// appended because the hit was closer than 100 to the start of the sequence.
@@ -362,24 +362,21 @@ pub struct ExtractSequence {
     /// The start/offset of the containing sequence in the full `text`
     pub sequence_start: usize,
 
-    /// The hit's relative start/stop range inside the sequence 
+    /// The hit's relative start/stop range inside the sequence
     /// including the prefix/suffix lengths shown
     pub sequence_range: Range<usize>,
 
     /// The query hit's start position from the beginning of the shown context
-    /// E.g., if the user requested a prefix of 10, then this value will be 
+    /// E.g., if the user requested a prefix of 10, then this value will be
     /// between 0-10, depending on the location of the hit inside the sequence.
     pub suffix_offset: usize,
 }
 
 // --------------------------------------------------
-/// A struct representing the results of a search that includes the 
+/// A struct representing the results of a search that includes the
 /// locations of the suffixes in their sequence context.
 #[derive(Debug, PartialEq)]
-pub struct LocateResult<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct LocateResult {
     /// The ordinal position of the original query
     pub query_num: usize,
 
@@ -388,19 +385,16 @@ where
 
     /// A vector of positions where the query was found.
     /// This will be empty when the query was not present.
-    pub positions: Vec<LocatePosition<T>>,
+    pub positions: Vec<LocatePosition>,
 }
 
 // --------------------------------------------------
-/// A struct representing the relative location of a query hit 
+/// A struct representing the relative location of a query hit
 /// in the context of a sequence.
 #[derive(Debug, PartialEq)]
-pub struct LocatePosition<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct LocatePosition {
     /// The position of the suffix in the suffix array
-    pub suffix: T,
+    pub suffix: usize,
 
     /// The rank of the suffix in the suffix array
     pub rank: usize,
@@ -409,7 +403,7 @@ where
     pub sequence_name: String,
 
     /// The start position of the hit in the sequence
-    pub sequence_position: T,
+    pub sequence_position: usize,
 }
 
 #[cfg(test)]

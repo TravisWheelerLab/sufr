@@ -1,6 +1,7 @@
 //! Read and query the suffix/LCP arrays in a _.sufr_ file.
 use crate::{
     file_access::FileAccess,
+    sufr_builder::{SufrBuilder, SufrBuilderArgs},
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
         ExtractOptions, ExtractResult, ExtractSequence, FromUsize, Int, LocatePosition,
@@ -25,6 +26,86 @@ use std::{
     time::Instant,
 };
 use thread_local::ThreadLocal;
+
+pub(crate) trait SuffixArrayTrait {
+    fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>>;
+    fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>>;
+}
+
+pub(crate) struct SuffixArray32 {
+    inner: SufrFile<u32>,
+}
+
+impl SuffixArrayTrait for SuffixArray32 {
+    fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>> {
+        self.inner.locate(args)
+    }
+
+    fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
+        self.inner.extract(args)
+    }
+}
+
+pub(crate) struct SuffixArray64 {
+    inner: SufrFile<u64>,
+}
+
+impl SuffixArrayTrait for SuffixArray64 {
+    fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>> {
+        self.inner.locate(args)
+    }
+
+    fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
+        self.inner.extract(args)
+    }
+}
+
+pub struct SuffixArray {
+    inner: Box<dyn SuffixArrayTrait>,
+}
+
+impl SuffixArray {
+    pub fn new(args: SufrBuilderArgs) -> Result<SuffixArray> {
+        let low_memory = args.low_memory;
+        let (path, _) = Self::write(args)?;
+        Self::read(&path, low_memory)
+    }
+
+    pub fn write(args: SufrBuilderArgs) -> Result<(String, usize)> {
+        let path = args.path.clone().unwrap_or("./out.sufr".to_string());
+        let bytes_written = if (args.text.len() as u64) < u32::MAX as u64 {
+            let sa: SufrBuilder<u32> = SufrBuilder::new(args)?;
+            sa.write(&path)?
+        } else {
+            let sa: SufrBuilder<u64> = SufrBuilder::new(args)?;
+            sa.write(&path)?
+        };
+
+        Ok((path, bytes_written))
+    }
+
+    pub fn read(filename: &str, low_memory: bool) -> Result<SuffixArray> {
+        let text_len = crate::util::read_text_length(filename)? as u64;
+        let sa: Box<dyn SuffixArrayTrait> = if text_len < u32::MAX as u64 {
+            Box::new(SuffixArray32 {
+                inner: SufrFile::read(filename, low_memory)?,
+            })
+        } else {
+            Box::new(SuffixArray64 {
+                inner: SufrFile::read(filename, low_memory)?,
+            })
+        };
+        Ok(SuffixArray { inner: sa })
+    }
+
+    pub fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>> {
+        self.inner.locate(args)
+    }
+
+    pub fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
+        self.inner.extract(args)
+    }
+}
 
 // --------------------------------------------------
 /// Struct used to read a serialized _.sufr_ file representing
@@ -121,7 +202,7 @@ where
     ///   `true`, the text will be read off-disk.
     ///
     /// You can use [util::read_text_length](super::util::read_text_length)
-    /// to get the length of the text to parameterize the `SufrFile` with 
+    /// to get the length of the text to parameterize the `SufrFile` with
     /// the correct integer size.
     ///
     /// ```
@@ -895,11 +976,11 @@ where
     /// ]
     /// ```
     ///
-    pub fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult<T>>> {
+    pub fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>> {
         let search_result = &self.suffix_search(&args)?;
         let seq_starts = self.sequence_starts.clone();
         let seq_names = self.sequence_names.clone();
-        let mut locate_result: Vec<LocateResult<T>> = vec![];
+        let mut locate_result: Vec<LocateResult> = vec![];
         let now = Instant::now();
 
         // Augment the search with relative sequence positions
@@ -910,9 +991,9 @@ where
                     let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
                     positions.push(LocatePosition {
                         rank,
-                        suffix,
+                        suffix: suffix.to_usize(),
                         sequence_name: seq_names[i].clone(),
-                        sequence_position: suffix - seq_starts[i],
+                        sequence_position: (suffix - seq_starts[i]).to_usize(),
                     })
                 }
             }
