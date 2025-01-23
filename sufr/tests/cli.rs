@@ -370,8 +370,8 @@ fn count_seq1() -> Result<()> {
             queries: vec!["AC".to_string(), "X".to_string(), "GT".to_string()],
             low_memory: false,
         },
-        "AC 2\nGT 2\n",
-        Some("X not found\n"),
+        "AC 2\nX 0\nGT 2\n",
+        None,
     )
 }
 

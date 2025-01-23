@@ -1,14 +1,15 @@
 use anyhow::{anyhow, bail, Result};
-use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    sufr_builder::{SufrBuilder, SufrBuilderArgs},
-    sufr_file::{SuffixArray, SufrFile},
+    suffix_array::SuffixArray,
+    sufr_builder::SufrBuilderArgs,
+    //sufr_file::SufrFile,
     types::{
-        ExtractOptions, FromUsize, Int, LowMemoryUsage, SearchOptions, SuffixSortType,
+        CountOptions, ExtractOptions, ListOptions, LocateOptions, LowMemoryUsage,
+        SuffixSortType,
     },
-    util::{read_sequence_file, read_text_length},
+    util::read_sequence_file,
 };
 use log::info;
 use regex::Regex;
@@ -164,6 +165,14 @@ pub struct ExtractArgs {
 #[derive(Debug, Parser)]
 #[command(about, alias = "ls")]
 pub struct ListArgs {
+    /// Sufr file
+    #[arg(value_name = "FILE")]
+    pub file: String,
+
+    /// Ranks of suffixes to show
+    #[arg(value_name = "RANK")]
+    pub ranks: Vec<String>,
+
     /// Show rank column
     #[arg(short('r'), long)]
     pub show_rank: bool,
@@ -191,14 +200,6 @@ pub struct ListArgs {
     /// Output
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
-
-    /// Sufr file
-    #[arg(value_name = "SUFR")]
-    pub file: String,
-
-    /// Ranks of suffixes to show
-    #[arg(value_name = "RANK")]
-    pub ranks: Vec<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -334,24 +335,7 @@ impl ValueEnum for LogLevel {
 
 // --------------------------------------------------
 pub fn count(args: &CountArgs) -> Result<()> {
-    let text_len = read_text_length(&args.file)? as u64;
-
-    if text_len < u32::MAX as u64 {
-        let sufr_file: SufrFile<u32> =
-            SufrFile::read(&args.file, args.very_low_memory)?;
-        _count(sufr_file, args)
-    } else {
-        let sufr_file: SufrFile<u64> =
-            SufrFile::read(&args.file, args.very_low_memory)?;
-        _count(sufr_file, args)
-    }
-}
-
-// --------------------------------------------------
-fn _count<T>(mut sufr_file: SufrFile<T>, args: &CountArgs) -> Result<()>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-{
+    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
@@ -368,24 +352,17 @@ where
         None
     };
 
-    let loc_args = SearchOptions {
+    let count_args = CountOptions {
         queries,
         max_query_len: args.max_query_len,
         low_memory,
-        find_suffixes: false,
     };
 
-    for res in sufr_file.suffix_search(&loc_args)? {
-        match res.locations {
-            Some(locs) => {
-                let ranks = locs.ranks;
-                writeln!(output, "{} {}", res.query, ranks.end - ranks.start)?;
-            }
-            _ => eprintln!("{} not found", res.query),
-        }
+    for res in suffix_array.count(count_args)? {
+        writeln!(output, "{} {}", res.query, res.count)?;
     }
 
-    info!("Locate of {} finished in {:?}", num_queries, now.elapsed());
+    info!("Count of {} finished in {:?}", num_queries, now.elapsed());
     Ok(())
 }
 
@@ -442,27 +419,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
 // --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
-    let text_len = read_text_length(&args.file)? as u64;
-    if text_len < u32::MAX as u64 {
-        let now = Instant::now();
-        let sufr_file: SufrFile<u32> =
-            SufrFile::read(&args.file, args.very_low_memory)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _extract(sufr_file, args)
-    } else {
-        let now = Instant::now();
-        let sufr_file: SufrFile<u64> =
-            SufrFile::read(&args.file, args.very_low_memory)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _extract(sufr_file, args)
-    }
-}
-
-// --------------------------------------------------
-fn _extract<T>(mut sufr_file: SufrFile<T>, args: &ExtractArgs) -> Result<()>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-{
+    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
@@ -477,7 +434,7 @@ where
     } else {
         None
     };
-    let loc_args = ExtractOptions {
+    let extract_args = ExtractOptions {
         queries,
         max_query_len: args.max_query_len,
         low_memory,
@@ -485,7 +442,7 @@ where
         suffix_len: args.suffix_len,
     };
 
-    for res in sufr_file.extract(loc_args)? {
+    for res in suffix_array.extract(extract_args)? {
         if res.sequences.is_empty() {
             eprintln!("{} not found", res.query);
         } else {
@@ -498,10 +455,10 @@ where
                     seq.sequence_range.end,
                     res.query,
                     seq.suffix_offset,
-                    sufr_file.string_at(
+                    suffix_array.string_at(
                         seq.sequence_start + seq.sequence_range.start,
                         Some(seq.sequence_range.end - seq.sequence_range.start),
-                    )
+                    )?
                 )?;
             }
         }
@@ -513,25 +470,8 @@ where
 
 // --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
-    let text_len = read_text_length(&args.file)? as u64;
-    if text_len < u32::MAX as u64 {
-        let now = Instant::now();
-        let sa: SufrFile<u32> = SufrFile::read(&args.file, args.very_low_memory)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _list(sa, args)
-    } else {
-        let now = Instant::now();
-        let sa: SufrFile<u64> = SufrFile::read(&args.file, args.very_low_memory)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _list(sa, args)
-    }
-}
+    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
 
-// --------------------------------------------------
-fn _list<T>(mut sufr_file: SufrFile<T>, args: &ListArgs) -> Result<()>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-{
     let mut ranks: Vec<usize> = vec![];
     for val in &args.ranks {
         let mut parsed: Vec<_> = parse_pos(val)?
@@ -541,73 +481,86 @@ where
         ranks.append(&mut parsed);
     }
 
-    let mut output: Box<dyn Write> = match &args.output {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
+    //let mut output: Box<dyn Write> = match &args.output {
+    //    Some(out_name) => Box::new(File::create(out_name)?),
+    //    _ => Box::new(io::stdout()),
+    //};
+
+    let list_opts = ListOptions {
+        ranks,
+        show_rank: args.show_rank,
+        show_suffix: args.show_suffix,
+        show_lcp: args.show_lcp,
+        very_low_memory: args.very_low_memory,
+        len: args.len,
+        number: args.number,
+        output: args.output.clone(),
     };
+    suffix_array.list(list_opts)?;
 
-    let width = sufr_file.text_len.to_string().len();
-    let text_len = sufr_file.text_len.to_usize();
-    let suffix_len = args.len.unwrap_or(text_len);
-
-    let mut print = |rank: usize, suffix: usize, lcp: T| -> Result<()> {
-        let end = if suffix + suffix_len > text_len {
-            text_len
-        } else {
-            suffix + suffix_len
-        };
-
-        let rank_display = if args.show_rank {
-            format!("{rank:width$} ")
-        } else {
-            "".to_string()
-        };
-
-        let suffix_display = if args.show_suffix {
-            format!("{suffix:width$} ")
-        } else {
-            "".to_string()
-        };
-        let lcp_display = if args.show_lcp {
-            format!("{:width$} ", lcp)
-        } else {
-            "".to_string()
-        };
-
-        writeln!(
-            output,
-            "{rank_display}{suffix_display}{lcp_display}{}",
-            String::from_utf8(sufr_file.text_file.get_range(suffix..end)?)?
-        )?;
-        Ok(())
-    };
-
-    let number = args.number.unwrap_or(0);
-    if ranks.is_empty() {
-        for (rank, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
-            print(
-                rank,
-                suffix.to_usize(),
-                sufr_file.lcp_file.get(rank).unwrap(),
-            )?;
-
-            if number > 0 && rank == number - 1 {
-                break;
-            }
-        }
-    } else {
-        for rank in ranks {
-            if let Some(suffix) = sufr_file.suffix_array_file.get(rank) {
-                print(
-                    rank,
-                    suffix.to_usize(),
-                    sufr_file.lcp_file.get(rank).unwrap(),
-                )?;
-            } else {
-                eprintln!("Invalid rank: {rank}");
-            }
-        }
-    }
+    //let sufr_file = suffix_array.inner;
+    //let width = sufr_file.text_len.to_string().len();
+    //let text_len = sufr_file.text_len.to_usize();
+    //let suffix_len = args.len.unwrap_or(text_len);
+    //
+    //let mut print = |rank: usize, suffix: usize, lcp: T| -> Result<()> {
+    //    let end = if suffix + suffix_len > text_len {
+    //        text_len
+    //    } else {
+    //        suffix + suffix_len
+    //    };
+    //
+    //    let rank_display = if args.show_rank {
+    //        format!("{rank:width$} ")
+    //    } else {
+    //        "".to_string()
+    //    };
+    //
+    //    let suffix_display = if args.show_suffix {
+    //        format!("{suffix:width$} ")
+    //    } else {
+    //        "".to_string()
+    //    };
+    //    let lcp_display = if args.show_lcp {
+    //        format!("{:width$} ", lcp)
+    //    } else {
+    //        "".to_string()
+    //    };
+    //
+    //    writeln!(
+    //        output,
+    //        "{rank_display}{suffix_display}{lcp_display}{}",
+    //        String::from_utf8(sufr_file.text_file.get_range(suffix..end)?)?
+    //    )?;
+    //    Ok(())
+    //};
+    //
+    //let number = args.number.unwrap_or(0);
+    //if ranks.is_empty() {
+    //    for (rank, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
+    //        print(
+    //            rank,
+    //            suffix.to_usize(),
+    //            sufr_file.lcp_file.get(rank).unwrap(),
+    //        )?;
+    //
+    //        if number > 0 && rank == number - 1 {
+    //            break;
+    //        }
+    //    }
+    //} else {
+    //    for rank in ranks {
+    //        if let Some(suffix) = sufr_file.suffix_array_file.get(rank) {
+    //            print(
+    //                rank,
+    //                suffix.to_usize(),
+    //                sufr_file.lcp_file.get(rank).unwrap(),
+    //            )?;
+    //        } else {
+    //            eprintln!("Invalid rank: {rank}");
+    //        }
+    //    }
+    //}
 
     Ok(())
 }
@@ -636,7 +589,6 @@ fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
 // --------------------------------------------------
 pub fn locate(args: &LocateArgs) -> Result<()> {
     let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
-
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
@@ -653,11 +605,10 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
         None
     };
 
-    let loc_args = SearchOptions {
+    let loc_args = LocateOptions {
         queries,
         max_query_len: args.max_query_len,
         low_memory,
-        find_suffixes: true,
     };
 
     for mut res in suffix_array.locate(loc_args)? {
@@ -750,64 +701,41 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 
 // --------------------------------------------------
 pub fn summarize(args: &SummarizeArgs) -> Result<()> {
-    let text_len = read_text_length(&args.file)? as u64;
-    // TODO: Make sure we always want to avoid holding text?
-    if text_len < u32::MAX as u64 {
-        let now = Instant::now();
-        let sa: SufrFile<u32> = SufrFile::read(&args.file, true)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _summarize(sa, args)
-    } else {
-        let now = Instant::now();
-        let sa: SufrFile<u64> = SufrFile::read(&args.file, true)?;
-        info!("Read sufr file in {:?}", now.elapsed());
-        _summarize(sa, args)
-    }
-}
-
-// --------------------------------------------------
-fn _summarize<T>(sufr_file: SufrFile<T>, _args: &SummarizeArgs) -> Result<()>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-{
+    let suffix_array = SuffixArray::read(&args.file, true)?;
+    let meta = suffix_array.metadata()?;
     let num_fmt = NumberFormat::new();
-    let mut rows = vec![vec!["Filename".to_string(), sufr_file.filename.to_string()]];
-    let metadata = fs::metadata(&sufr_file.filename)?;
-    let modified: DateTime<Local> = DateTime::from(metadata.modified()?);
+    let mut rows = vec![vec!["Filename".to_string(), meta.filename.clone()]];
     rows.push(vec![
         "Modified".to_string(),
-        modified.format("%Y-%m-%d %H:%M").to_string(),
+        meta.modified.format("%Y-%m-%d %H:%M").to_string(),
     ]);
     rows.push(vec![
         "File Size".to_string(),
-        format!(
-            "{} bytes",
-            num_fmt.format(",.0", metadata.len().to_usize() as f64)
-        ),
+        format!("{} bytes", num_fmt.format(",.0", meta.file_size as f64)),
     ]);
     rows.push(vec![
         "File Version".to_string(),
-        sufr_file.version.to_string(),
+        meta.file_version.to_string(),
     ]);
-    rows.push(vec!["DNA".to_string(), sufr_file.is_dna.to_string()]);
+    rows.push(vec!["DNA".to_string(), meta.is_dna.to_string()]);
     rows.push(vec![
         "Allow Ambiguity".to_string(),
-        sufr_file.allow_ambiguity.to_string(),
+        meta.allow_ambiguity.to_string(),
     ]);
     rows.push(vec![
         "Ignore Softmask".to_string(),
-        sufr_file.ignore_softmask.to_string(),
+        meta.ignore_softmask.to_string(),
     ]);
     rows.push(vec![
         "Text Length".to_string(),
-        num_fmt.format(",.0", sufr_file.text_len.to_usize() as f64),
+        num_fmt.format(",.0", meta.text_len as f64),
     ]);
     rows.push(vec![
         "Len Suffixes".to_string(),
-        num_fmt.format(",.0", sufr_file.len_suffixes.to_usize() as f64),
+        num_fmt.format(",.0", meta.len_suffixes as f64),
     ]);
 
-    match sufr_file.sort_type {
+    match meta.sort_type {
         SuffixSortType::Mask(seed_mask) => {
             rows.push(vec!["Seed mask".to_string(), seed_mask.mask])
         }
@@ -819,9 +747,9 @@ where
 
     rows.push(vec![
         "Num sequences".to_string(),
-        num_fmt.format(",.0", sufr_file.num_sequences.to_usize() as f64),
+        num_fmt.format(",.0", meta.num_sequences as f64),
     ]);
-    let seq_starts = sufr_file
+    let seq_starts = meta
         .sequence_starts
         .into_iter()
         .map(|v| v.to_string())
@@ -831,11 +759,7 @@ where
         "Sequence starts".to_string(),
         textwrap::wrap(&seq_starts, 40).join("\n"),
     ]);
-    let seq_names = sufr_file
-        .sequence_names
-        .into_iter()
-        .collect::<Vec<_>>()
-        .join(", ");
+    let seq_names = meta.sequence_names.join(", ");
     rows.push(vec![
         "Sequence names".to_string(),
         textwrap::wrap(&seq_names, 40).join("\n"),

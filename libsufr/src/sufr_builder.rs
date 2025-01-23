@@ -70,8 +70,7 @@ pub struct SufrBuilderArgs {
     /// The path to the .sufr file that will be written.
     pub path: Option<String>,
 
-    ///
-    ///
+    /// Use low memory when reading in resulting suffix array
     pub low_memory: bool,
 
     /// Maximum query length determines a prefix length of the suffixes.
@@ -1119,6 +1118,8 @@ mod test {
         let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
             text,
+            low_memory: true,
+            path: None,
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1129,7 +1130,7 @@ mod test {
             seed_mask: None,
             random_seed: 0,
         };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+        let sufr = SufrBuilder::<u32>::new(args)?;
 
         // 1: TTAGC
         // 0: TTTAGC
@@ -1156,6 +1157,8 @@ mod test {
         let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
             text,
+            low_memory: true,
+            path: None,
             max_query_len: Some(2),
             is_dna: false,
             allow_ambiguity: false,
@@ -1166,7 +1169,7 @@ mod test {
             seed_mask: None,
             random_seed: 0,
         };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+        let sufr = SufrBuilder::<u32>::new(args)?;
 
         // 1: TTAGC
         // 0: TTTAGC
@@ -1196,6 +1199,8 @@ mod test {
         let text = b"TTTTAT".to_vec();
         let args = SufrBuilderArgs {
             text,
+            low_memory: true,
+            path: None,
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1237,6 +1242,8 @@ mod test {
         let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
             text,
+            low_memory: true,
+            path: None,
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1280,6 +1287,8 @@ mod test {
         let text = b"TTTTTA".to_vec();
         let args = SufrBuilderArgs {
             text,
+            low_memory: true,
+            path: None,
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1309,13 +1318,14 @@ mod test {
 
     #[test]
     fn test_upper_bound_1() -> Result<()> {
-        //          012345                    // 0: TTTAGC
-        let text = b"TTTAGC".to_vec(); // 1:  TTAGC
+        //          012345
+        let text = b"TTTAGC".to_vec();
         let args = SufrBuilderArgs {
-            // 2:   TAGC
-            text,                // 3:    AGC
-            max_query_len: None, // 4:     GC
-            is_dna: false,       // 5:      C
+            text,
+            low_memory: true,
+            path: None,
+            max_query_len: None,
+            is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
             sequence_starts: vec![0],
@@ -1344,6 +1354,8 @@ mod test {
         let text = b"ACGTNNACGT".to_vec();
         let args = SufrBuilderArgs {
             text,
+            low_memory: true,
+            path: None,
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1394,6 +1406,8 @@ mod test {
         let text = b"ACGTNNACGT".to_vec();
         let args = SufrBuilderArgs {
             text,
+            low_memory: true,
+            path: None,
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,

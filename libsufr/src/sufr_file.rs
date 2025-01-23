@@ -1,16 +1,17 @@
 //! Read and query the suffix/LCP arrays in a _.sufr_ file.
 use crate::{
     file_access::FileAccess,
-    sufr_builder::{SufrBuilder, SufrBuilderArgs},
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
-        ExtractOptions, ExtractResult, ExtractSequence, FromUsize, Int, LocatePosition,
-        LocateResult, LowMemoryUsage, SearchOptions, SearchResult, SeedMask,
-        SuffixSortType,
+        CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence,
+        FromUsize, Int, ListOptions, LocateOptions, LocatePosition, LocateResult,
+        LowMemoryUsage, SearchOptions, SearchResult, SeedMask, SuffixSortType,
+        SufrMetadata,
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Local};
 use home::home_dir;
 use log::info;
 use rayon::prelude::*;
@@ -18,7 +19,7 @@ use std::{
     cell::RefCell,
     cmp::min,
     fs::{self, File},
-    io::{Read, Seek, Write},
+    io::{self, Read, Seek, Write},
     mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -26,86 +27,6 @@ use std::{
     time::Instant,
 };
 use thread_local::ThreadLocal;
-
-pub(crate) trait SuffixArrayTrait {
-    fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>>;
-    fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>>;
-}
-
-pub(crate) struct SuffixArray32 {
-    inner: SufrFile<u32>,
-}
-
-impl SuffixArrayTrait for SuffixArray32 {
-    fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>> {
-        self.inner.locate(args)
-    }
-
-    fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
-        self.inner.extract(args)
-    }
-}
-
-pub(crate) struct SuffixArray64 {
-    inner: SufrFile<u64>,
-}
-
-impl SuffixArrayTrait for SuffixArray64 {
-    fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>> {
-        self.inner.locate(args)
-    }
-
-    fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
-        self.inner.extract(args)
-    }
-}
-
-pub struct SuffixArray {
-    inner: Box<dyn SuffixArrayTrait>,
-}
-
-impl SuffixArray {
-    pub fn new(args: SufrBuilderArgs) -> Result<SuffixArray> {
-        let low_memory = args.low_memory;
-        let (path, _) = Self::write(args)?;
-        Self::read(&path, low_memory)
-    }
-
-    pub fn write(args: SufrBuilderArgs) -> Result<(String, usize)> {
-        let path = args.path.clone().unwrap_or("./out.sufr".to_string());
-        let bytes_written = if (args.text.len() as u64) < u32::MAX as u64 {
-            let sa: SufrBuilder<u32> = SufrBuilder::new(args)?;
-            sa.write(&path)?
-        } else {
-            let sa: SufrBuilder<u64> = SufrBuilder::new(args)?;
-            sa.write(&path)?
-        };
-
-        Ok((path, bytes_written))
-    }
-
-    pub fn read(filename: &str, low_memory: bool) -> Result<SuffixArray> {
-        let text_len = crate::util::read_text_length(filename)? as u64;
-        let sa: Box<dyn SuffixArrayTrait> = if text_len < u32::MAX as u64 {
-            Box::new(SuffixArray32 {
-                inner: SufrFile::read(filename, low_memory)?,
-            })
-        } else {
-            Box::new(SuffixArray64 {
-                inner: SufrFile::read(filename, low_memory)?,
-            })
-        };
-        Ok(SuffixArray { inner: sa })
-    }
-
-    pub fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>> {
-        self.inner.locate(args)
-    }
-
-    pub fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
-        self.inner.extract(args)
-    }
-}
 
 // --------------------------------------------------
 /// Struct used to read a serialized _.sufr_ file representing
@@ -206,11 +127,18 @@ where
     /// the correct integer size.
     ///
     /// ```
-    /// let text_len = read_text_length(&filename)? as u64;
-    /// if text_len < u32::MAX as u64 {
-    ///     let sufr_file: SufrFile<u32> = SufrFile::read(&filename, true)?;
-    /// } else {
-    ///     let sufr_file: SufrFile<u64> = SufrFile::read(&filename, true)?;
+    /// use anyhow::Result;
+    /// use libsufr::{sufr_file::SufrFile, util::read_text_length};
+    ///
+    /// fn main() -> Result<()> {
+    ///     let filename = "../data/inputs/1.sufr";
+    ///     let text_len = read_text_length(filename)? as u64;
+    ///     if text_len < u32::MAX as u64 {
+    ///         let sufr_file: SufrFile<u32> = SufrFile::read(&filename, true)?;
+    ///     } else {
+    ///         let sufr_file: SufrFile<u64> = SufrFile::read(&filename, true)?;
+    ///     }
+    ///     Ok(())
     /// }
     /// ```
     ///
@@ -353,15 +281,26 @@ where
     /// * `pos`: suffix position
     ///
     /// ```
-    /// let sufr = SufrFile::<u32>::read("genome.sufr", true)?;
+    /// use anyhow::Result;
+    /// use libsufr::sufr_file::SufrFile;
     ///
-    /// // The last character will be the sentinel `$`
-    /// assert_eq!(Some('$'), sufr.get_text(sufr.text_len as usize - 1).map(|v| v as char));
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
+    ///
+    ///     // The last character will be the sentinel `$`
+    ///     assert_eq!(
+    ///         Some('$'),
+    ///         sufr.get_text(sufr.text_len as usize - 1).map(|v| v as char)
+    ///     );
+    ///     Ok(())
+    /// }
+    ///
     /// ```
     pub fn get_text(&mut self, pos: usize) -> Option<u8> {
-        match self.query_low_memory {
-            Some(LowMemoryUsage::VeryLow) => self.text_file.get(pos),
-            _ => self.text.get(pos).copied(),
+        if self.text.is_empty() {
+            self.text_file.get(pos)
+        } else {
+            self.text.get(pos).copied()
         }
     }
 
@@ -374,16 +313,29 @@ where
     /// Given the text "ACGTNNACGT":
     ///
     /// ```
-    /// let sufr = SufrFile::<u32>::read("genome.sufr", true)?;
-    /// assert_eq!([65, 67, 71, 84, 78], sufr.get_text_range(0..5)?);
+    /// use anyhow::Result;
+    /// use libsufr::sufr_file::SufrFile;
     ///
-    /// // Or convert to a string
-    /// println!(Ok("ACGTN"), String::from_utf8(sufr.get_text_range(0..5)?.to_vec()));
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
+    ///
+    ///     let bytes: Vec<u8> = vec![65, 67, 71, 84, 78];
+    ///     assert_eq!(bytes, sufr.get_text_range(0..5)?);
+    ///
+    ///     // Or convert to a string
+    ///     assert_eq!(
+    ///         "ACGTN",
+    ///         String::from_utf8(sufr.get_text_range(0..5)?.to_vec())?
+    ///     );
+    ///
+    ///     Ok(())
+    /// }
     /// ```
     pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
-        match self.query_low_memory {
-            Some(LowMemoryUsage::VeryLow) => self.text_file.get_range(pos),
-            _ => Ok(self.text[pos].to_vec()),
+        if self.text.is_empty() {
+            self.text_file.get_range(pos)
+        } else {
+            Ok(self.text[pos].to_vec())
         }
     }
 
@@ -394,25 +346,29 @@ where
     /// Args:
     /// * `start1`: start position of first suffix
     /// * `start2`: start position of second suffix
+    /// * `len`: end of the text
     ///
     /// Given the text "ACGTNNACGT", the LCP of suffixes 0 and 6 is 4:
     ///
     /// ```
-    /// let sufr = SufrFile::<u32>::read("genome.sufr", true)?;
-    /// assert_eq!(4, sufr.find_lcp(0, 6, sufr.text_len as usize)?);
+    /// use anyhow::Result;
+    /// use libsufr::{types::Int, sufr_file::SufrFile};
+    ///
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
+    ///     let lcp = sufr.find_lcp(0, 6, sufr.text_len.to_usize() - 1);
+    ///     assert_eq!(4, lcp);
+    ///     Ok(())
+    /// }
     /// ```
     ///
-    pub fn find_lcp(&self, start1: usize, start2: usize, len: usize) -> usize {
+    pub fn find_lcp(&mut self, start1: usize, start2: usize, len: usize) -> usize {
         let end1 = min(start1 + len, len);
         let end2 = min(start2 + len, len);
-        unsafe {
-            (start1..end1)
-                .zip(start2..end2)
-                .take_while(|(a, b)| {
-                    self.text.get_unchecked(*a) == self.text.get_unchecked(*b)
-                })
-                .count()
-        }
+        (start1..end1)
+            .zip(start2..end2)
+            .take_while(|(a, b)| self.get_text(*a) == self.get_text(*b))
+            .count()
     }
 
     // --------------------------------------------------
@@ -481,15 +437,21 @@ where
     /// Given a text of "ACGTNNACGT":
     ///
     /// ```
-    /// let sufr = SufrFile::<u32>::read("genome.sufr", true)?;
+    /// use anyhow::Result;
+    /// use libsufr::sufr_file::SufrFile;
     ///
-    /// // This will print the entire input text
-    /// assert_eq!("ACGTNNACGT$", sufr.string_at(0, None));
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
     ///
-    /// // This will print the first 5 characters
-    /// assert_eq!("ACGTN", sufr.string_at(0, Some(5)));
+    ///     // This will print the entire input text
+    ///     assert_eq!("ACGTNNACGT$", sufr.string_at(0, None)?);
+    ///
+    ///     // This will print the first 5 characters
+    ///     assert_eq!("ACGTN", sufr.string_at(0, Some(5))?);
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn string_at(&self, pos: usize, len: Option<usize>) -> String {
+    pub fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
         let text_len = self.text_len.to_usize();
         let end = len.map_or(text_len, |n| {
             let end = pos + n;
@@ -499,10 +461,8 @@ where
                 end
             }
         });
-        self.text
-            .get(pos..end)
-            .map(|v| String::from_utf8(v.to_vec()).unwrap())
-            .unwrap()
+        let bytes = self.get_text_range(pos..end)?;
+        Ok(String::from_utf8(bytes.to_vec())?)
     }
 
     // --------------------------------------------------
@@ -548,6 +508,46 @@ where
         }
 
         (suffix_array, rank)
+    }
+
+    // --------------------------------------------------
+    /// Retrieve file metadata
+    ///
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::sufr_file::SufrFile;
+    ///
+    /// fn main() -> Result<()> {
+    ///     let sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
+    ///     let meta = sufr.metadata()?;
+    ///     assert_eq!(11, meta.text_len);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn metadata(&self) -> Result<SufrMetadata> {
+        let fs_meta = fs::metadata(&self.filename)?;
+        let modified: DateTime<Local> = DateTime::from(fs_meta.modified()?);
+
+        Ok(SufrMetadata {
+            filename: self.filename.clone(),
+            modified,
+            file_size: fs_meta.len().to_usize(),
+            file_version: self.version as usize,
+            is_dna: self.is_dna,
+            allow_ambiguity: self.allow_ambiguity,
+            ignore_softmask: self.ignore_softmask,
+            text_len: self.text_len.to_usize(),
+            len_suffixes: self.len_suffixes.to_usize(),
+            num_sequences: self.num_sequences.to_usize(),
+            sequence_starts: self
+                .sequence_starts
+                .iter()
+                .map(|v| v.to_usize())
+                .collect::<Vec<_>>(),
+            sequence_names: self.sequence_names.clone(),
+            sort_type: self.sort_type.clone(),
+        })
     }
 
     // --------------------------------------------------
@@ -712,48 +712,110 @@ where
     }
 
     // --------------------------------------------------
+    /// Count the occurrences of queries in a suffix array
+    ///
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::{types::{CountOptions, CountResult}, sufr_file::SufrFile};
+    ///
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
+    ///     let opts = CountOptions {
+    ///         queries: vec!["AC".to_string(), "AG".to_string(), "GT".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: None,
+    ///     };
+    ///     let res = sufr.count(opts)?;
+    ///     let expected = vec![
+    ///         CountResult {
+    ///             query_num: 0,
+    ///             query: "AC".to_string(),
+    ///             count: 2,
+    ///         },
+    ///         CountResult {
+    ///             query_num: 1,
+    ///             query: "AG".to_string(),
+    ///             count: 0,
+    ///         },
+    ///         CountResult {
+    ///             query_num: 2,
+    ///             query: "GT".to_string(),
+    ///             count: 2,
+    ///         },
+    ///     ];
+    ///     assert_eq!(expected, res);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn count(&mut self, args: CountOptions) -> Result<Vec<CountResult>> {
+        let search_args = SearchOptions {
+            queries: args.queries,
+            max_query_len: args.max_query_len,
+            low_memory: args.low_memory,
+            find_suffixes: false,
+        };
+
+        let counts: Vec<_> = self
+            .suffix_search(&search_args)?
+            .into_iter()
+            .map(|res| CountResult {
+                query_num: res.query_num,
+                query: res.query.clone(),
+                count: res.locations.map_or(0, |loc| loc.ranks.len()),
+            })
+            .collect();
+
+        Ok(counts)
+    }
+
+    // --------------------------------------------------
     /// Search the suffix array.
     ///
     /// Args:
     /// * `args`: `SearchOptions`
     ///
     ///
+    /// E.g., given a text of "ACGTNNACGT", a search for "ACG" and "GCC":
+    ///
     /// ```
-    /// let mut sufr = SufrFile::<u32>::read(&filename, false)?;
-    /// let opts = SearchOptions {
-    ///     queries: vec!["ACG".to_string(), "GGC".to_string()],
-    ///     max_query_len: None,
-    ///     find_suffixes: true,
-    ///     low_memory: None,
+    /// use anyhow::Result;
+    /// use libsufr::{
+    ///     sufr_file::SufrFile, 
+    ///     types::{SearchOptions, SearchResult, SearchResultLocations}
     /// };
     ///
-    /// println!("{:#?}", sufr.suffix_search(&opts)?);
-    /// ```
-    ///
-    /// Given a text of "ACGTNNACGT", a search for "ACG"
-    /// and "GCC" will return:
-    ///
-    /// ```
-    /// [
-    ///     SearchResult {
-    ///         query_num: 0,
-    ///         query: "ACG",
-    ///         locations: Some(
-    ///             SearchResultLocations {
-    ///                 ranks: 1..3,
-    ///                 suffixes: [
-    ///                     6,
-    ///                     0,
-    ///                 ],
-    ///             },
-    ///         ),
-    ///     },
-    ///     SearchResult {
-    ///         query_num: 1,
-    ///         query: "GGC",
-    ///         locations: None,
-    ///     },
-    /// ]
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
+    ///     let opts = SearchOptions {
+    ///         queries: vec!["ACG".to_string(), "GGC".to_string()],
+    ///         max_query_len: None,
+    ///         find_suffixes: true,
+    ///         low_memory: None,
+    ///     };
+    ///     let expected: Vec<SearchResult<u32>> = vec![
+    ///         SearchResult {
+    ///             query_num: 0,
+    ///             query: "ACG".to_string(),
+    ///             locations: Some(
+    ///                 SearchResultLocations {
+    ///                     ranks: 1..3,
+    ///                     suffixes: vec![
+    ///                         6,
+    ///                         0,
+    ///                     ],
+    ///                 },
+    ///             ),
+    ///         },
+    ///         SearchResult {
+    ///             query_num: 1,
+    ///             query: "GGC".to_string(),
+    ///             locations: None,
+    ///         },
+    ///     ];
+    ///     assert_eq!(expected, sufr.suffix_search(&opts)?);
+    ///     Ok(())
+    /// }
     /// ```
     ///
     pub fn suffix_search(
@@ -928,6 +990,69 @@ where
         Ok(extract_result)
     }
 
+    pub fn list(&mut self, args: ListOptions) -> Result<()> {
+        let width = self.text_len.to_string().len();
+        let text_len = self.text_len.to_usize();
+        let suffix_len = args.len.unwrap_or(text_len);
+        let mut output: Box<dyn Write> = match &args.output {
+            Some(out_name) => Box::new(File::create(out_name)?),
+            _ => Box::new(io::stdout()),
+        };
+
+        let mut print = |rank: usize, suffix: usize, lcp: T| -> Result<()> {
+            let end = if suffix + suffix_len > text_len {
+                text_len
+            } else {
+                suffix + suffix_len
+            };
+
+            let rank_display = if args.show_rank {
+                format!("{rank:width$} ")
+            } else {
+                "".to_string()
+            };
+
+            let suffix_display = if args.show_suffix {
+                format!("{suffix:width$} ")
+            } else {
+                "".to_string()
+            };
+            let lcp_display = if args.show_lcp {
+                format!("{:width$} ", lcp)
+            } else {
+                "".to_string()
+            };
+
+            writeln!(
+                output,
+                "{rank_display}{suffix_display}{lcp_display}{}",
+                String::from_utf8(self.text_file.get_range(suffix..end)?)?
+            )?;
+            Ok(())
+        };
+
+        let number = args.number.unwrap_or(0);
+        if args.ranks.is_empty() {
+            for (rank, suffix) in self.suffix_array_file.iter().enumerate() {
+                print(rank, suffix.to_usize(), self.lcp_file.get(rank).unwrap())?;
+
+                if number > 0 && rank == number - 1 {
+                    break;
+                }
+            }
+        } else {
+            for rank in args.ranks {
+                if let Some(suffix) = self.suffix_array_file.get(rank) {
+                    print(rank, suffix.to_usize(), self.lcp_file.get(rank).unwrap())?;
+                } else {
+                    eprintln!("Invalid rank: {rank}");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     // --------------------------------------------------
     /// Find the positions of queries in a suffix array.
     ///
@@ -976,8 +1101,14 @@ where
     /// ]
     /// ```
     ///
-    pub fn locate(&mut self, args: SearchOptions) -> Result<Vec<LocateResult>> {
-        let search_result = &self.suffix_search(&args)?;
+    pub fn locate(&mut self, args: LocateOptions) -> Result<Vec<LocateResult>> {
+        let search_opts = SearchOptions {
+            queries: args.queries,
+            low_memory: args.low_memory,
+            max_query_len: args.max_query_len,
+            find_suffixes: true,
+        };
+        let search_result = &self.suffix_search(&search_opts)?;
         let seq_starts = self.sequence_starts.clone();
         let seq_names = self.sequence_names.clone();
         let mut locate_result: Vec<LocateResult> = vec![];
@@ -1016,8 +1147,8 @@ mod test {
     use crate::{
         sufr_file::SufrFile,
         types::{
-            ExtractOptions, ExtractResult, ExtractSequence, LocatePosition,
-            LocateResult, LowMemoryUsage, SearchOptions,
+            ExtractOptions, ExtractResult, ExtractSequence, LocateOptions,
+            LocatePosition, LocateResult, LowMemoryUsage,
         },
     };
     use anyhow::Result;
@@ -1119,11 +1250,10 @@ mod test {
             SufrFile::read("../data/expected/abba.sufr", false)?;
 
         for val in &[true, false] {
-            let args = SearchOptions {
+            let args = LocateOptions {
                 queries: vec!["A".to_string()],
                 max_query_len: None,
                 low_memory: val.then_some(LowMemoryUsage::Low),
-                find_suffixes: true,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
@@ -1184,11 +1314,10 @@ mod test {
         }
 
         for val in &[true, false] {
-            let args = SearchOptions {
+            let args = LocateOptions {
                 queries: vec!["B".to_string()],
                 max_query_len: None,
                 low_memory: val.then_some(LowMemoryUsage::Low),
-                find_suffixes: true,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
@@ -1249,11 +1378,10 @@ mod test {
         }
 
         for val in &[true, false] {
-            let args = SearchOptions {
+            let args = LocateOptions {
                 queries: vec!["ABAB".to_string()],
                 max_query_len: None,
                 low_memory: val.then_some(LowMemoryUsage::Low),
-                find_suffixes: true,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
@@ -1296,11 +1424,10 @@ mod test {
         }
 
         for val in &[true, false] {
-            let args = SearchOptions {
+            let args = LocateOptions {
                 queries: vec!["ABABB".to_string()],
                 max_query_len: None,
                 low_memory: val.then_some(LowMemoryUsage::Low),
-                find_suffixes: true,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
@@ -1322,11 +1449,10 @@ mod test {
         }
 
         for val in &[true, false] {
-            let args = SearchOptions {
+            let args = LocateOptions {
                 queries: vec!["BBBB".to_string()],
                 max_query_len: None,
                 low_memory: val.then_some(LowMemoryUsage::Low),
-                find_suffixes: true,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());

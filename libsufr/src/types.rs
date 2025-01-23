@@ -1,5 +1,6 @@
 //! Common types
 
+use chrono::{DateTime, Local};
 use anyhow::{bail, Result};
 use regex::Regex;
 use std::{
@@ -20,7 +21,7 @@ pub const SENTINEL_CHARACTER: u8 = b'$';
 
 // --------------------------------------------------
 /// Describes the suffixes in a _.sufr_ file were sorted
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SuffixSortType {
     /// A maximum query length, which can be zero
     MaxQueryLen(usize),
@@ -31,7 +32,7 @@ pub enum SuffixSortType {
 
 // --------------------------------------------------
 /// A struct describing a seed mask
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct SeedMask {
     /// The given mask string of 1/0s
     pub mask: String,
@@ -189,7 +190,7 @@ pub struct SearchOptions {
 
 // --------------------------------------------------
 /// A struct representing the result of a suffix array search
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct SearchResult<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
@@ -206,7 +207,7 @@ where
 
 // --------------------------------------------------
 /// The suffix locations matching a given query.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct SearchResultLocations<T> {
     /// The range of suffix ranks
     pub ranks: Range<usize>,
@@ -304,6 +305,34 @@ impl FromUsize<u64> for u64 {
 }
 
 // --------------------------------------------------
+/// Options for counting the occurrences of suffixes
+#[derive(Debug)]
+pub struct CountOptions {
+    /// Vector of query strings
+    pub queries: Vec<String>,
+
+    /// Maximum query length for search
+    pub max_query_len: Option<usize>,
+
+    /// Low memory options: none/high, low, or very low
+    pub low_memory: Option<LowMemoryUsage>,
+}
+
+// --------------------------------------------------
+/// A struct representing the results of counting the occurrences of suffixes
+#[derive(Debug, PartialEq)]
+pub struct CountResult {
+    /// The ordinal position of the original query
+    pub query_num: usize,
+
+    /// The query string
+    pub query: String,
+
+    /// Number of times a query was found
+    pub count: usize,
+}
+
+// --------------------------------------------------
 /// Options for extracting suffixes from a search
 #[derive(Debug)]
 pub struct ExtractOptions {
@@ -372,6 +401,53 @@ pub struct ExtractSequence {
     pub suffix_offset: usize,
 }
 
+pub struct ListOptions {
+    /// Ranks of suffixes to show
+    pub ranks: Vec<usize>,
+
+    /// Show rank column
+    pub show_rank: bool,
+
+    /// Show suffix position column
+    pub show_suffix: bool,
+
+    /// Show LCP column
+    pub show_lcp: bool,
+
+    /// Very low memory
+    pub very_low_memory: bool,
+
+    /// Length of suffixes to show
+    pub len: Option<usize>,
+
+    /// Number of suffixes to show
+    pub number: Option<usize>,
+
+    // Output
+    pub output: Option<String>,
+}
+
+// --------------------------------------------------
+/// A struct for use in locating suffixes
+#[derive(Debug)]
+pub struct LocateOptions {
+    /// A vector of query strings
+    pub queries: Vec<String>,
+
+    /// A maximum query length to use.
+    /// If the suffix array was sorted with a shorter MQL, that
+    /// value will be used instead.
+    pub max_query_len: Option<usize>,
+
+    /// How little memory to use.
+    /// More memory will result in higher throughput/latency.
+    /// With `None`, the `text` and suffix array will be placed
+    /// into memory. At low memory, the suffix array will be
+    /// read from disk. At very low, the text will also be left
+    /// on disk.
+    pub low_memory: Option<LowMemoryUsage>,
+}
+
 // --------------------------------------------------
 /// A struct representing the results of a search that includes the
 /// locations of the suffixes in their sequence context.
@@ -404,6 +480,50 @@ pub struct LocatePosition {
 
     /// The start position of the hit in the sequence
     pub sequence_position: usize,
+}
+
+// --------------------------------------------------
+/// A struct with metadata about the Sufr file
+#[derive(Debug)]
+pub struct SufrMetadata {
+    /// Filename
+    pub filename: String,
+
+    /// Modified
+    pub modified: DateTime<Local>,
+
+    /// File size
+    pub file_size: usize,
+
+    /// File version
+    pub file_version: usize,
+
+    /// Nucleotides
+    pub is_dna: bool,
+
+    /// Allow ambiguity
+    pub allow_ambiguity: bool,
+
+    /// Ignore softmask
+    pub ignore_softmask: bool,
+
+    /// Text length
+    pub text_len: usize,
+
+    /// Number of suffixes
+    pub len_suffixes: usize,
+
+    /// Number of sequences
+    pub num_sequences: usize,
+
+    /// Start positions of sequences
+    pub sequence_starts: Vec<usize>,
+
+    /// Names of sequences
+    pub sequence_names: Vec<String>,
+
+    /// Sort type
+    pub sort_type: SuffixSortType,
 }
 
 #[cfg(test)]
