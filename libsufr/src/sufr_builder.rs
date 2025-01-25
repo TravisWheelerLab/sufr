@@ -547,7 +547,7 @@ where
     /// Args:
     /// * `num_partitions`: the number of partitions to used
     /// * `random_seed`: a value for initializing the RNG
-    pub fn sort(&mut self, num_partitions: usize, random_seed: u64) -> Result<()> {
+    fn sort(&mut self, num_partitions: usize, random_seed: u64) -> Result<()> {
         let mut partition_build = self.partition(num_partitions, random_seed)?;
 
         // Be sure to round up to get all the suffixes
