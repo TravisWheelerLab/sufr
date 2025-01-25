@@ -364,18 +364,20 @@ where
 
     // --------------------------------------------------
     fn get_text(&mut self, pos: usize) -> Option<u8> {
-        match self.query_low_memory {
-            Some(LowMemoryUsage::VeryLow) => self.text_file.get(pos),
-            _ => self.text.get(pos).copied(),
+        if self.text.is_empty() {
+            self.text_file.get(pos)
+        } else { 
+            self.text.get(pos).copied()
         }
     }
 
     // --------------------------------------------------
     pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
-        match self.query_low_memory {
-            // this is too expensive, copies loooooong stretches of text into vec
-            Some(LowMemoryUsage::VeryLow) => self.text_file.get_range(pos),
-            _ => Ok(self.text.get(pos).expect("foo").to_vec()),
+        // this is too expensive, copies loooooong stretches of text into vec
+        if self.text.is_empty() {
+            self.text_file.get_range(pos)
+        } else {
+            Ok(self.text.get(pos).expect("text").to_vec())
         }
     }
 

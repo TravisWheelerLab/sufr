@@ -404,7 +404,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     };
 
     let now = Instant::now();
-    let (_, bytes_written) = SuffixArray::write(builder_args)?;
+    let path = SuffixArray::write(builder_args)?;
+    let meta = fs::metadata(&path)?;
+    let bytes_written = meta.len();
 
     let num_fmt = NumberFormat::new();
     info!(
@@ -481,11 +483,12 @@ pub fn list(args: &ListArgs) -> Result<()> {
         ranks.append(&mut parsed);
     }
 
-    //let mut output: Box<dyn Write> = match &args.output {
-    //    Some(out_name) => Box::new(File::create(out_name)?),
+    //let output: Box<dyn Write> = match &args.output {
+    //    Some(filename) => {
+    //        Box::new(File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?)
+    //    }
     //    _ => Box::new(io::stdout()),
     //};
-
     let list_opts = ListOptions {
         ranks,
         show_rank: args.show_rank,
@@ -494,73 +497,10 @@ pub fn list(args: &ListArgs) -> Result<()> {
         very_low_memory: args.very_low_memory,
         len: args.len,
         number: args.number,
-        output: args.output.clone(),
+        // defaults to stdout
+        output: None
     };
     suffix_array.list(list_opts)?;
-
-    //let sufr_file = suffix_array.inner;
-    //let width = sufr_file.text_len.to_string().len();
-    //let text_len = sufr_file.text_len.to_usize();
-    //let suffix_len = args.len.unwrap_or(text_len);
-    //
-    //let mut print = |rank: usize, suffix: usize, lcp: T| -> Result<()> {
-    //    let end = if suffix + suffix_len > text_len {
-    //        text_len
-    //    } else {
-    //        suffix + suffix_len
-    //    };
-    //
-    //    let rank_display = if args.show_rank {
-    //        format!("{rank:width$} ")
-    //    } else {
-    //        "".to_string()
-    //    };
-    //
-    //    let suffix_display = if args.show_suffix {
-    //        format!("{suffix:width$} ")
-    //    } else {
-    //        "".to_string()
-    //    };
-    //    let lcp_display = if args.show_lcp {
-    //        format!("{:width$} ", lcp)
-    //    } else {
-    //        "".to_string()
-    //    };
-    //
-    //    writeln!(
-    //        output,
-    //        "{rank_display}{suffix_display}{lcp_display}{}",
-    //        String::from_utf8(sufr_file.text_file.get_range(suffix..end)?)?
-    //    )?;
-    //    Ok(())
-    //};
-    //
-    //let number = args.number.unwrap_or(0);
-    //if ranks.is_empty() {
-    //    for (rank, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
-    //        print(
-    //            rank,
-    //            suffix.to_usize(),
-    //            sufr_file.lcp_file.get(rank).unwrap(),
-    //        )?;
-    //
-    //        if number > 0 && rank == number - 1 {
-    //            break;
-    //        }
-    //    }
-    //} else {
-    //    for rank in ranks {
-    //        if let Some(suffix) = sufr_file.suffix_array_file.get(rank) {
-    //            print(
-    //                rank,
-    //                suffix.to_usize(),
-    //                sufr_file.lcp_file.get(rank).unwrap(),
-    //            )?;
-    //        } else {
-    //            eprintln!("Invalid rank: {rank}");
-    //        }
-    //    }
-    //}
 
     Ok(())
 }

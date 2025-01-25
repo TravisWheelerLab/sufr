@@ -401,6 +401,8 @@ pub struct ExtractSequence {
     pub suffix_offset: usize,
 }
 
+// --------------------------------------------------
+/// Arguments to sufr_file.list
 pub struct ListOptions {
     /// Ranks of suffixes to show
     pub ranks: Vec<usize>,
@@ -423,8 +425,8 @@ pub struct ListOptions {
     /// Number of suffixes to show
     pub number: Option<usize>,
 
-    // Output
-    pub output: Option<String>,
+    /// Output
+    pub output: Option<String>
 }
 
 // --------------------------------------------------

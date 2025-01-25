@@ -41,7 +41,7 @@ mod tests {
     fn test_write_read_suffix_file_32() -> Result<()> {
         let seq_file = Path::new("../data/inputs/2.fa");
         let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(&seq_file, sequence_delimiter)?;
+        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
         let args = SufrBuilderArgs {
@@ -58,10 +58,11 @@ mod tests {
             seed_mask: None,
             random_seed: 0,
         };
-        let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
-        let res = sufr_builder.write(&outpath);
+        let res = SufrBuilder::<u32>::new(args);
         assert!(res.is_ok());
-        assert!(outfile.path().exists());
+
+        let builder = res.unwrap();
+        assert!(Path::new(&builder.path).exists());
 
         let res: Result<SufrFile<u32>> = SufrFile::read(&outpath, false);
         assert!(res.is_ok());
@@ -107,10 +108,11 @@ mod tests {
             random_seed: 0,
         };
 
-        let suffix_array: SufrBuilder<u64> = SufrBuilder::new(args)?;
-        let res = suffix_array.write(&outpath);
+        let res = SufrBuilder::<u64>::new(args);
         assert!(res.is_ok());
-        assert!(outfile.path().exists());
+
+        let builder = res.unwrap();
+        assert!(Path::new(&builder.path).exists());
 
         let res: Result<SufrFile<u64>> = SufrFile::read(&outpath, false);
         assert!(res.is_ok());
@@ -153,10 +155,11 @@ mod tests {
             seed_mask: None,
             random_seed: 0,
         };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
-        let res = sufr.write(&outpath);
+        let res = SufrBuilder::<u32>::new(builder_args);
         assert!(res.is_ok());
-        assert_eq!(sufr.num_suffixes, 364);
+
+        let builder = res.unwrap();
+        assert_eq!(builder.num_suffixes, 364);
 
         let mut sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
         let full_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
@@ -241,10 +244,11 @@ mod tests {
         // 1 AACAAA$
         // 3 CAAA$
 
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
-        let res = sufr.write(&outpath);
+        let res = SufrBuilder::<u32>::new(builder_args);
         assert!(res.is_ok());
-        assert_eq!(sufr.num_suffixes, 8);
+
+        let builder = res.unwrap();
+        assert_eq!(builder.num_suffixes, 8);
 
         let mut sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
         let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
@@ -259,10 +263,12 @@ mod tests {
         let seq_file = Path::new("../data/inputs/mostlya2.fa");
         let sequence_delimiter = b'N';
         let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let outfile = NamedTempFile::new()?;
+        let outpath = outfile.path().to_string_lossy().to_string();
         let builder_args = SufrBuilderArgs {
             text: seq_data.seq,
             low_memory: true,
-            path: None,
+            path: Some(outpath.clone()),
             max_query_len: None,
             is_dna: true,
             allow_ambiguity: false,
@@ -292,14 +298,13 @@ mod tests {
         // 15  7 CAAACAAAC$
         // 16  3 CAAACAAACAAAC$
 
-        let outfile = NamedTempFile::new()?;
-        let outpath = outfile.path().to_string_lossy().to_string();
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
-        let res = sufr.write(&outpath);
+        let res = SufrBuilder::<u32>::new(builder_args);
         assert!(res.is_ok());
-        assert_eq!(sufr.num_suffixes, 17);
 
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
+        let builder = res.unwrap();
+        assert_eq!(builder.num_suffixes, 17);
+
+        let mut sufr_file = SufrFile::<u32>::read(&outpath, false)?;
         let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
         assert_eq!(suffix_array.len(), 17);
         assert_eq!(
@@ -316,10 +321,12 @@ mod tests {
         let seq_file = Path::new("../data/inputs/spaced_input.fa");
         let sequence_delimiter = b'N';
         let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
+        let outfile = NamedTempFile::new()?;
+        let outpath = outfile.path().to_string_lossy().to_string();
         let builder_args = SufrBuilderArgs {
             text: seq_data.seq,
             low_memory: false,
-            path: None,
+            path: Some(outpath.clone()),
             max_query_len: None,
             is_dna: true,
             allow_ambiguity: false,
@@ -334,13 +341,8 @@ mod tests {
         let res = SufrBuilder::<u32>::new(builder_args);
         assert!(res.is_ok());
 
-        let sufr = res.unwrap();
-        assert_eq!(sufr.num_suffixes, 43);
-
-        let outfile = NamedTempFile::new()?;
-        let outpath = outfile.path().to_string_lossy().to_string();
-        let res = sufr.write(&outpath);
-        assert!(res.is_ok());
+        let builder = res.unwrap();
+        assert_eq!(builder.num_suffixes, 43);
 
         let mut sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
         let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();

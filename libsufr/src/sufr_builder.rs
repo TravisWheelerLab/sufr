@@ -7,34 +7,6 @@
 //! a file (preferably with the _.sufr_ extension) that can be read
 //! by `sufr_file`.
 //!
-//!```
-//!fn create(input: &Path) -> Result<()> {
-//!    let sequence_delimiter = b'%';
-//!    let seq_data = read_sequence_file(input, sequence_delimiter)?;
-//!    let builder_args = SufrBuilderArgs {
-//!        text: seq_data.seq,
-//!        max_query_len: None,
-//!        is_dna: true,
-//!        allow_ambiguity: false,
-//!        ignore_softmask: true,
-//!        sequence_starts: seq_data.start_positions.into_iter().collect(),
-//!        sequence_names: seq_data.sequence_names,
-//!        num_partitions: 1024,
-//!        seed_mask: None,
-//!        random_seed: 42,
-//!    };
-//!
-//!    let text_len = seq_data.seq.len();
-//!    let outfile = "out.sufr";
-//!    if (text_len as u64) < u32::MAX as u64 {
-//!        let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
-//!        sufr_builder.write(outfile);
-//!    } else {
-//!        let sufr_builder: SufrBuilder<u64> = SufrBuilder::new(builder_args)?;
-//!        sufr_builder.write(outfile);
-//!    }
-//!}
-//!```
 
 use crate::{
     types::{
@@ -170,6 +142,9 @@ where
 
     /// The locations of long runs of Ns in nucleotide text.
     pub n_ranges: Vec<Range<usize>>,
+
+    /// The name of the output file
+    pub path: String,
 }
 
 // --------------------------------------------------
@@ -181,8 +156,45 @@ where
     /// The results will live in temporary files on-disk.
     /// The integer values representing the positions of each suffix will
     /// be `u32` when the length of the text is less than 2^32 and `u64`,
-    /// otherwise. Use the resulting `SufrBuilder` to write the temp files
-    /// to a permanent location.
+    /// otherwise. 
+    ///
+    /// ```
+    /// use anyhow::Result;
+    /// use std::path::Path;
+    /// use libsufr::{
+    ///     sufr_builder::{SufrBuilderArgs, SufrBuilder},
+    ///     util::read_sequence_file,
+    /// };
+    ///
+    /// fn main() -> Result<()> {
+    ///     let path = Path::new("../data/inputs/1.fa");
+    ///     let sequence_delimiter = b'%';
+    ///     let seq_data = read_sequence_file(path, sequence_delimiter)?;
+    ///     let text_len = seq_data.seq.len() as u64;
+    ///     let builder_args = SufrBuilderArgs {
+    ///         text: seq_data.seq,
+    ///         low_memory: false,
+    ///         path: Some("1.sufr".to_string()),
+    ///         max_query_len: None,
+    ///         is_dna: true,
+    ///         allow_ambiguity: false,
+    ///         ignore_softmask: true,
+    ///         sequence_starts: seq_data.start_positions.into_iter().collect(),
+    ///         sequence_names: seq_data.sequence_names,
+    ///         num_partitions: 1024,
+    ///         seed_mask: None,
+    ///         random_seed: 42,
+    ///     };
+    ///
+    ///     if text_len < u32::MAX as u64 {
+    ///         let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
+    ///     } else {
+    ///         let sufr_builder: SufrBuilder<u64> = SufrBuilder::new(builder_args)?;
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T>> {
         let text: Vec<_> = args
             .text
@@ -255,23 +267,26 @@ where
             sequence_names: args.sequence_names,
             partitions: vec![],
             n_ranges,
+            path: args.path.unwrap_or("out.sufr".to_string()),
         };
         sa.sort(args.num_partitions, args.random_seed)?;
+        sa.write()?;
         Ok(sa)
     }
 
     // --------------------------------------------------
-    /// Return the string at a given suffix position
-    /// Warning: Assumes pos is always found.
-    ///
-    /// Args:
-    /// * `pos`: the suffix position
-    pub fn string_at(&self, pos: usize) -> String {
-        self.text
-            .get(pos..)
-            .map(|v| String::from_utf8(v.to_vec()).unwrap())
-            .unwrap()
-    }
+    // TODO: Remove? Only useful during debugging
+    // Return the string at a given suffix position
+    // Warning: Assumes pos is always found.
+    //
+    // Args:
+    // * `pos`: the suffix position
+    //pub(crate) fn string_at(&self, pos: usize) -> String {
+    //    self.text
+    //        .get(pos..)
+    //        .map(|v| String::from_utf8(v.to_vec()).unwrap())
+    //        .unwrap()
+    //}
 
     // --------------------------------------------------
     /// If a suffix is in a long run of Ns, return the position of the final N
@@ -891,7 +906,8 @@ where
     ///
     /// Args:
     /// * `filename`: the name of the output file.
-    pub fn write(&self, filename: &str) -> Result<usize> {
+    fn write(&self) -> Result<()> {
+        let filename = &self.path;
         let mut file = BufWriter::new(
             File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
         );
@@ -982,7 +998,7 @@ where
         }
 
         // Sequence names are variable in length so they are at the end
-        bytes_out += file.write(&bincode::serialize(&self.sequence_names)?)?;
+        _ = file.write(&bincode::serialize(&self.sequence_names)?)?;
 
         // Go back to header and record the locations
         file.seek(SeekFrom::Start(locs_pos))?;
@@ -990,7 +1006,7 @@ where
         let _ = file.write(&usize_to_bytes(sa_pos))?;
         let _ = file.write(&usize_to_bytes(lcp_pos))?;
 
-        Ok(bytes_out)
+        Ok(())
     }
 }
 
