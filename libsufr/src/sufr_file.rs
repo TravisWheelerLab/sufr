@@ -1,12 +1,15 @@
 //! Read and query the suffix/LCP arrays in a _.sufr_ file.
+//!
+//! This is a low-level interface that you should use if you want
+//! fine-grained control over whether Sufr uses 32-bit or 64-bit
+//! integers. Most likely, you should use [libsufr::suffix_array](super::suffix_array).
 use crate::{
     file_access::FileAccess,
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
         CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence,
         FromUsize, Int, ListOptions, LocateOptions, LocatePosition, LocateResult,
-        LowMemoryUsage, SearchOptions, SearchResult, SeedMask, SuffixSortType,
-        SufrMetadata,
+        SearchOptions, SearchResult, SeedMask, SuffixSortType, SufrMetadata,
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
@@ -54,9 +57,8 @@ where
     /// nucleotides were ignored.
     pub ignore_softmask: bool,
 
-    /// Whether or not to query the suffix array in-memory or varying
-    /// levels of on-disk access to limit memory usage.
-    pub query_low_memory: Option<LowMemoryUsage>,
+    /// Whether or not to query the suffix array in-memory or on disk.
+    pub query_low_memory: bool,
 
     /// The byte position in the file where the text begins.
     pub text_pos: usize,
@@ -248,7 +250,7 @@ where
             is_dna,
             allow_ambiguity,
             ignore_softmask,
-            query_low_memory: None,
+            query_low_memory: true,
             text_pos,
             suffix_array_pos,
             lcp_pos,
@@ -717,7 +719,7 @@ where
     ///     let opts = CountOptions {
     ///         queries: vec!["AC".to_string(), "AG".to_string(), "GT".to_string()],
     ///         max_query_len: None,
-    ///         low_memory: None,
+    ///         low_memory: true,
     ///     };
     ///     let res = sufr.count(opts)?;
     ///     let expected = vec![
@@ -749,6 +751,7 @@ where
             low_memory: args.low_memory,
             find_suffixes: false,
         };
+        dbg!(&search_args);
 
         let counts: Vec<_> = self
             .suffix_search(&search_args)?
@@ -785,7 +788,7 @@ where
     ///         queries: vec!["ACG".to_string(), "GGC".to_string()],
     ///         max_query_len: None,
     ///         find_suffixes: true,
-    ///         low_memory: None,
+    ///         low_memory: true,
     ///     };
     ///     let expected: Vec<SearchResult<u32>> = vec![
     ///         SearchResult {
@@ -816,10 +819,9 @@ where
         &mut self,
         args: &SearchOptions,
     ) -> Result<Vec<SearchResult<T>>> {
-        // What if
-        self.query_low_memory = args.low_memory.clone();
+        self.query_low_memory = args.low_memory;
 
-        if self.query_low_memory.is_none() {
+        if !self.query_low_memory {
             self.set_suffix_array_mem(args.max_query_len)?;
         }
 
@@ -842,7 +844,6 @@ where
                 file: suffix_array_file,
                 suffix_array: &self.suffix_array_mem,
                 rank: &self.suffix_array_rank_mem,
-                query_low_memory: args.low_memory.clone(),
                 len_suffixes: self.len_suffixes.to_usize(),
                 sort_type: &self.sort_type,
                 max_query_len: args.max_query_len,
@@ -942,9 +943,7 @@ where
             low_memory: args.low_memory,
             find_suffixes: true,
         };
-        dbg!(&search_args);
         let search_result = &self.suffix_search(&search_args)?;
-        dbg!(&search_result);
         let seq_starts = self.sequence_starts.clone();
         let seq_names = self.sequence_names.clone();
         let text_len = self.text_len.to_usize();
@@ -1028,7 +1027,7 @@ where
     ///         show_rank: true,
     ///         show_suffix: true,
     ///         show_lcp: true,
-    ///         very_low_memory: true,
+    ///         low_memory: true,
     ///         len: None,
     ///         number: None,
     ///         output: Some(outfile.path().to_string_lossy().to_string()),
@@ -1140,7 +1139,7 @@ where
     ///     let opts = LocateOptions {
     ///         queries: vec!["ACG".to_string(), "GGC".to_string()],
     ///         max_query_len: None,
-    ///         low_memory: None,
+    ///         low_memory: true,
     ///     };
     ///     let expected = vec![
     ///         LocateResult {
@@ -1220,7 +1219,7 @@ mod test {
         sufr_file::SufrFile,
         types::{
             ExtractOptions, ExtractResult, ExtractSequence, LocateOptions,
-            LocatePosition, LocateResult, LowMemoryUsage,
+            LocatePosition, LocateResult,
         },
     };
     use anyhow::Result;
@@ -1235,7 +1234,7 @@ mod test {
         let opts = ExtractOptions {
             queries: vec!["AC".to_string(), "GT".to_string(), "XX".to_string()],
             max_query_len: None,
-            low_memory: None,
+            low_memory: true,
             prefix_len: Some(1),
             suffix_len: Some(3),
         };
@@ -1321,11 +1320,11 @@ mod test {
         let mut sufr_file: SufrFile<u32> =
             SufrFile::read("../data/expected/abba.sufr", false)?;
 
-        for val in &[true, false] {
+        for low_memory in &[true, false] {
             let args = LocateOptions {
                 queries: vec!["A".to_string()],
                 max_query_len: None,
-                low_memory: val.then_some(LowMemoryUsage::Low),
+                low_memory: *low_memory,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
@@ -1385,11 +1384,11 @@ mod test {
             );
         }
 
-        for val in &[true, false] {
+        for low_memory in &[true, false] {
             let args = LocateOptions {
                 queries: vec!["B".to_string()],
                 max_query_len: None,
-                low_memory: val.then_some(LowMemoryUsage::Low),
+                low_memory: *low_memory,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
@@ -1449,11 +1448,11 @@ mod test {
             );
         }
 
-        for val in &[true, false] {
+        for low_memory in &[true, false] {
             let args = LocateOptions {
                 queries: vec!["ABAB".to_string()],
                 max_query_len: None,
-                low_memory: val.then_some(LowMemoryUsage::Low),
+                low_memory: *low_memory,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
@@ -1495,11 +1494,11 @@ mod test {
             );
         }
 
-        for val in &[true, false] {
+        for low_memory in &[true, false] {
             let args = LocateOptions {
                 queries: vec!["ABABB".to_string()],
                 max_query_len: None,
-                low_memory: val.then_some(LowMemoryUsage::Low),
+                low_memory: *low_memory,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());
@@ -1520,11 +1519,11 @@ mod test {
             );
         }
 
-        for val in &[true, false] {
+        for low_memory in &[true, false] {
             let args = LocateOptions {
                 queries: vec!["BBBB".to_string()],
                 max_query_len: None,
-                low_memory: val.then_some(LowMemoryUsage::Low),
+                low_memory: *low_memory,
             };
             let res = sufr_file.locate(args);
             assert!(res.is_ok());

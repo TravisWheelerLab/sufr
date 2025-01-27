@@ -3,8 +3,7 @@
 use crate::{
     file_access::FileAccess,
     types::{
-        Comparison, FromUsize, Int, LowMemoryUsage, SearchResult,
-        SearchResultLocations, SuffixSortType,
+        Comparison, FromUsize, Int, SearchResult, SearchResultLocations, SuffixSortType,
     },
     util::find_lcp_full_offset,
 };
@@ -21,7 +20,7 @@ pub struct SufrSearchArgs<'a, T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
-    /// The text being searched (which may be empty in the case of very 
+    /// The text being searched (which may be empty in the case of very
     /// low memory)
     pub text: &'a [u8],
 
@@ -39,9 +38,6 @@ where
 
     /// In-memory rank array
     pub rank: &'a [T],
-
-    /// Options for low memory query
-    pub query_low_memory: Option<LowMemoryUsage>,
 
     /// ???
     pub len_suffixes: usize,
@@ -65,7 +61,6 @@ where
     suffix_array_file: FileAccess<T>,
     suffix_array_mem: &'a [T],
     suffix_array_rank_mem: &'a [T],
-    query_low_memory: Option<LowMemoryUsage>,
     len_suffixes: usize,
     sort_type: &'a SuffixSortType,
     max_query_len: Option<usize>,
@@ -88,7 +83,6 @@ where
             suffix_array_file: args.file,
             suffix_array_mem: args.suffix_array,
             suffix_array_rank_mem: args.rank,
-            query_low_memory: args.query_low_memory,
             len_suffixes: if args.suffix_array.is_empty() {
                 args.len_suffixes
             } else {
@@ -258,12 +252,7 @@ where
     /// * `query`: string to search for
     /// * `suffix_pos`: suffix position
     /// * `skip`: number of places to skip
-    fn compare(
-        &mut self,
-        query: &[u8],
-        suffix_pos: usize,
-        skip: usize,
-    ) -> Comparison {
+    fn compare(&mut self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
         let (lcp, max_query_len) = match &self.sort_type {
             SuffixSortType::MaxQueryLen(mql) => {
                 // The "MaxQueryLen(mql)" refers to how the suffix array
@@ -366,7 +355,7 @@ where
     fn get_text(&mut self, pos: usize) -> Option<u8> {
         if self.text.is_empty() {
             self.text_file.get(pos)
-        } else { 
+        } else {
             self.text.get(pos).copied()
         }
     }
@@ -383,7 +372,7 @@ where
 
     // --------------------------------------------------
     fn get_suffix(&mut self, pos: usize) -> Option<T> {
-        if self.query_low_memory.is_some() {
+        if self.suffix_array_mem.is_empty() {
             self.suffix_array_file.get(pos)
         } else {
             self.suffix_array_mem.get(pos).copied()

@@ -20,11 +20,7 @@ const LONG: &str = "../data/inputs/long_dna_sequence.fa";
 const UNIPROT: &str = "../data/inputs/uniprot.fa";
 const SUFR1: &str = "../data/expected/1.sufr";
 const SUFR2: &str = "../data/expected/2.sufr";
-
-struct CountOptions {
-    queries: Vec<String>,
-    low_memory: bool,
-}
+const SUFR3: &str = "../data/expected/3.sufr";
 
 struct CreateOptions {
     is_dna: bool,
@@ -39,7 +35,6 @@ struct ExtractOptions {
     prefix_len: Option<usize>,
     suffix_len: Option<usize>,
     max_query_len: Option<usize>,
-    low_memory: bool,
 }
 
 struct ListOptions {
@@ -333,29 +328,32 @@ fn create_protein_masked() -> Result<()> {
 // --------------------------------------------------
 fn count(
     filename: &str,
-    opts: CountOptions,
+    queries: &[&str],
     expected_stdout: &str,
     expected_stderr: Option<&str>,
 ) -> Result<()> {
-    let mut args = vec!["count".to_string(), filename.to_string()];
+    for memory in &["", "-l", "-v"] {
+        let mut args = vec!["count".to_string(), filename.to_string()];
 
-    if opts.low_memory {
-        args.push("-l".to_string());
-    }
+        if !memory.is_empty() {
+            args.push(memory.to_string())
+        }
 
-    for query in opts.queries {
-        args.push(query.to_string());
-    }
+        for query in queries {
+            args.push(query.to_string());
+        }
 
-    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
-    assert!(output.status.success());
+        dbg!(&args);
+        let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+        assert!(output.status.success());
 
-    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
-    assert_eq!(stdout, expected_stdout);
+        let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+        assert_eq!(stdout, expected_stdout);
 
-    if let Some(expected) = expected_stderr {
-        let stderr = String::from_utf8(output.stderr).expect("invalid UTF-8");
-        assert_eq!(stderr, expected);
+        if let Some(expected) = expected_stderr {
+            let stderr = String::from_utf8(output.stderr).expect("invalid UTF-8");
+            assert_eq!(stderr, expected);
+        }
     }
 
     Ok(())
@@ -364,13 +362,24 @@ fn count(
 // --------------------------------------------------
 #[test]
 fn count_seq1() -> Result<()> {
+    // cargo run -- co data/inputs/1.sufr AC X GT
+    count(SUFR1, &["AC", "X", "GT"], "AC 2\nX 0\nGT 2\n", None)
+}
+
+// --------------------------------------------------
+#[test]
+fn count_seq3() -> Result<()> {
+    // cargo run -- co data/inputs/3.sufr AAAAAAA TGTCTC TGATAGCAGCTTCTGAACTGGTTACCTGCCGT
     count(
-        SUFR1,
-        CountOptions {
-            queries: vec!["AC".to_string(), "X".to_string(), "GT".to_string()],
-            low_memory: false,
-        },
-        "AC 2\nX 0\nGT 2\n",
+        SUFR3,
+        &["AAAAAAA", "TGTCTC", "TGATAGCAGCTTCTGAACTGGTTACCTGCCGTGAGT"],
+        &[
+            "AAAAAAA 1",
+            "TGTCTC 1",
+            "TGATAGCAGCTTCTGAACTGGTTACCTGCCGTGAGT 1",
+            "",
+        ]
+        .join("\n"),
         None,
     )
 }
@@ -382,40 +391,42 @@ fn extract(
     expected: &str,
     error: Option<&str>,
 ) -> Result<()> {
-    let mut args = vec!["extract".to_string(), filename.to_string()];
+    for memory in &["", "-l", "-v"] {
+        let mut args = vec!["extract".to_string(), filename.to_string()];
 
-    if let Some(prefix_len) = opts.prefix_len {
-        args.push("-p".to_string());
-        args.push(prefix_len.to_string());
-    }
+        if !memory.is_empty() {
+            args.push(memory.to_string());
+        }
 
-    if let Some(suffix_len) = opts.suffix_len {
-        args.push("-s".to_string());
-        args.push(suffix_len.to_string());
-    }
+        if let Some(prefix_len) = opts.prefix_len {
+            args.push("-p".to_string());
+            args.push(prefix_len.to_string());
+        }
 
-    if let Some(max_query_len) = opts.max_query_len {
-        args.push("-m".to_string());
-        args.push(max_query_len.to_string());
-    }
+        if let Some(suffix_len) = opts.suffix_len {
+            args.push("-s".to_string());
+            args.push(suffix_len.to_string());
+        }
 
-    if opts.low_memory {
-        args.push("-l".to_string());
-    }
+        if let Some(max_query_len) = opts.max_query_len {
+            args.push("-m".to_string());
+            args.push(max_query_len.to_string());
+        }
 
-    for query in opts.queries {
-        args.push(query.to_string());
-    }
+        for query in &opts.queries {
+            args.push(query.to_string());
+        }
 
-    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
-    assert!(output.status.success());
+        let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+        assert!(output.status.success());
 
-    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
-    assert_eq!(stdout, expected);
+        let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+        assert_eq!(stdout, expected);
 
-    if let Some(err) = error {
-        let stderr = String::from_utf8(output.stderr).expect("invalid UTF-8");
-        assert_eq!(stderr, err);
+        if let Some(err) = error {
+            let stderr = String::from_utf8(output.stderr).expect("invalid UTF-8");
+            assert_eq!(stderr, err);
+        }
     }
 
     Ok(())
@@ -424,6 +435,7 @@ fn extract(
 // --------------------------------------------------
 #[test]
 fn extract_seq1() -> Result<()> {
+    // cargo run -- ex data/inputs/1.sufr AC GT XX
     extract(
         SUFR1,
         ExtractOptions {
@@ -431,7 +443,6 @@ fn extract_seq1() -> Result<()> {
             prefix_len: None,
             suffix_len: None,
             max_query_len: None,
-            low_memory: false,
         },
         &[
             ">1:6-11 AC 0",
@@ -459,7 +470,6 @@ fn extract_seq1_prefix_1() -> Result<()> {
             prefix_len: Some(1),
             suffix_len: None,
             max_query_len: None,
-            low_memory: false,
         },
         &[
             ">1:5-11 AC 1",
@@ -487,7 +497,6 @@ fn extract_seq1_suf_3() -> Result<()> {
             prefix_len: None,
             suffix_len: Some(3),
             max_query_len: None,
-            low_memory: false,
         },
         &[
             ">1:6-9 AC 0",
@@ -515,7 +524,6 @@ fn extract_seq1_pre_1_suf_3() -> Result<()> {
             prefix_len: Some(1),
             suffix_len: Some(3),
             max_query_len: None,
-            low_memory: false,
         },
         &[
             ">1:5-9 AC 1",
@@ -547,7 +555,6 @@ fn extract_uniprot() -> Result<()> {
             prefix_len: Some(4),
             suffix_len: Some(12),
             max_query_len: None,
-            low_memory: false,
         },
         &[
             ">sp|Q9U408|14331_ECHGR:38-54 RNELNNEEA 4",
@@ -575,7 +582,6 @@ fn extract_uniprot_mql() -> Result<()> {
             prefix_len: None,
             suffix_len: Some(10),
             max_query_len: Some(3),
-            low_memory: false,
         },
         &[
             ">sp|Q6GZW1|014R_FRG3G:111-121 RNELNNEEA 0",
@@ -611,7 +617,6 @@ fn extract_uniprot_masked() -> Result<()> {
             prefix_len: None,
             suffix_len: Some(10),
             max_query_len: Some(3),
-            low_memory: false,
         },
         &[
             ">sp|P32234|128UP_DROME:38-48 RNELNNEEA 0",
@@ -647,7 +652,6 @@ fn extract_uniprot_masked_low_memory() -> Result<()> {
             prefix_len: None,
             suffix_len: Some(10),
             max_query_len: Some(3),
-            low_memory: true,
         },
         &[
             ">sp|P32234|128UP_DROME:38-48 RNELNNEEA 0",
@@ -673,35 +677,41 @@ fn extract_uniprot_masked_low_memory() -> Result<()> {
 
 // --------------------------------------------------
 fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
-    let mut args = vec!["list".to_string(), filename.to_string()];
+    for memory in &["", "-l", "-v"] {
+        let mut args = vec!["list".to_string(), filename.to_string()];
 
-    if opts.show_suffix {
-        args.push("-s".to_string());
+        if !memory.is_empty() {
+            args.push(memory.to_string());
+        }
+
+        if opts.show_suffix {
+            args.push("-s".to_string());
+        }
+
+        if opts.show_rank {
+            args.push("-r".to_string());
+        }
+
+        if opts.show_lcp {
+            args.push("-p".to_string());
+        }
+
+        if let Some(len) = opts.suffix_len {
+            args.push("--len".to_string());
+            args.push(len.to_string());
+        }
+
+        if let Some(num) = opts.number {
+            args.push("-n".to_string());
+            args.push(num.to_string());
+        }
+
+        let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+        assert!(output.status.success());
+
+        let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
+        assert_eq!(stdout, expected);
     }
-
-    if opts.show_rank {
-        args.push("-r".to_string());
-    }
-
-    if opts.show_lcp {
-        args.push("-p".to_string());
-    }
-
-    if let Some(len) = opts.suffix_len {
-        args.push("-l".to_string());
-        args.push(len.to_string());
-    }
-
-    if let Some(num) = opts.number {
-        args.push("-n".to_string());
-        args.push(num.to_string());
-    }
-
-    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
-    assert!(output.status.success());
-
-    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
-    assert_eq!(stdout, expected);
 
     Ok(())
 }

@@ -151,20 +151,6 @@ impl Display for SeedMask {
 }
 
 // --------------------------------------------------
-/// Describes how to query a suffix array.
-/// In the absence of these values, the suffix array will be
-/// read into memory, possibly using a maximum query length
-/// to downsample the values.
-#[derive(Debug, Clone)]
-pub enum LowMemoryUsage {
-    /// Keep suffix array on disk
-    Low,
-
-    /// Additionally keep `text` on disk
-    VeryLow,
-}
-
-// --------------------------------------------------
 /// A struct for use in searching the suffix array
 #[derive(Debug)]
 pub struct SearchOptions {
@@ -176,13 +162,13 @@ pub struct SearchOptions {
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
-    /// How little memory to use.
     /// More memory will result in higher throughput/latency.
-    /// With `None`, the `text` and suffix array will be placed
-    /// into memory. At low memory, the suffix array will be
-    /// read from disk. At very low, the text will also be left
-    /// on disk.
-    pub low_memory: Option<LowMemoryUsage>,
+    /// When `true`, the suffix array will be placed
+    /// into memory. When `false`, the suffix array will be
+    /// read from disk. NB: initially reading the suffix array 
+    /// with `low_memory` will also cause the `text` to 
+    /// remain on disk.
+    pub low_memory: bool,
 
     /// Whether or not to return location information or to simply count
     pub find_suffixes: bool,
@@ -314,8 +300,8 @@ pub struct CountOptions {
     /// Maximum query length for search
     pub max_query_len: Option<usize>,
 
-    /// Low memory options: none/high, low, or very low
-    pub low_memory: Option<LowMemoryUsage>,
+    /// Low memory, put suffix array into memory or not
+    pub low_memory: bool,
 }
 
 // --------------------------------------------------
@@ -342,8 +328,8 @@ pub struct ExtractOptions {
     /// Maximum query length for search
     pub max_query_len: Option<usize>,
 
-    /// Low memory options: none/high, low, or very low
-    pub low_memory: Option<LowMemoryUsage>,
+    /// Low memory options, put suffix array into memory
+    pub low_memory: bool,
 
     /// Optional length of prefix to append before found suffixes (context)
     pub prefix_len: Option<usize>,
@@ -416,8 +402,8 @@ pub struct ListOptions {
     /// Show LCP column
     pub show_lcp: bool,
 
-    /// Very low memory
-    pub very_low_memory: bool,
+    /// Low memory
+    pub low_memory: bool,
 
     /// Length of suffixes to show
     pub len: Option<usize>,
@@ -441,13 +427,12 @@ pub struct LocateOptions {
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
-    /// How little memory to use.
     /// More memory will result in higher throughput/latency.
     /// With `None`, the `text` and suffix array will be placed
     /// into memory. At low memory, the suffix array will be
     /// read from disk. At very low, the text will also be left
     /// on disk.
-    pub low_memory: Option<LowMemoryUsage>,
+    pub low_memory: bool,
 }
 
 // --------------------------------------------------

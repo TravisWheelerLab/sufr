@@ -873,11 +873,11 @@ where
             let mut rng: Box<dyn RngCore> = if random_seed > 0 {
                 Box::new(StdRng::seed_from_u64(random_seed))
             } else {
-                Box::new(rand::thread_rng())
+                Box::new(rand::rng())
             };
             let mut pivot_sa = HashSet::<T>::new();
             loop {
-                let pos = rng.gen_range(0..text_len);
+                let pos = rng.random_range(0..text_len);
                 if self.is_dna && !b"ACGT$".contains(&self.text[pos]) {
                     continue;
                 }

@@ -5,10 +5,7 @@ use libsufr::{
     suffix_array::SuffixArray,
     sufr_builder::SufrBuilderArgs,
     //sufr_file::SufrFile,
-    types::{
-        CountOptions, ExtractOptions, ListOptions, LocateOptions, LowMemoryUsage,
-        SuffixSortType,
-    },
+    types::{CountOptions, ExtractOptions, ListOptions, LocateOptions, SuffixSortType},
     util::read_sequence_file,
 };
 use log::info;
@@ -185,12 +182,16 @@ pub struct ListArgs {
     #[arg(short('p'), long)]
     pub show_lcp: bool,
 
-    /// Very low memory
+    /// Low memory
     #[arg(short, long)]
+    pub low_memory: bool,
+
+    /// Very low memory
+    #[arg(short, long, conflicts_with = "low_memory")]
     pub very_low_memory: bool,
 
     /// Length of suffixes to show
-    #[arg(short, long, value_name = "LEN")]
+    #[arg(long, value_name = "LEN")]
     pub len: Option<usize>,
 
     /// Number of suffixes to show
@@ -213,7 +214,7 @@ pub struct CountArgs {
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
 
-    /// Low-memory
+    /// Low memory
     #[arg(short, long)]
     pub low_memory: bool,
 
@@ -344,18 +345,10 @@ pub fn count(args: &CountArgs) -> Result<()> {
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
-    let low_memory = if args.low_memory {
-        Some(LowMemoryUsage::Low)
-    } else if args.very_low_memory {
-        Some(LowMemoryUsage::VeryLow)
-    } else {
-        None
-    };
-
     let count_args = CountOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory,
+        low_memory: if args.very_low_memory { true } else { args.low_memory },
     };
 
     for res in suffix_array.count(count_args)? {
@@ -429,17 +422,10 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 
     let queries = parse_locate_queries(&args.query)?;
     let now = Instant::now();
-    let low_memory = if args.low_memory {
-        Some(LowMemoryUsage::Low)
-    } else if args.very_low_memory {
-        Some(LowMemoryUsage::VeryLow)
-    } else {
-        None
-    };
     let extract_args = ExtractOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory,
+        low_memory: if args.very_low_memory { true } else { args.low_memory },
         prefix_len: args.prefix_len,
         suffix_len: args.suffix_len,
     };
@@ -483,22 +469,16 @@ pub fn list(args: &ListArgs) -> Result<()> {
         ranks.append(&mut parsed);
     }
 
-    //let output: Box<dyn Write> = match &args.output {
-    //    Some(filename) => {
-    //        Box::new(File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?)
-    //    }
-    //    _ => Box::new(io::stdout()),
-    //};
     let list_opts = ListOptions {
         ranks,
         show_rank: args.show_rank,
         show_suffix: args.show_suffix,
         show_lcp: args.show_lcp,
-        very_low_memory: args.very_low_memory,
+        low_memory: if args.very_low_memory { true } else { args.low_memory },
         len: args.len,
         number: args.number,
         // defaults to stdout
-        output: None
+        output: None,
     };
     suffix_array.list(list_opts)?;
 
@@ -537,18 +517,10 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
-    let low_memory = if args.low_memory {
-        Some(LowMemoryUsage::Low)
-    } else if args.very_low_memory {
-        Some(LowMemoryUsage::VeryLow)
-    } else {
-        None
-    };
-
     let loc_args = LocateOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory,
+        low_memory: if args.very_low_memory { true } else { args.low_memory },
     };
 
     for mut res in suffix_array.locate(loc_args)? {
