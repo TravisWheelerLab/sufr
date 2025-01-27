@@ -10,7 +10,8 @@
 
 use crate::{
     types::{
-        FromUsize, Int, SeedMask, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER,
+        FromUsize, Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
+        SENTINEL_CHARACTER,
     },
     util::{find_lcp_full_offset, slice_u8_to_vec, usize_to_bytes, vec_to_slice_u8},
 };
@@ -30,66 +31,6 @@ use std::{
     time::Instant,
 };
 use tempfile::NamedTempFile;
-
-// --------------------------------------------------
-/// The arguments for creating a `SufrBuilder` struct
-#[derive(Clone, Debug)]
-pub struct SufrBuilderArgs {
-    /// Text as raw U8 bytes. cf. `libsufr::utils::read_sequence_file`
-    /// Note: this value will be kept in memory during the build process.
-    pub text: Vec<u8>,
-
-    /// The path to the .sufr file that will be written.
-    pub path: Option<String>,
-
-    /// Use low memory when reading in resulting suffix array
-    pub low_memory: bool,
-
-    /// Maximum query length determines a prefix length of the suffixes.
-    /// Without this value, suffixes will be fully sorted.
-    pub max_query_len: Option<usize>,
-
-    /// Indicates that the input is nucleotides, which has implications
-    /// for ignoring ambiguity characters (not A, C, G, or T) and
-    /// soft-masked/lowercase characters (usually indicating low-complexity
-    /// regions).
-    pub is_dna: bool,
-
-    /// Whether or not to allow ambiguity characters (not A, C, G, or T)
-    /// when handling nucleotides.
-    pub allow_ambiguity: bool,
-
-    /// Whether or not to ignore lowercased/softmasked nucleotide
-    /// values (when `is_dna` is true).
-    pub ignore_softmask: bool,
-
-    /// When the `text` holds multiple sequences, this value contains
-    /// the start positions of the sequences for locate queries.
-    pub sequence_starts: Vec<usize>,
-
-    /// When the `text` holds multiple sequences, this value contains
-    /// the names of the sequences for locate queries.
-    pub sequence_names: Vec<String>,
-
-    /// The number of on-disk partitions to use when building the suffix array.
-    /// Recommended to be at least the number of available CPUs, but
-    /// a good number would place a 1-3 million suffixes into each partition,
-    /// depending on the amount of available memory.
-    /// The partitions are sorted independently and in parallel.
-    /// Max memory usage will be determined by the average size of the
-    /// partitions (which includes the number of suffixes in a partition
-    /// and the integer size [`u32`, `u64`] to represent the suffixes)
-    /// times the number of threads used to process concurrently.
-    pub num_partitions: usize,
-
-    /// An optional seed mask of 1/0 for care/don't-care positions,
-    /// cf. `SeedMask`.
-    pub seed_mask: Option<String>,
-
-    /// A seed value for reproducibility when randomly choosing the
-    /// suffixes for partitioning.
-    pub random_seed: u64,
-}
 
 // --------------------------------------------------
 /// A struct for partitioning, sorting, and writing suffixes to disk
@@ -156,13 +97,14 @@ where
     /// The results will live in temporary files on-disk.
     /// The integer values representing the positions of each suffix will
     /// be `u32` when the length of the text is less than 2^32 and `u64`,
-    /// otherwise. 
+    /// otherwise.
     ///
     /// ```
     /// use anyhow::Result;
     /// use std::path::Path;
     /// use libsufr::{
-    ///     sufr_builder::{SufrBuilderArgs, SufrBuilder},
+    ///     sufr_builder::SufrBuilder,
+    ///     types::SufrBuilderArgs,
     ///     util::read_sequence_file,
     /// };
     ///

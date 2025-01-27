@@ -3,9 +3,10 @@ use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
     suffix_array::SuffixArray,
-    sufr_builder::SufrBuilderArgs,
-    //sufr_file::SufrFile,
-    types::{CountOptions, ExtractOptions, ListOptions, LocateOptions, SuffixSortType},
+    types::{
+        CountOptions, ExtractOptions, ListOptions, LocateOptions, SuffixSortType,
+        SufrBuilderArgs,
+    },
     util::read_sequence_file,
 };
 use log::info;
@@ -348,7 +349,11 @@ pub fn count(args: &CountArgs) -> Result<()> {
     let count_args = CountOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory { true } else { args.low_memory },
+        low_memory: if args.very_low_memory {
+            true
+        } else {
+            args.low_memory
+        },
     };
 
     for res in suffix_array.count(count_args)? {
@@ -425,7 +430,11 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
     let extract_args = ExtractOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory { true } else { args.low_memory },
+        low_memory: if args.very_low_memory {
+            true
+        } else {
+            args.low_memory
+        },
         prefix_len: args.prefix_len,
         suffix_len: args.suffix_len,
     };
@@ -459,6 +468,12 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 // --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
     let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    //let mut output: Box<dyn Write> = match &args.output {
+    //    Some(filename) => {
+    //        Box::new(File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?)
+    //    }
+    //    _ => Box::new(io::stdout()),
+    //};
 
     let mut ranks: Vec<usize> = vec![];
     for val in &args.ranks {
@@ -474,11 +489,16 @@ pub fn list(args: &ListArgs) -> Result<()> {
         show_rank: args.show_rank,
         show_suffix: args.show_suffix,
         show_lcp: args.show_lcp,
-        low_memory: if args.very_low_memory { true } else { args.low_memory },
+        low_memory: if args.very_low_memory {
+            true
+        } else {
+            args.low_memory
+        },
         len: args.len,
         number: args.number,
         // defaults to stdout
         output: None,
+        //output: &mut output,
     };
     suffix_array.list(list_opts)?;
 
@@ -520,7 +540,11 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
     let loc_args = LocateOptions {
         queries,
         max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory { true } else { args.low_memory },
+        low_memory: if args.very_low_memory {
+            true
+        } else {
+            args.low_memory
+        },
     };
 
     for mut res in suffix_array.locate(loc_args)? {

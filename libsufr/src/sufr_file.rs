@@ -1022,6 +1022,7 @@ where
     /// fn main() -> Result<()> {
     ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
     ///     let outfile = NamedTempFile::new()?;
+    ///     //let mut output = Box::new(Vec::new());
     ///     let list_opts = ListOptions {
     ///         ranks: vec![],
     ///         show_rank: true,
@@ -1031,6 +1032,7 @@ where
     ///         len: None,
     ///         number: None,
     ///         output: Some(outfile.path().to_string_lossy().to_string()),
+    ///         //output: &mut output,
     ///     };
     ///     sufr.list(list_opts)?;
     ///
@@ -1048,6 +1050,7 @@ where
     ///     ]
     ///     .join("\n");
     ///     let output = fs::read_to_string(&outfile)?;
+    ///     //let actual = String::from_utf8(output.to_vec())?;
     ///     assert_eq!(expected, output);
     ///     fs::remove_file(&outfile);
     ///     Ok(())
