@@ -313,9 +313,8 @@ where
                         skip + seed_mask.positions[skip..skip + len]
                             .iter()
                             .take_while(|&offset| {
-                                self.text
-                                    .get(suffix_pos + offset)
-                                    .is_some_and(|&val| query[*offset] == val)
+                                self.get_text(suffix_pos + offset)
+                                    .is_some_and(|val| query[*offset] == val)
                             })
                             .count()
                     } else {
@@ -334,7 +333,6 @@ where
             let full_offset = find_lcp_full_offset(lcp, self.sort_type);
             match (
                 query.get(full_offset),
-                //self.text.get(suffix_pos + full_offset),
                 &self.get_text(suffix_pos + full_offset),
             ) {
                 // Entire query matched
@@ -364,9 +362,9 @@ where
     pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
         // this is too expensive, copies loooooong stretches of text into vec
         if self.text.is_empty() {
-            self.text_file.get_range(pos)
+            self.text_file.get_range(pos.clone())
         } else {
-            Ok(self.text.get(pos).expect("text").to_vec())
+            Ok(self.text.get(pos.clone()).expect("text").to_vec())
         }
     }
 

@@ -16,8 +16,8 @@
 //! * Jack Roddy <jroddy@arizona.edu>
 //! * Travis Wheeler <twheeler@arizona.edu>
 
-pub mod suffix_array;
 mod file_access;
+pub mod suffix_array;
 pub mod sufr_builder;
 pub mod sufr_file;
 mod sufr_search;
@@ -28,9 +28,9 @@ pub mod util;
 #[cfg(test)]
 mod tests {
     use super::{
-        sufr_builder::{SufrBuilder, SufrBuilderArgs},
+        sufr_builder::SufrBuilder,
         sufr_file::SufrFile,
-        types::OUTFILE_VERSION,
+        types::{SufrBuilderArgs, OUTFILE_VERSION},
         util::read_sequence_file,
     };
     use anyhow::Result;

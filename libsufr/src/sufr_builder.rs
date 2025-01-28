@@ -550,7 +550,6 @@ where
                 }
 
                 let len = part_sa.len();
-                //println!(">>> PARTITION {partition_num} has {len}<<<");
                 if len > 0 {
                     let mut sa_w = part_sa.clone();
                     let mut lcp = vec![T::default(); len];
@@ -638,10 +637,7 @@ where
         target_lcp: &mut [T],
     ) {
         let (mut x, mut y) = suffix_array.split_at_mut(mid);
-        //println!("\n\n>>>>> MERGE");
         let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
-        //println!("x {x:?} y {y:?}");
-        //println!("lcp_x {lcp_x:?} lcp_y {lcp_y:?}");
         let mut len_x = x.len();
         let mut len_y = y.len();
         let mut m = T::default(); // Last LCP from left side (x)
@@ -651,22 +647,13 @@ where
 
         while idx_x < len_x && idx_y < len_y {
             let l_x = lcp_x[idx_x];
-            //let left = x[idx_x].to_usize();
-            //let right = y[idx_y].to_usize();
-            //let lsuf = String::from_utf8(self.text[left..].to_vec()).unwrap();
-            //let rsuf = String::from_utf8(self.text[right..].to_vec()).unwrap();
-            //println!(
-            //    ">>> left  {left} {lsuf:8} right {right} {rsuf:8} l_x {l_x} m {m}"
-            //);
 
             match l_x.cmp(&m) {
                 Ordering::Greater => {
-                    //println!(" >>> GREATER: TAKE LEFT {}", x[idx_x]);
                     target_sa[idx_target] = x[idx_x];
                     target_lcp[idx_target] = l_x;
                 }
                 Ordering::Less => {
-                    //println!(" >>> LESS: RIGHT {}", y[idx_y]);
                     target_sa[idx_target] = y[idx_y];
                     target_lcp[idx_target] = m;
                     m = l_x;
@@ -691,7 +678,6 @@ where
                             }
                         }
                     };
-                    //println!("  mql {} shorter {shorter_suffix} context {context} max_n {max_n} seed_mask {:?}", self.max_query_len, self.seed_mask_pos);
 
                     // LCP(X_i, Y_j)
                     let (len_lcp, full_len_lcp) = if m < context {
@@ -703,49 +689,28 @@ where
                         );
                         let full_lcp =
                             find_lcp_full_offset(lcp.to_usize(), &self.sort_type);
-                        //println!(
-                        //    "  lcp {lcp} full_len_lcp {}",
-                        //    find_lcp_full_offset(lcp.to_usize(), &self.seed_mask_pos)
-                        //);
                         (lcp, T::from_usize(full_lcp))
                     } else {
                         (context, context)
                     };
 
-                    //println!(
-                    //    "  next left {} {:?} right {} {:?}",
-                    //    x[idx_x] + full_len_lcp,
-                    //    self.text
-                    //        .get((x[idx_x] + full_len_lcp).to_usize())
-                    //        .map(|&v| v as char),
-                    //    y[idx_y] + full_len_lcp,
-                    //    self.text
-                    //        .get((y[idx_y] + full_len_lcp).to_usize())
-                    //        .map(|&v| v as char)
-                    //);
-
                     // If full LCP equals context/MQL, take shorter suffix
                     if len_lcp >= context {
                         target_sa[idx_target] = shorter_suffix;
-                        //println!("  >> SHORTER (A) {shorter_suffix}");
                     }
-                    // Else, look at the next char after the LCP
-                    // to determine order.
+                    // Else, look at the next char after the LCP to determine order.
                     else {
                         let cmp = self.text[(x[idx_x] + full_len_lcp).to_usize()]
                             .cmp(&self.text[(y[idx_y] + full_len_lcp).to_usize()]);
 
                         match cmp {
                             Ordering::Equal => {
-                                //println!("  >> SHORTER (B) {shorter_suffix}");
                                 target_sa[idx_target] = shorter_suffix;
                             }
                             Ordering::Less => {
-                                //println!("  LEFT (B) {}", x[idx_x]);
                                 target_sa[idx_target] = x[idx_x];
                             }
                             Ordering::Greater => {
-                                //println!("  RIGHT (B) {}", y[idx_y]);
                                 target_sa[idx_target] = y[idx_y];
                             }
                         }
@@ -758,7 +723,6 @@ where
                         target_lcp[idx_target] = m
                     }
 
-                    //println!("Saving len_lcp {len_lcp} -> m");
                     m = len_lcp;
                 }
             }

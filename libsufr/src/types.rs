@@ -21,7 +21,7 @@ pub const SENTINEL_CHARACTER: u8 = b'$';
 
 // --------------------------------------------------
 /// Describes the suffixes in a _.sufr_ file were sorted
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SuffixSortType {
     /// A maximum query length, which can be zero
     MaxQueryLen(usize),
@@ -320,7 +320,7 @@ pub struct CountResult {
 
 // --------------------------------------------------
 /// Options for extracting suffixes from a search
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExtractOptions {
     /// Vector of query strings
     pub queries: Vec<String>,
@@ -532,7 +532,7 @@ pub struct SufrBuilderArgs {
 
 // --------------------------------------------------
 /// A struct with metadata about the Sufr file
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct SufrMetadata {
     /// Filename
     pub filename: String,

@@ -48,7 +48,6 @@ struct ListOptions {
 struct LocateOptions {
     queries: Vec<String>,
     absolute: bool,
-    low_memory: bool,
     max_query_len: Option<usize>,
 }
 
@@ -99,29 +98,6 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
 
     Ok(())
 }
-
-// --------------------------------------------------
-// TODO: revive once check is useful
-//fn check(filename: &str) -> Result<()> {
-//    let output = Command::cargo_bin(PRG)?
-//        .args(["check", filename])
-//        .output()
-//        .expect("fail");
-//
-//    assert!(output.status.success());
-//
-//    let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
-//
-//    assert!(stdout.contains("found 0 errors"));
-//
-//    Ok(())
-//}
-//
-// --------------------------------------------------
-//#[test]
-//fn check_seq1() -> Result<()> {
-//    check("../data/expected/1.sufr")
-//}
 
 // --------------------------------------------------
 #[test]
@@ -343,7 +319,6 @@ fn count(
             args.push(query.to_string());
         }
 
-        dbg!(&args);
         let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
         assert!(output.status.success());
 
@@ -896,31 +871,33 @@ fn list_sufr1_limit_3() -> Result<()> {
 
 // --------------------------------------------------
 fn locate(filename: &str, opts: LocateOptions, expected_file: &str) -> Result<()> {
-    let mut args = vec!["locate".to_string(), filename.to_string()];
+    for memory in ["", "-l", "-v"] {
+        let mut args = vec!["locate".to_string(), filename.to_string()];
 
-    if opts.absolute {
-        args.push("-a".to_string());
+        if opts.absolute {
+            args.push("-a".to_string());
+        }
+
+        if !memory.is_empty() {
+            args.push(memory.to_string());
+        }
+
+        if let Some(max_query_len) = opts.max_query_len {
+            args.push("-m".to_string());
+            args.push(max_query_len.to_string());
+        }
+
+        for query in &opts.queries {
+            args.push(query.to_string());
+        }
+
+        let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+        assert!(output.status.success());
+
+        let actual = String::from_utf8(output.stdout).expect("invalid UTF-8");
+        let expected = fs::read_to_string(expected_file)?;
+        assert_eq!(actual, expected);
     }
-
-    if opts.low_memory {
-        args.push("-l".to_string());
-    }
-
-    if let Some(max_query_len) = opts.max_query_len {
-        args.push("-m".to_string());
-        args.push(max_query_len.to_string());
-    }
-
-    for query in opts.queries {
-        args.push(query.to_string());
-    }
-
-    let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
-    assert!(output.status.success());
-
-    let actual = String::from_utf8(output.stdout).expect("invalid UTF-8");
-    let expected = fs::read_to_string(expected_file)?;
-    assert_eq!(actual, expected);
 
     Ok(())
 }
@@ -943,7 +920,6 @@ fn locate_seq1_relative() -> Result<()> {
         LocateOptions {
             queries: vec!["AC".to_string(), "GT".to_string()],
             absolute: false,
-            low_memory: false,
             max_query_len: None,
         },
         "../data/expected/locate1.out",
@@ -962,7 +938,6 @@ fn locate_seq1_absolute() -> Result<()> {
         LocateOptions {
             queries: vec!["AC".to_string(), "GT".to_string()],
             absolute: true,
-            low_memory: false,
             max_query_len: None,
         },
         "../data/expected/locate-abs.out",
@@ -992,7 +967,6 @@ fn locate_uniprot() -> Result<()> {
                 "GSGLSLLSD".to_string(),
             ],
             absolute: false,
-            low_memory: false,
             max_query_len: None,
         },
         "../data/expected/uniprot-search1.out",
@@ -1044,7 +1018,6 @@ fn locate_uniprot_masked() -> Result<()> {
         LocateOptions {
             queries: vec!["RNEL".to_string(), "DTPT".to_string(), "GSGL".to_string()],
             absolute: false,
-            low_memory: false,
             max_query_len: None,
         },
         "../data/expected/uniprot-search-masked.out",
@@ -1065,7 +1038,6 @@ fn locate_uniprot_masked_max_query_len() -> Result<()> {
                 "GSGLSLLSD".to_string(),
             ],
             absolute: false,
-            low_memory: false,
             max_query_len: Some(3),
         },
         "../data/expected/uniprot-search-masked-mql-3.out",
@@ -1083,7 +1055,6 @@ fn locate_uniprot_masked_absolute() -> Result<()> {
         LocateOptions {
             queries: vec!["RNEL".to_string()],
             absolute: true,
-            low_memory: false,
             max_query_len: None,
         },
         "../data/expected/uniprot-search-masked-absolute.out",
@@ -1114,7 +1085,6 @@ fn locate_long_dna_low_memory() -> Result<()> {
                 "GGATGAAGAAAAGCA".to_string(),
             ],
             absolute: false,
-            low_memory: true,
             max_query_len: None,
         },
         "../data/expected/locate_long_dna.out",
@@ -1146,7 +1116,6 @@ fn locate_long_dna_max_query_len() -> Result<()> {
                 "GGATGAAGAAAAGCA".to_string(),
             ],
             absolute: false,
-            low_memory: true,
             max_query_len: Some(6),
         },
         "../data/expected/locate_long_dna_mql_6.out",

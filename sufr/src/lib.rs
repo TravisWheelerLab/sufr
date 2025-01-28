@@ -293,49 +293,6 @@ impl ValueEnum for LogLevel {
 }
 
 // --------------------------------------------------
-//pub fn check(args: &CheckArgs) -> Result<()> {
-//    let text_len = read_text_length(&args.file)? as u64;
-//    // TODO: Make sure we always want to avoid holding text?
-//    if text_len < u32::MAX as u64 {
-//        let sufr_file: SufrFile<u32> = SufrFile::read(&args.file, true)?;
-//        _check(sufr_file, args)
-//    } else {
-//        let sufr_file: SufrFile<u64> = SufrFile::read(&args.file, true)?;
-//        _check(sufr_file, args)
-//    }
-//}
-
-// --------------------------------------------------
-//fn _check<T>(mut sufr_file: SufrFile<T>, args: &CheckArgs) -> Result<()>
-//where
-//    T: Int + FromUsize<T> + Sized + Send + Sync + Debug,
-//{
-//    let now = Instant::now();
-//    let errors = sufr_file.check()?;
-//    let num_errors = errors.len();
-//    let num_fmt = NumberFormat::new();
-//    println!(
-//        "Checked {} suffix{}, found {} error{} in suffix array.",
-//        num_fmt.format(",.0", sufr_file.len_suffixes.to_usize() as f64),
-//        if sufr_file.len_suffixes.to_usize() == 1 {
-//            ""
-//        } else {
-//            "es"
-//        },
-//        num_fmt.format(",.0", num_errors as f64),
-//        if num_errors == 1 { "" } else { "s" },
-//    );
-//
-//    if args.verbose {
-//        for err in errors {
-//            println!("{err}");
-//        }
-//    }
-//    println!("Finished checking in {:?}.", now.elapsed());
-//    Ok(())
-//}
-
-// --------------------------------------------------
 pub fn count(args: &CountArgs) -> Result<()> {
     let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
     let mut output: Box<dyn Write> = match &args.output {
@@ -420,11 +377,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 // --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
     let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
-    let mut output: Box<dyn Write> = match &args.output {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
-    };
-
     let queries = parse_locate_queries(&args.query)?;
     let now = Instant::now();
     let extract_args = ExtractOptions {
@@ -439,6 +391,10 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
         suffix_len: args.suffix_len,
     };
 
+    let mut output: Box<dyn Write> = match &args.output {
+        Some(out_name) => Box::new(File::create(out_name)?),
+        _ => Box::new(io::stdout()),
+    };
     for res in suffix_array.extract(extract_args)? {
         if res.sequences.is_empty() {
             eprintln!("{} not found", res.query);
@@ -468,13 +424,6 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 // --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
     let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
-    //let mut output: Box<dyn Write> = match &args.output {
-    //    Some(filename) => {
-    //        Box::new(File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?)
-    //    }
-    //    _ => Box::new(io::stdout()),
-    //};
-
     let mut ranks: Vec<usize> = vec![];
     for val in &args.ranks {
         let mut parsed: Vec<_> = parse_pos(val)?
@@ -498,7 +447,6 @@ pub fn list(args: &ListArgs) -> Result<()> {
         number: args.number,
         // defaults to stdout
         output: None,
-        //output: &mut output,
     };
     suffix_array.list(list_opts)?;
 

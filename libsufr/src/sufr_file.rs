@@ -368,61 +368,6 @@ where
     }
 
     // --------------------------------------------------
-    /// Intended to be a manual check if the suffixes are sorted and
-    /// the LCPs are correct. Very slow, but could be useful for double-checking
-    /// small inputs. Could return a vector of error strings noting problems.
-    /// Currently returns an empty list because checking became much harder
-    /// after the introduction of spaced seeds and MQL.
-    /// Leaving this in place for now in case I want to revive it.
-    ///
-    // TODO: Handle MQL/spaced seeds or REMOVE
-    pub fn check(&mut self) -> Result<Vec<String>> {
-        //let mut previous: Option<usize> = None;
-        //let mut errors: Vec<String> = vec![];
-        //let text_len = self.text_len.to_usize();
-        //let len_suffixes = self.len_suffixes.to_usize();
-
-        //for i in 0..len_suffixes {
-        //    if i > 0 && i % 1_000_000 == 0 {
-        //        info!("Checked {i}");
-        //    }
-        //    let cur_sa = self.suffix_array_file.get(i).expect("sa").to_usize();
-        //    let cur_lcp = self.lcp_file.get(i).expect("lcp").to_usize();
-        //
-        //    if let Some(prev_sa) = previous {
-        //        println!("Check prev {prev_sa} cur {cur_sa}");
-        //        let check_lcp = self.find_lcp(cur_sa, prev_sa, text_len);
-        //        if check_lcp != cur_lcp {
-        //            errors.push(format!(
-        //                "{cur_sa} (r. {i}): LCP {cur_lcp} should be {check_lcp}"
-        //            ));
-        //        }
-        //
-        //        let is_less = match (
-        //            self.text.get(prev_sa + cur_lcp),
-        //            self.text.get(cur_sa + cur_lcp),
-        //        ) {
-        //            (Some(a), Some(b)) => a < b,
-        //            (None, Some(_)) => true,
-        //            _ => false,
-        //        };
-        //
-        //        if !is_less {
-        //            errors.push(format!("{cur_sa} (r. {i}): greater than previous"));
-        //        }
-        //
-        //        if !errors.is_empty() {
-        //            dbg!(errors);
-        //            panic!("blah");
-        //        }
-        //    }
-        //    previous = Some(cur_sa);
-        //}
-        //Ok(errors)
-        Ok(vec![])
-    }
-
-    // --------------------------------------------------
     /// Return a suffix at a given position
     ///
     /// Args:
@@ -511,12 +456,23 @@ where
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::sufr_file::SufrFile;
+    /// use libsufr::{sufr_file::SufrFile, types::SuffixSortType};
     ///
     /// fn main() -> Result<()> {
     ///     let sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
     ///     let meta = sufr.metadata()?;
-    ///     assert_eq!(11, meta.text_len);
+    ///     assert_eq!(meta.filename, "../data/inputs/1.sufr".to_string());
+    ///     assert_eq!(meta.file_size, 172);
+    ///     assert_eq!(meta.file_version, 6);
+    ///     assert_eq!(meta.is_dna, true);
+    ///     assert_eq!(meta.allow_ambiguity, false);
+    ///     assert_eq!(meta.ignore_softmask, false);
+    ///     assert_eq!(meta.text_len, 11);
+    ///     assert_eq!(meta.len_suffixes, 9);
+    ///     assert_eq!(meta.num_sequences, 1);
+    ///     assert_eq!(meta.sequence_starts, vec![0]);
+    ///     assert_eq!(meta.sequence_names, vec!["1".to_string()]);
+    ///     assert_eq!(meta.sort_type, SuffixSortType::MaxQueryLen(0));
     ///
     ///     Ok(())
     /// }
@@ -751,7 +707,6 @@ where
             low_memory: args.low_memory,
             find_suffixes: false,
         };
-        dbg!(&search_args);
 
         let counts: Vec<_> = self
             .suffix_search(&search_args)?
@@ -896,7 +851,7 @@ where
     ///     let extract_opts = ExtractOptions {
     ///         queries: vec!["ACG".to_string(), "GTC".to_string()],
     ///         max_query_len: None,
-    ///         low_memory: None,
+    ///         low_memory: true,
     ///         prefix_len: Some(1),
     ///         suffix_len: Some(3),
     ///     };
@@ -1012,17 +967,13 @@ where
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{
-    ///     sufr_file::SufrFile,
-    ///     types::ListOptions
-    /// };
-    /// use std::{fs, io};
+    /// use libsufr::{sufr_file::SufrFile, types::ListOptions};
+    /// use std::fs;
     /// use tempfile::NamedTempFile;
     ///
     /// fn main() -> Result<()> {
     ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
     ///     let outfile = NamedTempFile::new()?;
-    ///     //let mut output = Box::new(Vec::new());
     ///     let list_opts = ListOptions {
     ///         ranks: vec![],
     ///         show_rank: true,
@@ -1032,7 +983,6 @@ where
     ///         len: None,
     ///         number: None,
     ///         output: Some(outfile.path().to_string_lossy().to_string()),
-    ///         //output: &mut output,
     ///     };
     ///     sufr.list(list_opts)?;
     ///
