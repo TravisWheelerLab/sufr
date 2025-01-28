@@ -8,8 +8,13 @@
 //!
 //! [^patro]: <https://doi.org/10.4230/LIPIcs.WABI.2023.16>
 //!
-//! * To create a new suffix array/_.sufr_ file, see [sufr_builder]
-//! * To interact and query an existing suffix array/_.sufr_ file, see [sufr_file]
+//! * Most people should use [suffix_array] to create and interact with suffix arrays
+//!
+//! If you want lower-level access to Sufr's internals:
+//!
+//! * Use [sufr_builder] to create a new suffix array/_.sufr_ file
+//! * Use [sufr_file] to interact and query an existing suffix array/_.sufr_ file
+//! 
 //!
 //! ## Authors
 //! * Ken Youens-Clark <kyclark@gmail.com>

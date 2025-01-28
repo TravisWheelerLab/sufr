@@ -1,4 +1,4 @@
-//! Read and query the suffix/LCP arrays in a _.sufr_ file.
+//! Read and query on-disk suffix/LCP arrays
 //!
 //! This is a low-level interface that you should use if you want
 //! fine-grained control over whether Sufr uses 32-bit or 64-bit

@@ -134,78 +134,6 @@ impl SuffixArray {
     }
 
     // --------------------------------------------------
-    /// Create a new suffix array and write to disk
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{
-    ///     types::SufrBuilderArgs,
-    ///     suffix_array::SuffixArray,
-    ///     util::read_sequence_file,
-    /// };
-    /// use std::path::Path;
-    ///
-    /// fn main() -> Result<()> {
-    ///     let sequence_delimiter = b'%';
-    ///     let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), sequence_delimiter)?;
-    ///     let builder_args = SufrBuilderArgs {
-    ///         text: seq_data.seq,
-    ///         path: Some("3.sufr".to_string()),
-    ///         low_memory: true,
-    ///         max_query_len: None,
-    ///         is_dna: true,
-    ///         allow_ambiguity: false,
-    ///         ignore_softmask: false,
-    ///         sequence_starts: seq_data.start_positions.into_iter().collect(),
-    ///         sequence_names: seq_data.sequence_names,
-    ///         num_partitions: 16,
-    ///         seed_mask: None,
-    ///         random_seed: 42,
-    ///     };
-    ///
-    ///     let outpath = SuffixArray::write(builder_args)?;
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    pub fn write(args: SufrBuilderArgs) -> Result<String> {
-        let path = if (args.text.len() as u64) < u32::MAX as u64 {
-            let builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
-            builder.path
-        } else {
-            let builder: SufrBuilder<u64> = SufrBuilder::new(args)?;
-            builder.path
-        };
-
-        Ok(path)
-    }
-
-    /// Read a _.sufr_ file
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::suffix_array::SuffixArray;
-    ///
-    /// fn main() -> Result<()> {
-    ///     let suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    pub fn read(filename: &str, low_memory: bool) -> Result<SuffixArray> {
-        let text_len = crate::util::read_text_length(filename)? as u64;
-        let sa: Box<dyn SuffixArrayTrait> = if text_len < u32::MAX as u64 {
-            Box::new(SuffixArray32 {
-                inner: SufrFile::read(filename, low_memory)?,
-            })
-        } else {
-            Box::new(SuffixArray64 {
-                inner: SufrFile::read(filename, low_memory)?,
-            })
-        };
-        Ok(SuffixArray { inner: sa })
-    }
-
-    // --------------------------------------------------
     /// Count instances of queries
     ///
     /// ```
@@ -249,6 +177,7 @@ impl SuffixArray {
     pub fn count(&mut self, args: CountOptions) -> Result<Vec<CountResult>> {
         self.inner.count(args)
     }
+
 
     // --------------------------------------------------
     /// Extract the suffixes matching given queries
@@ -440,6 +369,32 @@ impl SuffixArray {
         self.inner.metadata()
     }
 
+    /// Read a _.sufr_ file
+    ///
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::suffix_array::SuffixArray;
+    ///
+    /// fn main() -> Result<()> {
+    ///     let suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    pub fn read(filename: &str, low_memory: bool) -> Result<SuffixArray> {
+        let text_len = crate::util::read_text_length(filename)? as u64;
+        let sa: Box<dyn SuffixArrayTrait> = if text_len < u32::MAX as u64 {
+            Box::new(SuffixArray32 {
+                inner: SufrFile::read(filename, low_memory)?,
+            })
+        } else {
+            Box::new(SuffixArray64 {
+                inner: SufrFile::read(filename, low_memory)?,
+            })
+        };
+        Ok(SuffixArray { inner: sa })
+    }
+
     // --------------------------------------------------
     /// Retrieve a suffix
     ///
@@ -457,5 +412,51 @@ impl SuffixArray {
     ///
     pub fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
+    }
+
+    // --------------------------------------------------
+    /// Create a new suffix array and write to disk
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::{
+    ///     types::SufrBuilderArgs,
+    ///     suffix_array::SuffixArray,
+    ///     util::read_sequence_file,
+    /// };
+    /// use std::path::Path;
+    ///
+    /// fn main() -> Result<()> {
+    ///     let sequence_delimiter = b'%';
+    ///     let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), sequence_delimiter)?;
+    ///     let builder_args = SufrBuilderArgs {
+    ///         text: seq_data.seq,
+    ///         path: Some("3.sufr".to_string()),
+    ///         low_memory: true,
+    ///         max_query_len: None,
+    ///         is_dna: true,
+    ///         allow_ambiguity: false,
+    ///         ignore_softmask: false,
+    ///         sequence_starts: seq_data.start_positions.into_iter().collect(),
+    ///         sequence_names: seq_data.sequence_names,
+    ///         num_partitions: 16,
+    ///         seed_mask: None,
+    ///         random_seed: 42,
+    ///     };
+    ///
+    ///     let outpath = SuffixArray::write(builder_args)?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    pub fn write(args: SufrBuilderArgs) -> Result<String> {
+        let path = if (args.text.len() as u64) < u32::MAX as u64 {
+            let builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
+            builder.path
+        } else {
+            let builder: SufrBuilder<u64> = SufrBuilder::new(args)?;
+            builder.path
+        };
+
+        Ok(path)
     }
 }

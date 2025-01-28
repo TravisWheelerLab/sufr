@@ -1,4 +1,4 @@
-//! # Creating Suffix Arrays
+//! Create on-disk suffix/LCP arrays
 //!
 //! Sufr builds the suffix and LCP (longest common prefix) arrays on disk.
 //! The suffixes are partitioned into temporary files, and these are sorted
