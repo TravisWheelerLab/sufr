@@ -778,7 +778,6 @@ where
             // Use a HashMap because selecting pivots one-at-a-time
             // can result in duplicates.
             let num_pivots = num_partitions - 1;
-            //let rng = &mut rand::thread_rng();
             let mut rng: Box<dyn RngCore> = if random_seed > 0 {
                 Box::new(StdRng::seed_from_u64(random_seed))
             } else {
@@ -1155,17 +1154,17 @@ mod test {
         // 1: TTTAT
         // 0: TTTTAT
         // "T-T" vs "T-T"
-        //assert!(!sufr.is_less(1, 0));
+        assert!(!sufr.is_less(1, 0));
 
         // 0: TTTTAT
         // 3: TAT
         // "T-T" vs "T-T"
-        //assert!(!sufr.is_less(0, 3));
+        assert!(!sufr.is_less(0, 3));
 
         // 3: TAT
         // 0: TTTTAT
         // "T-T" vs "T-T"
-        //assert!(!sufr.is_less(3, 0));
+        assert!(!sufr.is_less(3, 0));
 
         fs::remove_file(outfile)?;
 

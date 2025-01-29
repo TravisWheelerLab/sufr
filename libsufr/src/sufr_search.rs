@@ -39,7 +39,7 @@ where
     /// In-memory rank array
     pub rank: &'a [T],
 
-    /// ???
+    /// The number of suffixes 
     pub len_suffixes: usize,
 
     /// How the suffixes were built?
