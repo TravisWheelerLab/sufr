@@ -107,7 +107,7 @@ impl SuffixArray {
     ///     let outfile = "3.sufr";
     ///     let builder_args = SufrBuilderArgs {
     ///         text: seq_data.seq,
-    ///         path: Some(oufile.to_string()),
+    ///         path: Some(outfile.to_string()),
     ///         low_memory: true,
     ///         max_query_len: None,
     ///         is_dna: true,
