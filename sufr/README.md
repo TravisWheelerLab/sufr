@@ -67,7 +67,7 @@ Use the `-l|--log` option to view these on STDOUT or optionally write to a given
 To begin, you must create a _.sufr_ using the `create` (`cr`) action:
 
 ```
-$ sufr create -h
+$ sufr cr -h
 Create sufr file
 
 Usage: sufr create [OPTIONS] <INPUT>
@@ -95,7 +95,7 @@ The resulting binary-encoded output file will contain:
 * a fully sorted suffix array (SA)
 * an array of the LCP (longest common prefix) for the SA
 
-The input file is a required positional argument and should be a FASTA/Q-formatted file with one or more sequences.
+The input file is a required positional argument and should be a FASTA/Q-formatted file with one or more sequences, e.g.:
 
 ```
 $ cat data/inputs/2.fa
@@ -105,13 +105,13 @@ acgtacgt
 acgtacgt
 ```
 
-First, read the input sequences into a string of `u8` bytes and uppercase the characters.
-Each sequence is separated by a specified character (`%` by default).
-A final dollar sign (`$`) is appended to the end of the input text.
+To briefly describe our algorigthm, the input sequences is read into a vector of `u8` bytes.
+Unless we are told to ignore softmasked input, lowercase values are converted to uppercase; in the case that we do ignore softmask data, lowercase are converted to an ambiguity character (_N_ for nucleotides and _X_ otherwise, e.g., protein).
+Multiple sequence are separated by a specified character (`%` by default).
+A sentinel character is appended to the end (default `$`) is appended to the end of the input text.
 If the `--dna` flag is present, suffixes are skipped if they begin with any character other than _A_, _C_, _G_, or _T_ unless the `--allow-ambiguity` flag is present.
-Additionally, soft-masked (lowercase) input is converted to uppercase unless the `--ignore-softmask` flag is present, in which case it is converted to `N` and ignored.
 
-Next, we partition the suffixes into some number `N` partitions by randomly selecting `--num-partitions` - 1 pivot suffixes, sorting them, and using the pivots to place each suffix into the highest bounded partition.
+Next, we partition the suffixes into some number partitions by randomly selecting `--num-partitions` - 1 pivot suffixes, sorting them, and using the pivots to place each suffix into the highest bounded partition.
 The partitions are sorted using a merge sort algorithm that also generates an LCP (longest common prefix) array.
 The sorted suffix/LCP arrays are then concatenated to produce the final output.
 
@@ -120,13 +120,12 @@ For instance, with the _1.fa_ file, the default output file will be _1.sufr_:
 
 ```
 $ sufr --log debug create data/inputs/1.fa -n 2 --dna
-[2025-01-06T20:28:54Z INFO  sufr] Using 8 threads
-[2025-01-06T20:28:54Z INFO  sufr] Read input of len 11 in 982.625µs
-[2025-01-06T20:28:54Z INFO  libsufr::sufr_builder] Selected 1 pivot in 74.291µs
-[2025-01-06T20:28:54Z INFO  libsufr::sufr_builder] Wrote 9 unsorted suffixes to partition in 469.833µs
-[2025-01-06T20:28:54Z INFO  libsufr::sufr_builder] Sorted 9 suffixes in 2 partitions (avg 4) in 356.833µs
-[2025-01-06T20:28:54Z INFO  sufr] Wrote 172 bytes to '1.sufr' in 422.042µs
-[2025-01-06T20:28:54Z INFO  sufr] Total time: 2.836917ms
+[2025-01-29T18:56:00Z INFO  sufr] Using 8 threads
+[2025-01-29T18:56:00Z INFO  sufr] Read input of len 11 in 980.5µs
+[2025-01-29T18:56:00Z INFO  libsufr::sufr_builder] Selected 1 pivot in 51.917µs
+[2025-01-29T18:56:00Z INFO  libsufr::sufr_builder] Wrote 9 unsorted suffixes to partition in 282.208µs
+[2025-01-29T18:56:00Z INFO  libsufr::sufr_builder] Sorted 9 suffixes in 2 partitions (avg 4) in 530.292µs
+[2025-01-29T18:56:00Z INFO  sufr] Wrote 172 bytes to '1.sufr' in 1.822333ms
 ```
 
 ### Summarize a sufr file
@@ -153,7 +152,7 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | Filename        | 1.sufr           |
 +-----------------+------------------+
-| Modified        | 2025-01-06 13:28 |
+| Modified        | 2025-01-29 11:56 |
 +-----------------+------------------+
 | File Size       | 172 bytes        |
 +-----------------+------------------+
@@ -175,7 +174,7 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | Sequence starts | 0                |
 +-----------------+------------------+
-| Headers         | 1                |
+| Sequence names  | 1                |
 +-----------------+------------------+
 ```
 
@@ -187,10 +186,10 @@ You can use the `list` (`ls`) action to view the sorted arrays by their _rank_:
 $ sufr ls -h
 List the suffix array from a sufr file
 
-Usage: sufr list [OPTIONS] <SUFR> [RANK]...
+Usage: sufr list [OPTIONS] <FILE> [RANK]...
 
 Arguments:
-  <SUFR>     Sufr file
+  <FILE>     Sufr file
   [RANK]...  Ranks of suffixes to show
 
 Options:
@@ -198,7 +197,8 @@ Options:
   -s, --show-suffix      Show suffix position column
   -p, --show-lcp         Show LCP column
   -v, --very-low-memory  Very low memory
-  -n, --len <LEN>        Length of suffixes to show
+      --len <LEN>        Length of suffixes to show
+  -n, --number <LEN>     Number of suffixes to show
   -o, --output <OUT>     Output
   -h, --help             Print help
 ```
@@ -233,7 +233,7 @@ GT$
 As suffixes can get quite long, use the `-l|--len` option to restrict the length of the shown suffix:
 
 ```
-$ sufr ls 1.sufr 2-3 -n 3
+$ sufr ls 1.sufr 2-3 --len 3
 ACG
 CGT
 ```
@@ -255,14 +255,18 @@ Arguments:
 Options:
   -m, --max-query-len <LEN>  Maximum query length
   -o, --output <OUT>         Output
-  -l, --low-memory           Low-memory
+  -l, --low-memory           Low memory
   -v, --very-low-memory      Very low memory
   -h, --help                 Print help
 ```
 
+.Low/very low memory usage
+****
 The `-l|--low-memory` option will force the suffixes to be read from disk rather than loaded into memory. 
 The `-v|--very-low-memory` option will also force the text to be read from disk rather than loaded into memory. 
 The time to load a large index (e.g., human genome) into memory may take longer than the actual search, so you may find this is faster for only a few queries but slower for a large number.
+Also consider the `-m|--max-query-len` option to create a down-sampled suffix array.
+****
 
 For example:
 
@@ -270,10 +274,8 @@ For example:
 $ sufr co 1.sufr AC GT X
 AC 2
 GT 2
-X not found
+X 0
 ```
-
-Suffixes that do not occur are printed to `STDERR` such as the "X" in the preceding output.
 
 ### Locate suffixes
 
@@ -333,10 +335,6 @@ $ sufr lo 3.sufr ACT GTT -a
 ACT 14 88
 GTT 92
 ```
-
-By default, the entire suffix array will be loaded into memory.
-If your machine lacks suffixient resources, you can use the `-m|--max-query-len` option to create a down-sampled suffix array.
-Or use the `-l|--low-memory` option to search the suffix array on disk, which is slower but requires only enough memory to hold the original text/sequences.
 
 ### Extract suffixes
 

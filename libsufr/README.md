@@ -1,5 +1,7 @@
 # Parallel Construction of Suffix Arrays in Rust
 
+See https://docs.rs/libsufr/latest/libsufr/ for API documentation.
+
 This is a Rust library crate for creating suffix arrays.
 
 The basic ideas are as follow:
