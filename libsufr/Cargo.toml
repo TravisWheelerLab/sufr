@@ -1,6 +1,6 @@
 [package]
 name = "libsufr"
-version = "0.7.4"
+version = "0.7.5"
 rust-version = "1.80"
 edition = "2021"
 description = "Parallel Construction of Suffix Arrays in Rust"
