@@ -1035,16 +1035,19 @@ where
 mod test {
     use super::{SufrBuilder, SufrBuilderArgs};
     use anyhow::Result;
+    use std::fs;
+    use tempfile::NamedTempFile;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_is_less() -> Result<()> {
         //           012345
         let text = b"TTTAGC".to_vec();
+        let outfile = NamedTempFile::new()?;
         let args = SufrBuilderArgs {
             text,
             low_memory: true,
-            path: None,
+            path: Some(outfile.path().to_string_lossy().to_string()),
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1073,6 +1076,8 @@ mod test {
         // 0: TTTAGC
         assert!(sufr.is_less(3, 0));
 
+        fs::remove_file(outfile)?;
+
         Ok(())
     }
 
@@ -1080,10 +1085,11 @@ mod test {
     fn test_is_less_max_query_len() -> Result<()> {
         //           012345
         let text = b"TTTAGC".to_vec();
+        let outfile = NamedTempFile::new()?;
         let args = SufrBuilderArgs {
             text,
             low_memory: true,
-            path: None,
+            path: Some(outfile.path().to_string_lossy().to_string()),
             max_query_len: Some(2),
             is_dna: false,
             allow_ambiguity: false,
@@ -1115,6 +1121,8 @@ mod test {
         // 0: TTTAGC
         assert!(sufr.is_less(3, 0));
 
+        fs::remove_file(outfile)?;
+
         Ok(())
     }
 
@@ -1122,10 +1130,11 @@ mod test {
     fn test_is_less_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTTAT".to_vec();
+        let outfile = NamedTempFile::new()?;
         let args = SufrBuilderArgs {
             text,
             low_memory: true,
-            path: None,
+            path: Some(outfile.path().to_string_lossy().to_string()),
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1158,6 +1167,8 @@ mod test {
         // "T-T" vs "T-T"
         //assert!(!sufr.is_less(3, 0));
 
+        fs::remove_file(outfile)?;
+
         Ok(())
     }
 
@@ -1165,10 +1176,11 @@ mod test {
     fn test_find_lcp_no_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTAGC".to_vec();
+        let outfile = NamedTempFile::new()?;
         let args = SufrBuilderArgs {
             text,
             low_memory: true,
-            path: None,
+            path: Some(outfile.path().to_string_lossy().to_string()),
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1203,6 +1215,8 @@ mod test {
 
         // TODO: Add a test with skip
 
+        fs::remove_file(outfile)?;
+
         Ok(())
     }
 
@@ -1210,10 +1224,11 @@ mod test {
     fn test_find_lcp_with_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTTTA".to_vec();
+        let outfile = NamedTempFile::new()?;
         let args = SufrBuilderArgs {
             text,
             low_memory: true,
-            path: None,
+            path: Some(outfile.path().to_string_lossy().to_string()),
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1238,6 +1253,8 @@ mod test {
         // 5:      A
         assert_eq!(sufr.find_lcp(0, 5, 3, 0), 0);
 
+        fs::remove_file(outfile)?;
+
         Ok(())
     }
 
@@ -1245,10 +1262,11 @@ mod test {
     fn test_upper_bound_1() -> Result<()> {
         //          012345
         let text = b"TTTAGC".to_vec();
+        let outfile = NamedTempFile::new()?;
         let args = SufrBuilderArgs {
             text,
             low_memory: true,
-            path: None,
+            path: Some(outfile.path().to_string_lossy().to_string()),
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1270,6 +1288,8 @@ mod test {
         // The "C$" is the last value
         assert_eq!(sufr.upper_bound(5, &[3, 4, 5]), 1);
 
+        fs::remove_file(outfile)?;
+
         Ok(())
     }
 
@@ -1277,10 +1297,11 @@ mod test {
     fn test_upper_bound_2() -> Result<()> {
         //           0123456789
         let text = b"ACGTNNACGT".to_vec();
+        let outfile = NamedTempFile::new()?;
         let args = SufrBuilderArgs {
             text,
             low_memory: true,
-            path: None,
+            path: Some(outfile.path().to_string_lossy().to_string()),
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1322,6 +1343,8 @@ mod test {
         // T$ < TNNACGT$ => p0
         assert_eq!(sufr.upper_bound(9, &[3]), 0);
 
+        fs::remove_file(outfile)?;
+
         Ok(())
     }
 
@@ -1329,10 +1352,11 @@ mod test {
     fn test_upper_bound_seed_mask() -> Result<()> {
         //           0123456789
         let text = b"ACGTNNACGT".to_vec();
+        let outfile = NamedTempFile::new()?;
         let args = SufrBuilderArgs {
             text,
             low_memory: true,
-            path: None,
+            path: Some(outfile.path().to_string_lossy().to_string()),
             max_query_len: None,
             is_dna: false,
             allow_ambiguity: false,
@@ -1375,6 +1399,8 @@ mod test {
 
         // T$ == TNNACGT$ (only compare T)
         assert_eq!(sufr.upper_bound(9, &[3]), 0);
+
+        fs::remove_file(outfile)?;
 
         Ok(())
     }
