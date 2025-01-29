@@ -6,7 +6,7 @@ permissions:
 on:
   push:
     tags:
-      - .*sufr-v[0-9]+.*
+      - "*sufr-v[0-9]*"
 
 jobs:
   create-release:
