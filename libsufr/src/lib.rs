@@ -1,4 +1,4 @@
-// #![warn(missing_docs)]
+#![warn(missing_docs)]
 
 //! # Parallel Construction of Suffix Arrays in Rust
 //!
@@ -14,7 +14,7 @@
 //!
 //! * Use [sufr_builder] to create a new suffix array/_.sufr_ file
 //! * Use [sufr_file] to interact and query an existing suffix array/_.sufr_ file
-//! 
+//!
 //!
 //! ## Authors
 //! * Ken Youens-Clark <kyclark@gmail.com>

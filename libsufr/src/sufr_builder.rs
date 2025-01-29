@@ -101,7 +101,7 @@ where
     ///
     /// ```
     /// use anyhow::Result;
-    /// use std::path::Path;
+    /// use std::{fs, path::Path};
     /// use libsufr::{
     ///     sufr_builder::SufrBuilder,
     ///     types::SufrBuilderArgs,
@@ -113,10 +113,11 @@ where
     ///     let sequence_delimiter = b'%';
     ///     let seq_data = read_sequence_file(path, sequence_delimiter)?;
     ///     let text_len = seq_data.seq.len() as u64;
+    ///     let outfile = "1.sufr";
     ///     let builder_args = SufrBuilderArgs {
     ///         text: seq_data.seq,
     ///         low_memory: false,
-    ///         path: Some("1.sufr".to_string()),
+    ///         path: Some(outfile.to_string()),
     ///         max_query_len: None,
     ///         is_dna: true,
     ///         allow_ambiguity: false,
@@ -133,6 +134,8 @@ where
     ///     } else {
     ///         let sufr_builder: SufrBuilder<u64> = SufrBuilder::new(builder_args)?;
     ///     }
+    ///
+    ///     fs::remove_file(&outfile)?;
     ///
     ///     Ok(())
     /// }

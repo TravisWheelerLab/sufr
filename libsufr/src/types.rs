@@ -58,6 +58,25 @@ impl SeedMask {
     /// * be comprised entirely of 1 or 0
     /// * start and end with 1
     /// * contain at least one 0
+    ///
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::types::SeedMask;
+    ///
+    /// fn main() -> Result<()> {
+    ///     let mask = SeedMask::new("110110101")?;
+    ///     let expected = SeedMask {
+    ///         mask: "110110101".to_string(),
+    ///         bytes: vec![1u8, 1u8, 0u8, 1u8, 1u8, 0u8, 1u8, 0u8, 1u8],
+    ///         positions: vec![0, 1, 3, 4, 6, 8],
+    ///         differences: vec![0, 0, 1, 1, 2, 3],
+    ///         weight: 6,
+    ///     };
+    ///     assert_eq!(mask, expected);
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
     pub fn new(mask: &str) -> Result<Self> {
         if !Self::is_valid(mask) {
             bail!("Invalid seed mask '{mask}'")
@@ -79,6 +98,26 @@ impl SeedMask {
 
     /// Instantiate a `SeedMask` from the byte representation
     /// from a `SufrFile`
+    ///
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::types::SeedMask;
+    ///
+    /// fn main() -> Result<()> {
+    ///     let bytes: Vec<u8> = vec![1, 1, 0, 1, 1, 0, 1, 0, 1];
+    ///     let mask = SeedMask::from_bytes(&bytes)?;
+    ///     let expected = SeedMask {
+    ///         mask: "110110101".to_string(),
+    ///         bytes,
+    ///         positions: vec![0, 1, 3, 4, 6, 8],
+    ///         differences: vec![0, 0, 1, 1, 2, 3],
+    ///         weight: 6,
+    ///     };
+    ///     assert_eq!(mask, expected);
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mask: String = bytes
             .iter()
@@ -105,6 +144,22 @@ impl SeedMask {
     }
 
     /// Determine if a seed mask is valid
+    ///
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::types::SeedMask;
+    ///
+    /// fn main() -> Result<()> {
+    ///     assert!(SeedMask::new("").is_err());
+    ///     assert!(SeedMask::new("0").is_err());
+    ///     assert!(SeedMask::new("01").is_err());
+    ///     assert!(SeedMask::new("10").is_err());
+    ///     assert!(SeedMask::new("11").is_err());
+    ///     assert!(SeedMask::new("101").is_ok());
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
     fn is_valid(mask: &str) -> bool {
         let seed_re = Regex::new("^1+0[01]*1$").unwrap();
         seed_re.is_match(mask)
@@ -162,12 +217,8 @@ pub struct SearchOptions {
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
-    /// More memory will result in higher throughput/latency.
-    /// When `true`, the suffix array will be placed
-    /// into memory. When `false`, the suffix array will be
-    /// read from disk. NB: initially reading the suffix array
-    /// with `low_memory` will also cause the `text` to
-    /// remain on disk.
+    /// When `true`, the suffix array will be placed into memory. 
+    /// When `false`, the suffix array will be read from disk.
     pub low_memory: bool,
 
     /// Whether or not to return location information or to simply count
@@ -247,6 +298,7 @@ pub trait Int:
     + Hash
     + serde::ser::Serialize
 {
+    /// Convert an `Int` to a `usize`
     fn to_usize(&self) -> usize;
 }
 
@@ -268,7 +320,9 @@ impl Int for u64 {
     }
 }
 
+/// Convert a `usize` to an `Int`
 pub trait FromUsize<T> {
+    /// Convert a `usize` to an `Int`
     fn from_usize(val: usize) -> T;
 }
 
@@ -300,7 +354,8 @@ pub struct CountOptions {
     /// Maximum query length for search
     pub max_query_len: Option<usize>,
 
-    /// Low memory, put suffix array into memory or not
+    /// When `true`, the suffix array will be placed into memory. 
+    /// When `false`, the suffix array will be read from disk.
     pub low_memory: bool,
 }
 
@@ -328,7 +383,8 @@ pub struct ExtractOptions {
     /// Maximum query length for search
     pub max_query_len: Option<usize>,
 
-    /// Low memory options, put suffix array into memory
+    /// When `true`, the suffix array will be placed into memory. 
+    /// When `false`, the suffix array will be read from disk.
     pub low_memory: bool,
 
     /// Optional length of prefix to append before found suffixes (context)
@@ -402,9 +458,6 @@ pub struct ListOptions {
     /// Show LCP column
     pub show_lcp: bool,
 
-    /// Low memory
-    pub low_memory: bool,
-
     /// Length of suffixes to show
     pub len: Option<usize>,
 
@@ -428,11 +481,8 @@ pub struct LocateOptions {
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
-    /// More memory will result in higher throughput/latency.
-    /// With `None`, the `text` and suffix array will be placed
-    /// into memory. At low memory, the suffix array will be
-    /// read from disk. At very low, the text will also be left
-    /// on disk.
+    /// When `true`, the suffix array will be placed into memory. 
+    /// When `false`, the suffix array will be read from disk.
     pub low_memory: bool,
 }
 

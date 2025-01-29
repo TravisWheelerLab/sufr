@@ -979,7 +979,6 @@ where
     ///         show_rank: true,
     ///         show_suffix: true,
     ///         show_lcp: true,
-    ///         low_memory: true,
     ///         len: None,
     ///         number: None,
     ///         output: Some(outfile.path().to_string_lossy().to_string()),

@@ -183,12 +183,8 @@ pub struct ListArgs {
     #[arg(short('p'), long)]
     pub show_lcp: bool,
 
-    /// Low memory
-    #[arg(short, long)]
-    pub low_memory: bool,
-
     /// Very low memory
-    #[arg(short, long, conflicts_with = "low_memory")]
+    #[arg(short, long)]
     pub very_low_memory: bool,
 
     /// Length of suffixes to show
@@ -438,11 +434,6 @@ pub fn list(args: &ListArgs) -> Result<()> {
         show_rank: args.show_rank,
         show_suffix: args.show_suffix,
         show_lcp: args.show_lcp,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
         len: args.len,
         number: args.number,
         // defaults to stdout

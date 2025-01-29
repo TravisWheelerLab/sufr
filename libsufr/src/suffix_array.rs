@@ -99,14 +99,15 @@ impl SuffixArray {
     ///     suffix_array::SuffixArray,
     ///     util::read_sequence_file,
     /// };
-    /// use std::path::Path;
+    /// use std::{fs, path::Path};
     ///
     /// fn main() -> Result<()> {
     ///     let sequence_delimiter = b'%';
     ///     let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), sequence_delimiter)?;
+    ///     let outfile = "3.sufr";
     ///     let builder_args = SufrBuilderArgs {
     ///         text: seq_data.seq,
-    ///         path: Some("3.sufr".to_string()),
+    ///         path: Some(oufile.to_string()),
     ///         low_memory: true,
     ///         max_query_len: None,
     ///         is_dna: true,
@@ -123,6 +124,9 @@ impl SuffixArray {
     ///     let meta = suffix_array.metadata()?;
     ///     assert_eq!(meta.text_len, 113);
     ///     assert_eq!(meta.len_suffixes, 101);
+    ///
+    ///     fs::remove_file(&outfile)?;
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -255,7 +259,6 @@ impl SuffixArray {
     ///         show_rank: true,
     ///         show_suffix: true,
     ///         show_lcp: true,
-    ///         low_memory: true,
     ///         len: None,
     ///         number: None,
     ///         output: Some(outfile.path().to_string_lossy().to_string()),
@@ -371,6 +374,10 @@ impl SuffixArray {
 
     /// Read a _.sufr_ file
     ///
+    /// Args:
+    /// * `filename`: the _.sufr_ file!
+    /// * `low_memory`: when `true`, leave text on disk; when `false`, read text into memory
+    ///
     /// ```
     /// use anyhow::Result;
     /// use libsufr::suffix_array::SuffixArray;
@@ -423,14 +430,15 @@ impl SuffixArray {
     ///     suffix_array::SuffixArray,
     ///     util::read_sequence_file,
     /// };
-    /// use std::path::Path;
+    /// use std::{fs, path::Path};
     ///
     /// fn main() -> Result<()> {
     ///     let sequence_delimiter = b'%';
     ///     let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), sequence_delimiter)?;
+    ///     let outfile = "3.sufr";
     ///     let builder_args = SufrBuilderArgs {
     ///         text: seq_data.seq,
-    ///         path: Some("3.sufr".to_string()),
+    ///         path: Some(outfile.to_string()),
     ///         low_memory: true,
     ///         max_query_len: None,
     ///         is_dna: true,
@@ -444,6 +452,8 @@ impl SuffixArray {
     ///     };
     ///
     ///     let outpath = SuffixArray::write(builder_args)?;
+    ///     fs::remove_file(&outfile)?;
+    ///
     ///     Ok(())
     /// }
     /// ```

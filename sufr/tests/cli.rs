@@ -652,7 +652,7 @@ fn extract_uniprot_masked_low_memory() -> Result<()> {
 
 // --------------------------------------------------
 fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
-    for memory in &["", "-l", "-v"] {
+    for memory in &["", "-v"] {
         let mut args = vec!["list".to_string(), filename.to_string()];
 
         if !memory.is_empty() {
