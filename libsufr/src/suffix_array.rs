@@ -10,7 +10,7 @@ use crate::{
 use anyhow::Result;
 
 // --------------------------------------------------
-pub(crate) trait SuffixArrayTrait {
+pub(crate) trait SuffixArrayTrait: Send + Sync {
     fn count(&mut self, args: CountOptions) -> Result<Vec<CountResult>>;
     fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>>;
     fn list(&mut self, args: ListOptions) -> Result<()>;
@@ -181,7 +181,6 @@ impl SuffixArray {
     pub fn count(&mut self, args: CountOptions) -> Result<Vec<CountResult>> {
         self.inner.count(args)
     }
-
 
     // --------------------------------------------------
     /// Extract the suffixes matching given queries
