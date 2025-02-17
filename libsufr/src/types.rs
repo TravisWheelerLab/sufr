@@ -207,7 +207,7 @@ impl Display for SeedMask {
 
 // --------------------------------------------------
 /// A struct for use in searching the suffix array
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SearchOptions {
     /// A vector of query strings
     pub queries: Vec<String>,
@@ -346,7 +346,7 @@ impl FromUsize<u64> for u64 {
 
 // --------------------------------------------------
 /// Options for counting the occurrences of suffixes
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CountOptions {
     /// Vector of query strings
     pub queries: Vec<String>,
@@ -445,6 +445,7 @@ pub struct ExtractSequence {
 
 // --------------------------------------------------
 /// Arguments to sufr_file.list
+#[derive(Debug, Clone)]
 pub struct ListOptions {
     /// Ranks of suffixes to show
     pub ranks: Vec<usize>,
@@ -471,7 +472,7 @@ pub struct ListOptions {
 
 // --------------------------------------------------
 /// A struct for use in locating suffixes
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocateOptions {
     /// A vector of query strings
     pub queries: Vec<String>,
