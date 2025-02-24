@@ -1051,6 +1051,7 @@ where
 
         let number = args.number.unwrap_or(0);
         if args.ranks.is_empty() {
+            self.suffix_array_file.reset();
             for (rank, suffix) in self.suffix_array_file.iter().enumerate() {
                 print(rank, suffix.to_usize(), self.lcp_file.get(rank).unwrap())?;
 
