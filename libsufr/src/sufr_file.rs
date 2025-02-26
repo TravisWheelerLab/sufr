@@ -13,7 +13,7 @@ use crate::{
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, bail};
 use chrono::{DateTime, Local};
 use home::home_dir;
 use log::info;
@@ -156,37 +156,41 @@ where
         // Length of text
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let text_len = usize::from_ne_bytes(buffer);
+        let text_len = u64::from_ne_bytes(buffer);
+        if std::mem::size_of::<usize>() == 4 && text_len > usize::MAX as u64 {
+            bail!("text_len exceeds native usize");
+        }
+        let text_len = text_len as usize;
 
         // Position of text
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let text_pos = usize::from_ne_bytes(buffer);
+        let text_pos = u64::from_ne_bytes(buffer) as usize;
 
         // Position of suffix array
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let suffix_array_pos = usize::from_ne_bytes(buffer);
+        let suffix_array_pos = u64::from_ne_bytes(buffer) as usize;
 
         // Position of LCP array
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let lcp_pos = usize::from_ne_bytes(buffer);
+        let lcp_pos = u64::from_ne_bytes(buffer) as usize;
 
         // Number of suffixes
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let len_suffixes = usize::from_ne_bytes(buffer);
+        let len_suffixes = u64::from_ne_bytes(buffer) as usize;
 
         // Max query length
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let max_query_len = T::from_usize(usize::from_ne_bytes(buffer));
+        let max_query_len = T::from_usize(u64::from_ne_bytes(buffer) as usize);
 
         // Number of sequences
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let num_sequences = T::from_usize(usize::from_ne_bytes(buffer));
+        let num_sequences = T::from_usize(u64::from_ne_bytes(buffer) as usize);
 
         // Sequence starts
         let mut buffer = vec![0; num_sequences.to_usize() * mem::size_of::<T>()];
@@ -197,7 +201,7 @@ where
         // Seed mask len
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let seed_mask_len = usize::from_ne_bytes(buffer);
+        let seed_mask_len = u64::from_ne_bytes(buffer) as usize;
 
         // Seed mask: stored as u8 for the 1s/0s
         let seed_mask: Vec<u8> = if seed_mask_len > 0 {
@@ -581,7 +585,7 @@ where
 
                 let mut buffer = [0; 8];
                 file.read_exact(&mut buffer)?;
-                let suffix_array_len = usize::from_ne_bytes(buffer);
+                let suffix_array_len = u64::from_ne_bytes(buffer) as usize;
 
                 self.suffix_array_mem = if suffix_array_len == 0 {
                     vec![]
