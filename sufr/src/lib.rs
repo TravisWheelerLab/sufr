@@ -571,7 +571,6 @@ fn parse_pos(range: &str) -> Result<PositionList> {
             })
         })
         .collect::<Result<_, _>>()
-        .map_err(From::from)
 }
 
 // --------------------------------------------------
