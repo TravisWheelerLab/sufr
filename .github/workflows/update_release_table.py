@@ -5,11 +5,11 @@ import argparse
 import os
 import re
 import json
-#from pprint import pprint
+from pprint import pprint
 from typing import NamedTuple, Optional, TextIO
 
 # GitHub repository details
-REPO = "TravisWheelerLab/sufr"
+REPO = "kyclark/sufr"
 API_URL = f"https://api.github.com/repos/{REPO}/releases"
 
 
@@ -52,13 +52,13 @@ def main() -> None:
     args = get_args()
     releases = get_releases_data(args.json)
 
-    if release_to_update := find_release_by_version(releases, args.version):
-        release_id = release_to_update["id"]
-        markdown_table = generate_markdown_table(release_to_update)
-        update_release_body(release_id, markdown_table)
-        print(f"Release {args.version} updated successfully.")
+    if release := find_release_by_version(releases, args.version):
+        print("Release '{}' has {} assets".format(args.version, len(release["assets"])))
+        markdown_table = generate_markdown_table(release)
+        update_release_body(release["id"], markdown_table)
+        print(f"Release '{args.version}' updated successfully.")
     else:
-        print(f"Release with version {args.version} not found.")
+        print(f"Release version '{args.version}' not found.")
 
 
 # --------------------------------------------------
@@ -122,9 +122,8 @@ def generate_markdown_table(release) -> str:
     table += "|---------|----------|-------------|\n"
 
     for asset in release["assets"]:
-        print(">>> Asset {}".format(asset["name"]))
         if info := extract_os_arch_from_filename(asset["name"]):
-            print(f"     - os {info.os} arch {info.arch}")
+            print(">>> Asset {}".format(asset["name"]))
             download_url = asset["browser_download_url"]
             table += f"| {info.os}  | {info.arch}  | [Download]({download_url}) |\n"
 
