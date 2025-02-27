@@ -122,7 +122,9 @@ def generate_markdown_table(release) -> str:
     table += "|---------|----------|-------------|\n"
 
     for asset in release["assets"]:
+        print(">>> Asset {}".format(asset["name"]))
         if info := extract_os_arch_from_filename(asset["name"]):
+            print(f"     - os {info.os} arch {info.arch}")
             download_url = asset["browser_download_url"]
             table += f"| {info.os}  | {info.arch}  | [Download]({download_url}) |\n"
 
