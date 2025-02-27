@@ -4,6 +4,7 @@ import requests
 import argparse
 import os
 import re
+import json
 
 # GitHub repository details
 REPO = "TravisWheelerLab/sufr"
@@ -14,16 +15,26 @@ def get_args():
     parser = argparse.ArgumentParser(
         description="Update a specific release in GitHub."
     )
+
     parser.add_argument(
         "version", help="The tag name of the release to update"
     )
+
+    parser.add_argument(
+        "-j",
+        "--json", 
+        type=argparse.FileType("rt"),
+        help="Local JSON file"
+    )
+
     return parser.parse_args()
 
 
 # --------------------------------------------------
 def main():
     args = get_args()
-    releases = get_releases_data()
+    releases = get_releases_data(args.json)
+    print(releases)
 
     if release_to_update := find_release_by_version(releases, args.version):
         release_id = release_to_update["id"]
@@ -43,7 +54,10 @@ def main():
 
 
 # --------------------------------------------------
-def get_releases_data():
+def get_releases_data(file):
+    if file:
+        return json.loads(file.read())
+
     headers = {
         "Authorization": f'token {os.getenv("GITHUB_TOKEN")}',
         "Accept": "application/vnd.github.v3+json",
