@@ -5,13 +5,28 @@ import argparse
 import os
 import re
 import json
+#from pprint import pprint
+from typing import NamedTuple, Optional, TextIO
 
 # GitHub repository details
 REPO = "TravisWheelerLab/sufr"
 API_URL = f"https://api.github.com/repos/{REPO}/releases"
 
+
+class ReleaseInfo(NamedTuple):
+    """ Release info """
+    os: str
+    arch: str
+
+
+class Args(NamedTuple):
+    """ Command-line args """
+    version: str
+    json: Optional[TextIO]
+
+
 # --------------------------------------------------
-def get_args():
+def get_args() -> Args:
     parser = argparse.ArgumentParser(
         description="Update a specific release in GitHub."
     )
@@ -22,39 +37,32 @@ def get_args():
 
     parser.add_argument(
         "-j",
-        "--json", 
+        "--json",
         type=argparse.FileType("rt"),
         help="Local JSON file"
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    return Args(version=args.version, json=args.json)
 
 
 # --------------------------------------------------
-def main():
+def main() -> None:
     args = get_args()
     releases = get_releases_data(args.json)
-    print(releases)
 
     if release_to_update := find_release_by_version(releases, args.version):
         release_id = release_to_update["id"]
-        current_body = release_to_update.get("body", "")
-        if current_body is None:
-            current_body = ""
-
         markdown_table = generate_markdown_table(release_to_update)
-        print(markdown_table)
-
-        if "### Release Assets\n" not in current_body:
-            updated_body = current_body + "\n\n" + markdown_table
-            update_release_body(release_id, updated_body)
-            print(f"Release {args.version} updated successfully.")
+        update_release_body(release_id, markdown_table)
+        print(f"Release {args.version} updated successfully.")
     else:
-        print(f"Release with version {args.target_version} not found.")
+        print(f"Release with version {args.version} not found.")
 
 
 # --------------------------------------------------
-def get_releases_data(file):
+def get_releases_data(file: Optional[TextIO]):
     if file:
         return json.loads(file.read())
 
@@ -76,23 +84,23 @@ def find_release_by_version(releases, version):
 
 
 # --------------------------------------------------
-def extract_os_arch_from_filename(filename):
-    pattern = r"[.-]([a-zA-Z]+-[a-zA-Z]+)\.([a-zA-Z0-9_]+)\.tar\.gz"
+def extract_os_arch_from_filename(filename) -> Optional[ReleaseInfo]:
+    pattern = re.compile(r"^(.+)(?:\.tar\.gz|\.zip)$")
 
-    match = re.search(pattern, filename)
+    if match := pattern.search(filename):
+        stem = match.group(1)
+        _, arch, os = stem.split("-", 2)
 
-    if match:
-        os = match.group(1)
-        arch = match.group(2)
-
-        if os == "macos-latest":
+        if os == "macos-latest" or os == "apple-darwin":
             os = "MacOS"
         elif os == "ubuntu-latest":
             os = "Ubuntu"
-        elif os == "windows-latest":
+        elif re.search("linux", os):
+            os = "Linux"
+        elif re.search("windows", os):
             os = "Windows"
 
-        if arch == "x64":
+        if arch == "x64" or arch == "x86_64":
             arch = "Intel/AMD 64-bit"
         elif arch == "386":
             arch = "Intel/AMD 32-bit"
@@ -104,23 +112,19 @@ def extract_os_arch_from_filename(filename):
         elif arch == "arm":
             arch = "ARM 32-bit"
 
-        return os, arch
-    else:
-        return None, None
+        return ReleaseInfo(os, arch)
 
 
 # --------------------------------------------------
-def generate_markdown_table(release):
+def generate_markdown_table(release) -> str:
     table = "### Release Assets\n"
     table += "| OS | Architecture | Link |\n"
     table += "|---------|----------|-------------|\n"
 
     for asset in release["assets"]:
-        if not asset["name"].endswith(".md5"):
-            # parse
-            os, arch = extract_os_arch_from_filename(asset["name"])
+        if info := extract_os_arch_from_filename(asset["name"]):
             download_url = asset["browser_download_url"]
-            table += f"| {os}  | {arch}  | [Download]({download_url}) |\n"
+            table += f"| {info.os}  | {info.arch}  | [Download]({download_url}) |\n"
 
     # Add note about Mac binary signing restriction
     table += (
@@ -144,25 +148,6 @@ def update_release_body(release_id, new_body):
 
     response = requests.patch(update_url, headers=headers, json=data)
     response.raise_for_status()
-
-
-"""
-# --------------------------------------------------
-def update_readme(table):
-    with open("README.md", "r") as file:
-        lines = file.readlines()
-
-    with open("README.md", "w") as file:
-        inside_table = False
-        for line in lines:
-            if line.startswith("| Version"):
-                inside_table = True
-                file.write(table)
-                continue
-            if inside_table and line.startswith("|"):
-                continue
-            file.write(line)
-"""
 
 
 # --------------------------------------------------
