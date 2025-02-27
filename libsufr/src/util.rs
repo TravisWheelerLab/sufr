@@ -45,8 +45,8 @@ pub fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
 ///    between sequences. For many applications (both nucleotide and
 ///    protein), you might choose a character like `%` that sorts below
 ///    the alphabet (A-Z) but above the sentinel `$` that is placed at
-///    the end of the returned text; however, when building a suffix array 
-///    for use in a Burrows-Wheeler Transform, it might be better to use 
+///    the end of the returned text; however, when building a suffix array
+///    for use in a Burrows-Wheeler Transform, it might be better to use
 ///    `N` for nucleotides and `X` for protein.
 pub fn read_sequence_file(
     path: &Path,
@@ -106,7 +106,11 @@ pub fn read_text_length(filename: &str) -> Result<usize> {
         // Length of text is the next usize
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        Ok(usize::from_ne_bytes(buffer))
+        let text_len = u64::from_ne_bytes(buffer);
+        if std::mem::size_of::<usize>() == 4 && text_len > usize::MAX as u64 {
+            bail!("text_len exceeds native usize");
+        }
+        Ok(text_len as usize)
     } else {
         bail!("Unknown sufr version {outfile_version}");
     }
