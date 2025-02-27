@@ -130,7 +130,7 @@ def generate_markdown_table(release) -> str:
     table += (
         "\n***(For Macs) To address the Mac binary signing restriction, use the following command:\n"
         "\n```\n"
-        "sudo xattr -dr com.apple.quarantine <path to file>/my-binary-amd64\n"
+        "sudo xattr -dr com.apple.quarantine <path to file>/sufr\n"
         "```\n"
     )
 
