@@ -24,11 +24,12 @@ def get_args():
 def main():
     args = get_args()
     releases = get_releases_data()
-    release_to_update = find_release_by_version(releases, args.version)
 
-    if release_to_update:
+    if release_to_update := find_release_by_version(releases, args.version):
         release_id = release_to_update["id"]
         current_body = release_to_update.get("body", "")
+        if current_body is None:
+            current_body = ""
 
         markdown_table = generate_markdown_table(release_to_update)
         print(markdown_table)
