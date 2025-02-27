@@ -5,11 +5,10 @@ import argparse
 import os
 import re
 import json
-from pprint import pprint
 from typing import NamedTuple, Optional, TextIO
 
 # GitHub repository details
-REPO = "kyclark/sufr"
+REPO = "TravisWheelerLab/sufr"
 API_URL = f"https://api.github.com/repos/{REPO}/releases"
 
 
