@@ -298,6 +298,35 @@ where
                     )
                 }
             }
+            SuffixSortType::MaxQueryLen(0) => {
+                match (&self.find_n_run(start1), &self.find_n_run(start2)) {
+                    // If the two suffixes start in long stretches of Ns
+                    // Then use the min of the end positions
+                    (Some(end1), Some(end2)) => {
+                        T::from_usize(min(end1 - start1, end2 - start2))
+                    }
+                    _ => {
+                        let text_len = self.text_len.to_usize();
+                        let len = len.to_usize();
+                        let start1 = start1 + skip;
+                        let start2 = start2 + skip;
+                        let end1 = min(start1 + len, text_len);
+                        let end2 = min(start2 + len, text_len);
+                        unsafe {
+                            T::from_usize(
+                                skip + (start1..end1)
+                                    .zip(start2..end2)
+                                    .take_while(|(a, b)| {
+                                        // TODO: Extra check here
+                                        self.text.get_unchecked(*a)
+                                            == self.text.get_unchecked(*b)
+                                    })
+                                    .count(),
+                            )
+                        }
+                    }
+                }
+            }
             SuffixSortType::MaxQueryLen(max_query_len) => {
                 match (&self.find_n_run(start1), &self.find_n_run(start2)) {
                     // If the two suffixes start in long stretches of Ns
