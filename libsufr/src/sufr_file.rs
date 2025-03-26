@@ -542,10 +542,8 @@ where
         {
             info!("Using existing suffix_array_mem");
             return Ok(());
-        }
-
-        // The requested MQL matches how the SA was built
-        if max_query_len == built_max_query_len {
+        } else if max_query_len == built_max_query_len {
+             // The requested MQL matches how the SA was built
             // Stuff entire SA into memory
             let now = Instant::now();
             self.suffix_array_file.reset();
