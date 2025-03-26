@@ -536,6 +536,14 @@ where
             }
         }
 
+        // Do nothing if we've already loaded the correct SA/MQL
+        if !self.suffix_array_mem.is_empty()
+            && self.suffix_array_mem_mql == Some(max_query_len)
+        {
+            info!("Using existing suffix_array_mem");
+            return Ok(());
+        }
+
         // The requested MQL matches how the SA was built
         if max_query_len == built_max_query_len {
             // Stuff entire SA into memory
@@ -547,13 +555,6 @@ where
             // There will be no ranks
             self.suffix_array_rank_mem = vec![];
         } else {
-            // Do nothing if we've already loaded the correct SA/MQL
-            if !self.suffix_array_mem.is_empty()
-                && self.suffix_array_mem_mql == Some(max_query_len)
-            {
-                info!("Using existing suffix_array_mem");
-                return Ok(());
-            }
 
             info!("Loading suffix_array_mem using max_query_len {max_query_len}");
 
@@ -620,7 +621,6 @@ where
             } else {
                 let now = Instant::now();
                 let (sub_sa, sub_rank) = &self.subsample_suffix_array(max_query_len);
-                self.suffix_array_mem_mql = Some(max_query_len);
                 self.suffix_array_mem = sub_sa.to_vec();
                 self.suffix_array_rank_mem = sub_rank.to_vec();
 
@@ -664,6 +664,7 @@ where
                 }
             }
         }
+        self.suffix_array_mem_mql = Some(max_query_len);
 
         Ok(())
     }
