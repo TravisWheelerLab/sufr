@@ -100,8 +100,6 @@ where
     /// File access wrapper to the LCP array
     pub lcp_file: FileAccess<T>,
 
-    is_in_mem: bool,
-
     /// In-memory access to the suffix array
     suffix_array_mem: Vec<T>,
 
@@ -270,7 +268,6 @@ where
             suffix_array_file,
             lcp_file,
             text_file,
-            is_in_mem: false,
             suffix_array_mem: vec![],
             suffix_array_mem_mql: None,
             suffix_array_rank_mem: vec![],
@@ -515,9 +512,6 @@ where
     /// Args:
     /// * `max_query_len`: prefix length
     fn set_suffix_array_mem(&mut self, max_query_len: Option<usize>) -> Result<()> {
-        if self.is_in_mem {
-            return Ok(())
-        }
 
         let mut max_query_len = max_query_len.unwrap_or(0);
 
@@ -670,8 +664,6 @@ where
                 }
             }
         }
-
-        self.is_in_mem = true;
 
         Ok(())
     }
