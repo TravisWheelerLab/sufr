@@ -512,6 +512,7 @@ where
     /// Args:
     /// * `max_query_len`: prefix length
     fn set_suffix_array_mem(&mut self, max_query_len: Option<usize>) -> Result<()> {
+
         let mut max_query_len = max_query_len.unwrap_or(0);
 
         // If ".sufr" file was built with a nonzero max_query_len or seed mask
@@ -535,8 +536,14 @@ where
             }
         }
 
-        // The requested MQL matches how the SA was built
-        if max_query_len == built_max_query_len {
+        // Do nothing if we've already loaded the correct SA/MQL
+        if !self.suffix_array_mem.is_empty()
+            && self.suffix_array_mem_mql == Some(max_query_len)
+        {
+            info!("Using existing suffix_array_mem");
+            return Ok(());
+        } else if max_query_len == built_max_query_len {
+             // The requested MQL matches how the SA was built
             // Stuff entire SA into memory
             let now = Instant::now();
             self.suffix_array_file.reset();
@@ -546,13 +553,6 @@ where
             // There will be no ranks
             self.suffix_array_rank_mem = vec![];
         } else {
-            // Do nothing if we've already loaded the correct SA/MQL
-            if !self.suffix_array_mem.is_empty()
-                && self.suffix_array_mem_mql == Some(max_query_len)
-            {
-                info!("Using existing suffix_array_mem");
-                return Ok(());
-            }
 
             info!("Loading suffix_array_mem using max_query_len {max_query_len}");
 
@@ -619,7 +619,6 @@ where
             } else {
                 let now = Instant::now();
                 let (sub_sa, sub_rank) = &self.subsample_suffix_array(max_query_len);
-                self.suffix_array_mem_mql = Some(max_query_len);
                 self.suffix_array_mem = sub_sa.to_vec();
                 self.suffix_array_rank_mem = sub_rank.to_vec();
 
@@ -663,6 +662,7 @@ where
                 }
             }
         }
+        self.suffix_array_mem_mql = Some(max_query_len);
 
         Ok(())
     }
