@@ -10,13 +10,14 @@
 
 use crate::{
     types::{
-        FromUsize, Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
-        SENTINEL_CHARACTER,
+        FromUsize, Int, RunSpan, SeedMask, SuffixSortType, SufrBuilderArgs,
+        OUTFILE_VERSION, SENTINEL_CHARACTER,
     },
     util::{find_lcp_full_offset, slice_u8_to_vec, usize_to_bytes, vec_to_slice_u8},
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
+use multimap::MultiMap;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use rayon::prelude::*;
 use std::{
@@ -31,6 +32,8 @@ use std::{
     time::Instant,
 };
 use tempfile::NamedTempFile;
+
+type KnownRuns = MultiMap<usize, RunSpan>;
 
 // --------------------------------------------------
 /// A struct for partitioning, sorting, and writing suffixes to disk
@@ -265,7 +268,14 @@ where
     ///   Because of the incremental way the LCPs are calculated, we may know
     ///   that two suffixes share the `skip` number in common already.
     #[inline(always)]
-    fn find_lcp(&self, start1: usize, start2: usize, len: T, skip: usize) -> T {
+    fn find_lcp(
+        &self,
+        start1: usize,
+        start2: usize,
+        len: T,
+        skip: usize,
+        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+    ) -> T {
         // TODO: Could we use traits for SortType, parameterize the builder
         // on initialization and avoid conditionals here?
         match &self.sort_type {
@@ -312,18 +322,41 @@ where
                         let start2 = start2 + skip;
                         let end1 = min(start1 + len, text_len);
                         let end2 = min(start2 + len, text_len);
-                        unsafe {
-                            T::from_usize(
-                                skip + (start1..end1)
-                                    .zip(start2..end2)
-                                    .take_while(|(a, b)| {
-                                        // TODO: Extra check here
-                                        self.text.get_unchecked(*a)
-                                            == self.text.get_unchecked(*b)
-                                    })
-                                    .count(),
-                            )
+                        let a = min(start1, start2);
+                        let b = max(start1, start2);
+                        let mut run_found = false;
+                        let mut k = 0;
+
+                        while self.text[start1 + k] == self.text[start2 + k] {
+                            let mut inc = 1;
+                            if k > 0 && k % 256 == 0 {
+                                //println!("find_lcp {start1}/{end1} - {start2}/{end2}");
+                                //println!("Check offset {offset} a {a:3} b {b:3}");
+                                if let Some(run) =
+                                    Self::check_known_runs(a, b, k, known_runs)
+                                {
+                                    //println!("  Found run {a}/{b} in {run:?}");
+                                    run_found = true;
+                                    if a < run.start {
+                                        Self::update_known_run(a, b, k, known_runs);
+                                    }
+
+                                    inc = run.end - run.start - k;
+                                    //println!("  Inc k {k} by {inc}");
+                                }
+                            }
+                            k += inc;
+
+                            if start1 + k >= end1 || start2 + k >= end2 {
+                                break;
+                            }
                         }
+
+                        if k > 256 && !run_found {
+                            Self::add_known_run(a, b, k, known_runs);
+                        }
+
+                        T::from_usize(skip + k)
                     }
                 }
             }
@@ -363,6 +396,72 @@ where
     }
 
     // --------------------------------------------------
+    fn add_known_run(
+        start1: usize,
+        start2: usize,
+        length: usize,
+        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+    ) {
+        let offset = start2 - start1;
+        if let Some(mutex) = known_runs {
+            if let Ok(mut lookup) = mutex.lock() {
+                lookup.insert(
+                    offset,
+                    RunSpan {
+                        start: start1,
+                        end: start1 + length,
+                    },
+                );
+                //println!("Add run of {length} ({start1}/{start2}/{offset}) =\n{lookup:#?}");
+            }
+        }
+    }
+
+    // --------------------------------------------------
+    fn check_known_runs(
+        start1: usize,
+        start2: usize,
+        k: usize,
+        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+    ) -> Option<RunSpan> {
+        let offset = start2 - start1;
+        known_runs
+            .and_then(|mutex| mutex.lock().ok())
+            .and_then(|lookup| {
+                lookup.get_vec(&offset).and_then(|runs| {
+                    runs.iter()
+                        .find(|run| run.start <= start1 + k && run.end >= start1 + k)
+                        .cloned()
+                })
+            })
+    }
+
+    // --------------------------------------------------
+    fn update_known_run(
+        start1: usize,
+        start2: usize,
+        k: usize,
+        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+    ) {
+        let offset = start2 - start1;
+        if let Some(mutex) = known_runs {
+            if let Ok(mut lookup) = mutex.lock() {
+                if let Some(runs) = lookup.get_vec_mut(&offset) {
+                    for run in runs {
+                        if run.start <= start1 + k && run.end >= start1 + k {
+                            //println!(
+                            //    ">>> Update run start from {} to {start1}",
+                            //    run.start
+                            //);
+                            run.start = start1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --------------------------------------------------
     /// Determine whether or not the first suffix position is lexicographically
     /// less than the second.
     /// This function is used to place suffixes into the highest partition
@@ -372,7 +471,12 @@ where
     /// * `start1`: the position of the first suffix
     /// * `start2`: the position of the second suffix
     #[inline(always)]
-    fn is_less(&self, start1: T, start2: T) -> bool {
+    fn is_less(
+        &self,
+        start1: T,
+        start2: T,
+        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+    ) -> bool {
         if start1 == start2 {
             false
         } else {
@@ -388,8 +492,14 @@ where
             };
 
             let len_lcp = find_lcp_full_offset(
-                self.find_lcp(start1.to_usize(), start2.to_usize(), max_query_len, 0)
-                    .to_usize(),
+                self.find_lcp(
+                    start1.to_usize(),
+                    start2.to_usize(),
+                    max_query_len,
+                    0,
+                    known_runs,
+                )
+                .to_usize(),
                 &self.sort_type,
             );
 
@@ -417,9 +527,14 @@ where
     /// * `suffix`: a suffix position
     /// * `pivots`: randomly selected suffix positions sorted lexicographically
     #[inline(always)]
-    fn upper_bound(&self, suffix: T, pivots: &[T]) -> usize {
+    fn upper_bound(
+        &self,
+        suffix: T,
+        pivots: &[T],
+        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+    ) -> usize {
         // Returns 0 when pivots is empty
-        pivots.partition_point(|&p| self.is_less(p, suffix))
+        pivots.partition_point(|&p| self.is_less(p, suffix, known_runs))
     }
 
     // --------------------------------------------------
@@ -477,7 +592,7 @@ where
                     || (b"ACGT".contains(&val) || self.allow_ambiguity)
                 {
                     let suffix = T::from_usize(i);
-                    let partition_num = self.upper_bound(suffix, &pivot_sa);
+                    let partition_num = self.upper_bound(suffix, &pivot_sa, None);
                     match builders[partition_num].lock() {
                         Ok(mut partition) => {
                             if partition.add(suffix).is_err() {
@@ -570,6 +685,8 @@ where
         let mut partitions: Vec<Option<Partition>> =
             (0..num_partitions).map(|_| None).collect();
 
+        let known_runs = Arc::new(Mutex::new(KnownRuns::new()));
+
         partitions.par_iter_mut().enumerate().try_for_each(
             |(partition_num, partition)| -> Result<()> {
                 // Find the suffixes in this partition
@@ -584,9 +701,17 @@ where
                 let len = part_sa.len();
                 if len > 0 {
                     let mut sa_w = part_sa.clone();
+                    //println!("PARTITION {partition_num} =\n{sa_w:?}");
                     let mut lcp = vec![T::default(); len];
                     let mut lcp_w = vec![T::default(); len];
-                    self.merge_sort(&mut sa_w, &mut part_sa, len, &mut lcp, &mut lcp_w);
+                    self.merge_sort(
+                        &mut sa_w,
+                        &mut part_sa,
+                        len,
+                        &mut lcp,
+                        &mut lcp_w,
+                        Some(&known_runs),
+                    );
 
                     // Write to disk
                     let mut sa_file = NamedTempFile::new()?;
@@ -634,6 +759,7 @@ where
         n: usize,
         lcp: &mut [T],
         lcp_w: &mut [T],
+        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
     ) {
         if n == 1 {
             lcp[0] = T::default();
@@ -645,6 +771,7 @@ where
                 mid,
                 &mut lcp_w[..mid],
                 &mut lcp[..mid],
+                known_runs,
             );
 
             self.merge_sort(
@@ -653,9 +780,10 @@ where
                 n - mid,
                 &mut lcp_w[mid..],
                 &mut lcp[mid..],
+                known_runs,
             );
 
-            self.merge(x, mid, lcp_w, y, lcp);
+            self.merge(x, mid, lcp_w, y, lcp, known_runs);
         }
     }
 
@@ -667,6 +795,7 @@ where
         lcp_w: &mut [T],
         target_sa: &mut [T],
         target_lcp: &mut [T],
+        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
     ) {
         let (mut x, mut y) = suffix_array.split_at_mut(mid);
         let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
@@ -718,6 +847,7 @@ where
                             y[idx_y].to_usize(),
                             context - m,
                             m.to_usize(), // skip
+                            known_runs,
                         );
                         let full_lcp =
                             find_lcp_full_offset(lcp.to_usize(), &self.sort_type);
@@ -804,7 +934,7 @@ where
         random_seed: u64,
     ) -> Vec<T> {
         if num_partitions > 1 {
-            // Use a HashMap because selecting pivots one-at-a-time
+            // Use a MultiMap because selecting pivots one-at-a-time
             // can result in duplicates.
             let num_pivots = num_partitions - 1;
             let mut rng: Box<dyn RngCore> = if random_seed > 0 {
@@ -830,7 +960,7 @@ where
             let len = pivot_sa.len();
             let mut lcp = vec![T::default(); len];
             let mut lcp_w = vec![T::default(); len];
-            self.merge_sort(&mut sa_w, &mut pivot_sa, len, &mut lcp, &mut lcp_w);
+            self.merge_sort(&mut sa_w, &mut pivot_sa, len, &mut lcp, &mut lcp_w, None);
             pivot_sa
         } else {
             vec![]
@@ -926,7 +1056,8 @@ where
                         self.partitions[i - 1].last_suffix,
                         partition.first_suffix,
                         self.text_len,
-                        0, // start at beginning
+                        0,    // start at beginning
+                        None, // Do not need known runs here
                     );
                 }
                 file.write_all(vec_to_slice_u8(&lcp))?;
@@ -1063,9 +1194,9 @@ where
 mod test {
     use super::{SufrBuilder, SufrBuilderArgs};
     use anyhow::Result;
+    use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::NamedTempFile;
-    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_is_less() -> Result<()> {
@@ -1090,19 +1221,19 @@ mod test {
 
         // 1: TTAGC
         // 0: TTTAGC
-        assert!(sufr.is_less(1, 0));
+        assert!(sufr.is_less(1, 0, None));
 
         // 0: TTTAGC
         // 1: TTAGC
-        assert!(!sufr.is_less(0, 1));
+        assert!(!sufr.is_less(0, 1, None));
 
         // 2: TAGC
         // 3: AGC
-        assert!(!sufr.is_less(2, 3));
+        assert!(!sufr.is_less(2, 3, None));
 
         // 3: AGC
         // 0: TTTAGC
-        assert!(sufr.is_less(3, 0));
+        assert!(sufr.is_less(3, 0, None));
 
         fs::remove_file(outfile)?;
 
@@ -1134,20 +1265,20 @@ mod test {
         // 0: TTTAGC
         // This is true w/o MQL 2 but here they are equal
         // ("TT" == "TT")
-        assert!(!sufr.is_less(1, 0));
+        assert!(!sufr.is_less(1, 0, None));
 
         // 0: TTTAGC
         // 1: TTAGC
         // ("TT" == "TT")
-        assert!(!sufr.is_less(0, 1));
+        assert!(!sufr.is_less(0, 1, None));
 
         // 2: TAGC
         // 3: AGC
-        assert!(!sufr.is_less(2, 3));
+        assert!(!sufr.is_less(2, 3, None));
 
         // 3: AGC
         // 0: TTTAGC
-        assert!(sufr.is_less(3, 0));
+        assert!(sufr.is_less(3, 0, None));
 
         fs::remove_file(outfile)?;
 
@@ -1178,22 +1309,22 @@ mod test {
         // 0: TTTTAT
         // 1: TTTAT
         // "T-T" vs "T-T"
-        assert!(!sufr.is_less(0, 1));
+        assert!(!sufr.is_less(0, 1, None));
 
         // 1: TTTAT
         // 0: TTTTAT
         // "T-T" vs "T-T"
-        assert!(!sufr.is_less(1, 0));
+        assert!(!sufr.is_less(1, 0, None));
 
         // 0: TTTTAT
         // 3: TAT
         // "T-T" vs "T-T"
-        assert!(!sufr.is_less(0, 3));
+        assert!(!sufr.is_less(0, 3, None));
 
         // 3: TAT
         // 0: TTTTAT
         // "T-T" vs "T-T"
-        assert!(!sufr.is_less(3, 0));
+        assert!(!sufr.is_less(3, 0, None));
 
         fs::remove_file(outfile)?;
 
@@ -1224,22 +1355,22 @@ mod test {
         // 0: TTTAGC
         // 1:  TTAGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 1, 6, 0), 2);
+        assert_eq!(sufr.find_lcp(0, 1, 6, 0, None), 2);
 
         // 0: TTTAGC
         // 2:   TAGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 2, 6, 0), 1);
+        assert_eq!(sufr.find_lcp(0, 2, 6, 0, None), 1);
 
         // 0: TTTAGC
         // 1:  TTAGC
         // 1: max query len = 1
-        assert_eq!(sufr.find_lcp(0, 1, 1, 0), 1);
+        assert_eq!(sufr.find_lcp(0, 1, 1, 0, None), 1);
 
         // 0: TTTAGC
         // 3:    AGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 3, 6, 0), 0);
+        assert_eq!(sufr.find_lcp(0, 3, 6, 0, None), 0);
 
         // TODO: Add a test with skip
 
@@ -1271,15 +1402,15 @@ mod test {
 
         // 0: TTTTTA
         // 1:  TTTTA
-        assert_eq!(sufr.find_lcp(0, 1, 3, 0), 3);
+        assert_eq!(sufr.find_lcp(0, 1, 3, 0, None), 3);
 
         // 0: TTTTTA
         // 2:   TTTA
-        assert_eq!(sufr.find_lcp(0, 2, 3, 0), 2);
+        assert_eq!(sufr.find_lcp(0, 2, 3, 0, None), 2);
 
         // 0: TTTTTA
         // 5:      A
-        assert_eq!(sufr.find_lcp(0, 5, 3, 0), 0);
+        assert_eq!(sufr.find_lcp(0, 5, 3, 0, None), 0);
 
         fs::remove_file(outfile)?;
 
@@ -1308,13 +1439,13 @@ mod test {
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
         // The suffix "AGC$" is found before "GC$" and "C$
-        assert_eq!(sufr.upper_bound(3, &[5, 4]), 0);
+        assert_eq!(sufr.upper_bound(3, &[5, 4], None), 0);
 
         // The suffix "TAGC$" is beyond all the values
-        assert_eq!(sufr.upper_bound(2, &[3, 4, 5]), 3);
+        assert_eq!(sufr.upper_bound(2, &[3, 4, 5], None), 3);
 
         // The "C$" is the last value
-        assert_eq!(sufr.upper_bound(5, &[3, 4, 5]), 1);
+        assert_eq!(sufr.upper_bound(5, &[3, 4, 5], None), 1);
 
         fs::remove_file(outfile)?;
 
@@ -1344,32 +1475,32 @@ mod test {
         let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
 
         // ACGTNNACGT$ == ACGTNNACGT$
-        assert_eq!(sufr.upper_bound(0, &[0]), 0);
+        assert_eq!(sufr.upper_bound(0, &[0], None), 0);
 
         // ACGTNNACGT$ (0) > ACGT$ (6)
-        assert_eq!(sufr.upper_bound(0, &[6]), 1);
+        assert_eq!(sufr.upper_bound(0, &[6], None), 1);
 
         // ACGT$ < ACGTNNACGT$
-        assert_eq!(sufr.upper_bound(6, &[0]), 0);
+        assert_eq!(sufr.upper_bound(6, &[0], None), 0);
 
         // ACGT$ == ACGT$
-        assert_eq!(sufr.upper_bound(6, &[6]), 0);
+        assert_eq!(sufr.upper_bound(6, &[6], None), 0);
 
         // Pivots = [CGT$, GT$]
         // ACGTNNACGT$ < CGT$ => p0
-        assert_eq!(sufr.upper_bound(0, &[7, 8]), 0);
+        assert_eq!(sufr.upper_bound(0, &[7, 8], None), 0);
 
         // CGTNNACGT$ > CGT$  => p1
-        assert_eq!(sufr.upper_bound(1, &[7, 8]), 1);
+        assert_eq!(sufr.upper_bound(1, &[7, 8], None), 1);
 
         // GT$ == GT$  => p1
-        assert_eq!(sufr.upper_bound(1, &[7, 8]), 1);
+        assert_eq!(sufr.upper_bound(1, &[7, 8], None), 1);
 
         // T$ > GT$  => p2
-        assert_eq!(sufr.upper_bound(9, &[7, 8]), 2);
+        assert_eq!(sufr.upper_bound(9, &[7, 8], None), 2);
 
         // T$ < TNNACGT$ => p0
-        assert_eq!(sufr.upper_bound(9, &[3]), 0);
+        assert_eq!(sufr.upper_bound(9, &[3], None), 0);
 
         fs::remove_file(outfile)?;
 
@@ -1398,35 +1529,35 @@ mod test {
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
         // ACGTNNACGT$ == ACGTNNACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(0, &[0]), 0);
+        assert_eq!(sufr.upper_bound(0, &[0], None), 0);
 
         // ACGTNNACGT$ == ACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(0, &[6]), 0);
+        assert_eq!(sufr.upper_bound(0, &[6], None), 0);
 
         // ACGT$ == ACGTNNACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(6, &[0]), 0);
+        assert_eq!(sufr.upper_bound(6, &[0], None), 0);
 
         // ACGT$ == ACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(6, &[6]), 0);
+        assert_eq!(sufr.upper_bound(6, &[6], None), 0);
 
         // Pivots = [CGT$, GT$]
         // ACGTNNACGT$ < CGT$
-        assert_eq!(sufr.upper_bound(0, &[7, 8]), 0);
+        assert_eq!(sufr.upper_bound(0, &[7, 8], None), 0);
 
         // Pivots = [CGT$, GT$]
         // CGTNNACGT$ == CGT$ (C-T)
-        assert_eq!(sufr.upper_bound(1, &[7, 8]), 0);
+        assert_eq!(sufr.upper_bound(1, &[7, 8], None), 0);
 
         // Pivots = [CGT$, GT$]
         // GT$ == GT$
-        assert_eq!(sufr.upper_bound(8, &[7, 8]), 1);
+        assert_eq!(sufr.upper_bound(8, &[7, 8], None), 1);
 
         // Pivots = [CGT$, GT$]
         // T$ > GT$  => p2
-        assert_eq!(sufr.upper_bound(9, &[7, 8]), 2);
+        assert_eq!(sufr.upper_bound(9, &[7, 8], None), 2);
 
         // T$ == TNNACGT$ (only compare T)
-        assert_eq!(sufr.upper_bound(9, &[3]), 0);
+        assert_eq!(sufr.upper_bound(9, &[3], None), 0);
 
         fs::remove_file(outfile)?;
 

@@ -19,6 +19,16 @@ pub const OUTFILE_VERSION: u8 = 6;
 /// (and so must not occur in the given text)
 pub const SENTINEL_CHARACTER: u8 = b'$';
 
+/// Describes a previously seen run for a given offset
+#[derive(Debug, Copy, PartialEq, Clone)]
+pub struct RunSpan {
+    /// Start position
+    pub start: usize,
+
+    /// End position
+    pub end: usize,
+}
+
 // --------------------------------------------------
 /// Describes the suffixes in a _.sufr_ file were sorted
 #[derive(Debug, Clone, PartialEq)]
