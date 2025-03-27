@@ -13,7 +13,7 @@ use crate::{
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
-use anyhow::{anyhow, Result, bail};
+use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
 use home::home_dir;
 use log::info;
@@ -239,6 +239,7 @@ where
         // Sequence names are variable in length so they are at the end
         let mut buffer = vec![];
         file.read_to_end(&mut buffer)?;
+
         let sequence_names: Vec<String> = bincode::deserialize(&buffer)?;
 
         let sort_type = if seed_mask.is_empty() {

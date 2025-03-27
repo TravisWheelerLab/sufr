@@ -331,17 +331,17 @@ where
                             let mut inc = 1;
                             if k > 0 && k % 256 == 0 {
                                 //println!("find_lcp {start1}/{end1} - {start2}/{end2}");
-                                //println!("Check offset {offset} a {a:3} b {b:3}");
+                                //println!("Check a {a:3} b {b:3}");
                                 if let Some(run) =
                                     Self::check_known_runs(a, b, k, known_runs)
                                 {
-                                    //println!("  Found run {a}/{b} in {run:?}");
+                                    //println!("  At k {k} Found run {run:?}");
                                     run_found = true;
                                     if a < run.start {
                                         Self::update_known_run(a, b, k, known_runs);
                                     }
 
-                                    inc = run.end - run.start - k;
+                                    inc = run.end - (a + k);
                                     //println!("  Inc k {k} by {inc}");
                                 }
                             }
