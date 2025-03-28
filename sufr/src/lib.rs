@@ -68,18 +68,6 @@ pub enum Command {
     Summarize(SummarizeArgs),
 }
 
-//#[derive(Debug, Parser)]
-//#[command(about, alias = "ch")]
-//pub struct CheckArgs {
-//    /// Sufr file
-//    #[arg(value_name = "SUFR")]
-//    pub file: String,
-//
-//    /// List errors
-//    #[arg(short, long)]
-//    pub verbose: bool,
-//}
-
 #[derive(Debug, Parser)]
 #[command(about, alias = "cr")]
 pub struct CreateArgs {

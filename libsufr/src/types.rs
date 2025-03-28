@@ -3,9 +3,12 @@
 use anyhow::{bail, Result};
 use chrono::{DateTime, Local};
 use regex::Regex;
+use rustc_hash::FxHasher;
 use std::{
     cmp::Ordering,
     fmt::{self, Debug, Display},
+    collections::HashMap,
+    hash::BuildHasherDefault,
     hash::Hash,
     ops::Range,
     ops::{Add, AddAssign, Div, Sub},
@@ -19,6 +22,14 @@ pub const OUTFILE_VERSION: u8 = 6;
 /// (and so must not occur in the given text)
 pub const SENTINEL_CHARACTER: u8 = b'$';
 
+// --------------------------------------------------
+/// Base type for KnownRuns
+pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+
+/// Lookup table for RunSpans
+pub type KnownRuns = FxHashMap<usize, Vec<RunSpan>>;
+//type KnownRuns = MultiMap<usize, RunSpan>;
+
 /// Describes a previously seen run for a given offset
 #[derive(Debug, Copy, PartialEq, Clone)]
 pub struct RunSpan {
@@ -27,6 +38,32 @@ pub struct RunSpan {
 
     /// End position
     pub end: usize,
+}
+
+impl RunSpan {
+    /// Extend start position
+    pub fn extend_start(&mut self, new_start: usize) {
+        if new_start < self.start {
+            println!(">>> Update run start {} to {new_start}", self.start);
+            self.start = new_start;
+        }
+    }
+
+    /// Return whether or not the position lies within the span
+    pub fn contains(&self, pos: usize) -> bool {
+        pos >= self.start && pos <= self.end
+    }
+
+    /// Return whether or not two spans overlap
+    pub fn overlaps(&self, other: &Self) -> bool {
+        self.start < other.end && self.end > other.start
+    }
+
+    /// Take the extremeties of two spans
+    pub fn join(&mut self, other: &Self) {
+        self.start = self.start.min(other.start);
+        self.end = self.end.max(other.end);
+    }
 }
 
 // --------------------------------------------------
@@ -227,7 +264,7 @@ pub struct SearchOptions {
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
-    /// When `true`, the suffix array will be placed into memory. 
+    /// When `true`, the suffix array will be placed into memory.
     /// When `false`, the suffix array will be read from disk.
     pub low_memory: bool,
 
@@ -364,7 +401,7 @@ pub struct CountOptions {
     /// Maximum query length for search
     pub max_query_len: Option<usize>,
 
-    /// When `true`, the suffix array will be placed into memory. 
+    /// When `true`, the suffix array will be placed into memory.
     /// When `false`, the suffix array will be read from disk.
     pub low_memory: bool,
 }
@@ -393,7 +430,7 @@ pub struct ExtractOptions {
     /// Maximum query length for search
     pub max_query_len: Option<usize>,
 
-    /// When `true`, the suffix array will be placed into memory. 
+    /// When `true`, the suffix array will be placed into memory.
     /// When `false`, the suffix array will be read from disk.
     pub low_memory: bool,
 
@@ -492,7 +529,7 @@ pub struct LocateOptions {
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
-    /// When `true`, the suffix array will be placed into memory. 
+    /// When `true`, the suffix array will be placed into memory.
     /// When `false`, the suffix array will be read from disk.
     pub low_memory: bool,
 }
