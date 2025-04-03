@@ -44,7 +44,7 @@ impl RunSpan {
     /// Extend start position
     pub fn extend_start(&mut self, new_start: usize) {
         if new_start < self.start {
-            println!(">>> Update run start {} to {new_start}", self.start);
+            //println!("  Update run start {} to {new_start}", self.start);
             self.start = new_start;
         }
     }

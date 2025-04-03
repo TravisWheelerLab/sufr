@@ -10,8 +10,8 @@
 
 use crate::{
     types::{
-        FromUsize, Int, RunSpan, SeedMask, SuffixSortType, SufrBuilderArgs,
-        OUTFILE_VERSION, SENTINEL_CHARACTER, KnownRuns,
+        FromUsize, Int, KnownRuns, RunSpan, SeedMask, SuffixSortType, SufrBuilderArgs,
+        OUTFILE_VERSION, SENTINEL_CHARACTER,
     },
     util::{find_lcp_full_offset, slice_u8_to_vec, usize_to_bytes, vec_to_slice_u8},
 };
@@ -28,7 +28,7 @@ use std::{
     mem,
     ops::Range,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::Instant,
 };
 use tempfile::NamedTempFile;
@@ -272,8 +272,16 @@ where
         start2: usize,
         len: T,
         skip: usize,
-        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+        known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) -> T {
+        //let warn = |msg: String| {
+        //    if known_runs.is_some() {
+        //        println!("{msg}");
+        //    }
+        //};
+        //warn(format!(
+        //    "find_lcp start1 {start1:3} start2 {start2:3} len {len:3} skip {skip}"
+        //));
         // TODO: Could we use traits for SortType, parameterize the builder
         // on initialization and avoid conditionals here?
         match &self.sort_type {
@@ -325,24 +333,28 @@ where
                         let mut run_found = false;
                         let mut k = 0;
 
+                        // NB: self.text is in memory during build
                         while self.text[start1 + k] == self.text[start2 + k] {
                             let mut inc = 1;
                             if k > 0 && k % 256 == 0 {
-                                println!(
-                                    "find_lcp {start1}/{end1} - {start2}/{end2} k {k}"
-                                );
+                                //warn(format!(
+                                //    "  k {k} {start1:3}/{end1:3} - {start2:3}/{end2:3}"
+                                //));
                                 //println!("Check a {a:3} b {b:3}");
                                 if let Some(run) =
                                     Self::check_known_runs(a, b, k, known_runs)
                                 {
-                                    println!("  At k {k} Found run {run:?}");
+                                    //warn(format!(
+                                    //    "  At k {k} ({}) Found run {run:?}",
+                                    //    a + k
+                                    //));
                                     run_found = true;
                                     if a < run.start {
                                         Self::update_known_run(a, b, k, known_runs);
                                     }
 
                                     inc = run.end - (a + k);
-                                    println!("  Inc k {k} by {inc}");
+                                    //warn(format!("  Inc k {k} by {inc}"));
                                 }
                             }
                             k += inc;
@@ -353,6 +365,7 @@ where
                         }
 
                         if k > 256 && !run_found {
+                            //warn(format!("  final k = {k} run_found = {run_found:?}"));
                             Self::add_known_run(a, b, k, known_runs);
                         }
 
@@ -400,18 +413,18 @@ where
         start1: usize,
         start2: usize,
         length: usize,
-        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+        known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) {
         let now = Instant::now();
-        if let Some(mutex) = known_runs {
-            if let Ok(mut lookup) = mutex.lock() {
-                println!("add_known_run lock took {:?}", now.elapsed().as_micros());
+        if let Some(lock) = known_runs {
+            if let Ok(mut lookup) = lock.write() {
+                println!("  add_known_run lock took {:?}", now.elapsed().as_micros());
                 let offset = start2 - start1;
                 let run_span_vec = lookup.entry(offset).or_default();
                 let new_span = RunSpan {
-                        start: start1,
-                        end: start1 + length,
-                    };
+                    start: start1,
+                    end: start1 + length,
+                };
                 if run_span_vec.is_empty() {
                     run_span_vec.push(new_span);
                 } else {
@@ -429,9 +442,9 @@ where
                 //        end: start1 + length,
                 //    },
                 //);
-                println!(
-                    "Add run of {length} ({start1}/{start2}/{offset}) =\n{lookup:#?}"
-                );
+                //println!(
+                //    "  Add run of {length} ({start1}/{start2}/{offset}) =\n{lookup:#?}"
+                //);
             }
         }
     }
@@ -441,18 +454,19 @@ where
         start1: usize,
         start2: usize,
         k: usize,
-        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+        known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) -> Option<RunSpan> {
         let now = Instant::now();
         known_runs
-            .and_then(|mutex| mutex.lock().ok())
+            .and_then(|lock| lock.read().ok())
             .and_then(|lookup| {
-                println!("check_known_runs lock took {:?}", now.elapsed().as_micros());
+                println!(
+                    "  check_known_runs lock took {:?}",
+                    now.elapsed().as_micros()
+                );
                 let offset = start2 - start1;
                 lookup.get(&offset).and_then(|runs| {
-                    runs.iter()
-                        .find(|run| run.contains(start1 + k))
-                        .cloned()
+                    runs.iter().find(|run| run.contains(start1 + k)).cloned()
                 })
             })
     }
@@ -462,15 +476,15 @@ where
         start1: usize,
         start2: usize,
         k: usize,
-        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+        known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) {
         let now = Instant::now();
-        if let Some(mutex) = known_runs {
-            if let Ok(mut lookup) = mutex.lock() {
+        if let Some(lock) = known_runs {
+            if let Ok(mut lookup) = lock.write() {
                 let offset = start2 - start1;
                 if let Some(runs) = lookup.get_mut(&offset) {
                     println!(
-                        "update_known_run lock took {:?}",
+                        "  update_known_run lock took {:?}",
                         now.elapsed().as_micros()
                     );
                     for run in runs {
@@ -544,11 +558,7 @@ where
     /// * `suffix`: a suffix position
     /// * `pivots`: randomly selected suffix positions sorted lexicographically
     #[inline(always)]
-    fn upper_bound(
-        &self,
-        suffix: T,
-        pivots: &[T],
-    ) -> usize {
+    fn upper_bound(&self, suffix: T, pivots: &[T]) -> usize {
         // Returns 0 when pivots is empty
         pivots.partition_point(|&p| self.is_less(p, suffix))
     }
@@ -703,10 +713,12 @@ where
 
         //let known_runs = Arc::new(Mutex::new(KnownRuns::new()));
         //let known_runs = Arc::new(Mutex::new(FxHashMap::<usize, Vec<RunSpan>>::default()));
-        let known_runs = Arc::new(Mutex::new(KnownRuns::default()));
+        let known_runs = Arc::new(RwLock::new(KnownRuns::default()));
 
         partitions.par_iter_mut().enumerate().try_for_each(
             |(partition_num, partition)| -> Result<()> {
+                let known_clone = Arc::clone(&known_runs);
+
                 // Find the suffixes in this partition
                 let mut part_sa = vec![];
                 for (path, len) in &partition_inputs[partition_num] {
@@ -719,7 +731,6 @@ where
                 let len = part_sa.len();
                 if len > 0 {
                     let mut sa_w = part_sa.clone();
-                    //println!("PARTITION {partition_num} =\n{sa_w:?}");
                     let mut lcp = vec![T::default(); len];
                     let mut lcp_w = vec![T::default(); len];
                     self.merge_sort(
@@ -728,7 +739,7 @@ where
                         len,
                         &mut lcp,
                         &mut lcp_w,
-                        Some(&known_runs),
+                        Some(&known_clone),
                     );
 
                     // Write to disk
@@ -777,7 +788,7 @@ where
         n: usize,
         lcp: &mut [T],
         lcp_w: &mut [T],
-        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+        known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) {
         if n == 1 {
             lcp[0] = T::default();
@@ -813,7 +824,7 @@ where
         lcp_w: &mut [T],
         target_sa: &mut [T],
         target_lcp: &mut [T],
-        known_runs: Option<&Arc<Mutex<KnownRuns>>>,
+        known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) {
         let (mut x, mut y) = suffix_array.split_at_mut(mid);
         let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
