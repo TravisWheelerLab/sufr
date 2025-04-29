@@ -179,11 +179,12 @@ where
         if let Some(start) = self.suffix_search_first(qry, low, high, 0, 0) {
             // something was found
             let end = self
-                .suffix_search_last(qry, start, high, high, 0, 0)
+                .suffix_search_last(qry, start, high, high + 1, 0, 0)
                 .unwrap_or(start);
             Ok(BisectResult {
                 query_num: query_num,
                 query: query.to_string(),
+                count: end - start + 1,
                 first_position: start,
                 last_position: end,
             })
@@ -192,7 +193,8 @@ where
             Ok(BisectResult {
                 query_num: query_num,
                 query: query.to_string(),
-                first_position: self.len_suffixes,
+                count: 0,
+                first_position: 0,
                 last_position: 0,
             })
         }

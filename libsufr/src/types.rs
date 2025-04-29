@@ -365,7 +365,6 @@ pub struct BisectOptions {
 
 // --------------------------------------------------
 /// A struct representing the index range of occurrences of a suffix
-/// 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BisectResult {
     /// The ordinal position of the original query
@@ -373,6 +372,9 @@ pub struct BisectResult {
 
     /// The query string
     pub query: String,
+
+    /// The width of the interval
+    pub count: usize,
 
     /// The first index of a suffix matching the query
     pub first_position: usize,
