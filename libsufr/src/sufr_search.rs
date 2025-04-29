@@ -3,7 +3,7 @@
 use crate::{
     file_access::FileAccess,
     types::{
-        Comparison, FromUsize, Int, SearchResult, SearchResultLocations, SuffixSortType,
+        Comparison, FromUsize, Int, BisectResult, SearchResult, SearchResultLocations, SuffixSortType,
     },
     util::find_lcp_full_offset,
 };
@@ -164,6 +164,36 @@ where
                 query_num,
                 query: query.to_string(),
                 locations: None,
+            })
+        }
+    }
+
+    pub fn bisect(
+        &mut self,
+        query_num: usize,
+        query: &str,
+        low: usize,
+        high: usize,
+    ) -> Result<BisectResult> {
+        let qry = query.as_bytes();
+        if let Some(start) = self.suffix_search_first(qry, low, high, 0, 0) {
+            // something was found
+            let end = self
+                .suffix_search_last(qry, start, high, high, 0, 0)
+                .unwrap_or(start);
+            Ok(BisectResult {
+                query_num: query_num,
+                query: query.to_string(),
+                first_position: start,
+                last_position: end,
+            })
+        } else {
+            // nothing was found
+            Ok(BisectResult {
+                query_num: query_num,
+                query: query.to_string(),
+                first_position: self.len_suffixes,
+                last_position: 0,
             })
         }
     }

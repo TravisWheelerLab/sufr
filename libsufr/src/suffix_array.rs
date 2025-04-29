@@ -3,7 +3,7 @@ use crate::{
     sufr_builder::SufrBuilder,
     sufr_file::SufrFile,
     types::{
-        CountOptions, CountResult, ExtractOptions, ExtractResult, ListOptions,
+        BisectOptions, BisectResult, CountOptions, CountResult, ExtractOptions, ExtractResult, ListOptions,
         LocateOptions, LocateResult, SufrBuilderArgs, SufrMetadata,
     },
 };
@@ -17,6 +17,7 @@ pub(crate) trait SuffixArrayTrait: Send + Sync {
     fn locate(&mut self, args: LocateOptions) -> Result<Vec<LocateResult>>;
     fn metadata(&self) -> Result<SufrMetadata>;
     fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String>;
+    fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>>; 
 }
 
 // --------------------------------------------------
@@ -48,6 +49,10 @@ impl SuffixArrayTrait for SuffixArray32 {
     fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
     }
+
+    fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
+        self.inner.bisect(args)
+    }
 }
 
 pub(crate) struct SuffixArray64 {
@@ -78,6 +83,10 @@ impl SuffixArrayTrait for SuffixArray64 {
 
     fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
+    }
+
+    fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
+        self.inner.bisect(args)
     }
 }
 
@@ -135,6 +144,32 @@ impl SuffixArray {
         let low_memory = args.low_memory;
         let path = Self::write(args)?;
         Self::read(&path, low_memory)
+    }
+
+
+    // --------------------------------------------------
+    /// Bisect the index range of occurences of queries.
+    /// If the index range of a prefix is already known,
+    /// or if it is desirable to avoid enumerating every match,
+    // this method can be used as a faster stand-in for `count`
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::{types::{BisectOptions, BisectResult}, sufr_file::SufrFile};
+    ///
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
+    ///     let opts = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "AG".to_string(), "GT".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: true,
+    ///         prefix_result: None,
+    ///     };
+    ///     let res = sufr.bisect(opts)?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
+        self.inner.bisect(args)
     }
 
     // --------------------------------------------------

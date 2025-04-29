@@ -7,7 +7,7 @@ use crate::{
     file_access::FileAccess,
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
-        CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence,
+        BisectOptions, BisectResult, CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence,
         FromUsize, Int, ListOptions, LocateOptions, LocatePosition, LocateResult,
         SearchOptions, SearchResult, SeedMask, SuffixSortType, SufrMetadata,
     },
@@ -665,6 +665,76 @@ where
         self.suffix_array_mem_mql = Some(max_query_len);
 
         Ok(())
+    }
+
+    // --------------------------------------------------
+    /// Bisect the index range of occurences of queries.
+    /// If the index range of a prefix is already known,
+    /// or if it is desirable to avoid enumerating every match,
+    // this method can be used as a faster stand-in for `count`
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::{types::{BisectOptions, BisectResult}, sufr_file::SufrFile};
+    ///
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
+    ///     let opts = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "AG".to_string(), "GT".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: true,
+    ///         prefix_result: None,
+    ///     };
+    ///     let res = sufr.bisect(opts)?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
+        // 1.   retrieve the prefix result's index range. 
+        //      if no result was passed, deafult to the full range of the suffix array.
+        let n = self.len_suffixes.to_usize() - 1;
+        let search_range = match args.prefix_result {
+            Some(result)    => (result.first_position, result.last_position),
+            _               => (0, n),
+        };
+
+        // 2.   create a SufrSearch struct
+        let suffix_array_file: FileAccess<T> = FileAccess::new(
+            &self.filename,
+            self.suffix_array_pos as u64,
+            self.len_suffixes.to_usize(),
+        )?;
+        let text_file: FileAccess<u8> = FileAccess::new(
+            &self.filename,
+            self.text_pos as u64,
+            self.text_len.to_usize(),
+        )?;
+        let search_args = SufrSearchArgs {
+            text: &self.text,
+            text_len: self.text_len.to_usize(),
+            text_file,
+            file: suffix_array_file,
+            suffix_array: &self.suffix_array_mem,
+            rank: &self.suffix_array_rank_mem,
+            len_suffixes: self.len_suffixes.to_usize(),
+            sort_type: &self.sort_type,
+            max_query_len: args.max_query_len,
+        };
+        let mut search = SufrSearch::new(search_args);
+        
+        // 3.   bisect each query
+        let bisects = args
+            .queries
+            .clone()
+            .iter()
+            .enumerate()
+            .map(|(query_num, query)| -> BisectResult {
+                search.bisect(query_num, &query, search_range.0, search_range.1).unwrap()
+            })
+            .collect(); 
+
+        // TODO: multithreading. will need to rework 2 and 3 to resemble suffix_search.
+        
+        Ok(bisects)
     }
 
     // --------------------------------------------------
