@@ -671,7 +671,7 @@ where
     /// Bisect the index range of occurences of queries.
     /// If the index range of a prefix is already known,
     /// or if it is desirable to avoid enumerating every match,
-    // this method can be used as a faster stand-in for `count`
+    /// this method can be used as a faster stand-in for `count`
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{types::{BisectOptions, BisectResult}, sufr_file::SufrFile};
@@ -679,12 +679,75 @@ where
     /// fn main() -> Result<()> {
     ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
     ///     let opts = BisectOptions {
-    ///         queries: vec!["AC".to_string(), "AG".to_string(), "GT".to_string()],
+    ///         queries: vec!["A".to_string(), "AC".to_string(), "ACA".to_string(), "ACG".to_string(), "ACT".to_string(), "ACC".to_string()],
     ///         max_query_len: None,
-    ///         low_memory: true,
+    ///         low_memory: false,
     ///         prefix_result: None,
     ///     };
     ///     let res = sufr.bisect(opts)?;
+    ///     let expected = vec![
+    ///         BisectResult { 
+    ///             query_num: 0, 
+    ///             query: "A".to_string(),  
+    ///             count: 2,  
+    ///             first_position: 1,  
+    ///             last_position: 2  
+    ///         },  
+    ///         BisectResult { 
+    ///             query_num: 1, 
+    ///             query: "AC".to_string(), 
+    ///             count: 2, 
+    ///             first_position: 1, 
+    ///             last_position: 2 
+    ///         }, 
+    ///         BisectResult { 
+    ///             query_num: 2, 
+    ///             query: "ACA".to_string(), 
+    ///             count: 0, 
+    ///             first_position: 0, 
+    ///             last_position: 0 
+    ///         }, 
+    ///         BisectResult { 
+    ///             query_num: 3, 
+    ///             query: "ACG".to_string(), 
+    ///             count: 2, 
+    ///             first_position: 1, 
+    ///             last_position: 2 
+    ///         }, 
+    ///         BisectResult { 
+    ///             query_num: 4, 
+    ///             query: "ACT".to_string(), 
+    ///             count: 0, 
+    ///             first_position: 0, 
+    ///             last_position: 0 
+    ///         }, 
+    ///         BisectResult {
+    ///             query_num: 5, 
+    ///             query: "ACC".to_string(), 
+    ///             count: 0, 
+    ///             first_position: 0, 
+    ///             last_position: 0 
+    ///         }
+    ///     ];
+    ///     assert_eq!(res, expected);
+    ///     
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/3.sufr", false)?;
+    ///     let opts1 = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "ACA".to_string(), "ACG".to_string(), "ACT".to_string(), "ACC".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: false,
+    ///         prefix_result: None,
+    ///     };
+    ///     let res1 = sufr.bisect(opts1)?;
+    ///     let opts2 = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "ACA".to_string(), "ACG".to_string(), "ACT".to_string(), "ACC".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: false,
+    ///         prefix_result: Some(res1[0].clone()),
+    ///     };
+    ///     let res2 = sufr.bisect(opts2)?;
+    ///     assert_eq!(res1, res2);
+    ///
     ///     Ok(())
     /// }
     /// ```

@@ -168,6 +168,17 @@ where
         }
     }
 
+
+    // --------------------------------------------------
+    /// Find the first and last positions of a query string in a suffix array,
+    /// given a range of viable positions.
+    /// Returns a `BisectResult`
+    ///
+    /// Args:
+    /// * `query_num`: ordinal number of the query
+    /// * `query`: a string to search for
+    /// * `low`: the lowest position at which the query may occur
+    /// * `high`: the highest position at which the query may occur
     pub fn bisect(
         &mut self,
         query_num: usize,
