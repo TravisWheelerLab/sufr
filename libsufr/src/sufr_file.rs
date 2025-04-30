@@ -752,52 +752,73 @@ where
     /// }
     /// ```
     pub fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
-        // 1.   retrieve the prefix result's index range. 
+        //      set memory mode
+        self.query_low_memory = args.low_memory;
+
+        if !self.query_low_memory {
+            self.set_suffix_array_mem(args.max_query_len)?;
+        }
+
+        //      construct SufrSearch factory 
+        let now = Instant::now();
+        let new_search = || -> Result<RefCell<SufrSearch<T>>> {
+            let suffix_array_file: FileAccess<T> = FileAccess::new(
+                &self.filename,
+                self.suffix_array_pos as u64,
+                self.len_suffixes.to_usize(),
+            )?;
+            let text_file: FileAccess<u8> = FileAccess::new(
+                &self.filename,
+                self.text_pos as u64,
+                self.text_len.to_usize(),
+            )?;
+            let search_args = SufrSearchArgs {
+                text: &self.text,
+                text_len: self.text_len.to_usize(),
+                text_file,
+                file: suffix_array_file,
+                suffix_array: &self.suffix_array_mem,
+                rank: &self.suffix_array_rank_mem,
+                len_suffixes: self.len_suffixes.to_usize(),
+                sort_type: &self.sort_type,
+                max_query_len: args.max_query_len,
+            };
+            Ok(RefCell::new(SufrSearch::new(search_args)))
+        };
+
+        //      retrieve the prefix result's index range. 
         //      if no result was passed, deafult to the full range of the suffix array.
         let n = self.len_suffixes.to_usize() - 1;
         let search_range = match args.prefix_result {
             Some(result)    => (result.first_position, result.last_position),
             _               => (0, n),
         };
-
-        // 2.   create a SufrSearch struct
-        let suffix_array_file: FileAccess<T> = FileAccess::new(
-            &self.filename,
-            self.suffix_array_pos as u64,
-            self.len_suffixes.to_usize(),
-        )?;
-        let text_file: FileAccess<u8> = FileAccess::new(
-            &self.filename,
-            self.text_pos as u64,
-            self.text_len.to_usize(),
-        )?;
-        let search_args = SufrSearchArgs {
-            text: &self.text,
-            text_len: self.text_len.to_usize(),
-            text_file,
-            file: suffix_array_file,
-            suffix_array: &self.suffix_array_mem,
-            rank: &self.suffix_array_rank_mem,
-            len_suffixes: self.len_suffixes.to_usize(),
-            sort_type: &self.sort_type,
-            max_query_len: args.max_query_len,
-        };
-        let mut search = SufrSearch::new(search_args);
         
-        // 3.   bisect each query
-        let bisects = args
+        //      bisect each query
+        let thread_local_search: ThreadLocal<RefCell<SufrSearch<T>>> =
+            ThreadLocal::new();
+        
+        
+        let mut res: Vec<_> = args
             .queries
             .clone()
-            .iter()
+            .into_par_iter()
             .enumerate()
-            .map(|(query_num, query)| -> BisectResult {
-                search.bisect(query_num, &query, search_range.0, search_range.1).unwrap()
+            .flat_map(|(query_num, query)| -> Result<BisectResult> {
+                let mut search = 
+                    thread_local_search.get_or_try(new_search)?.borrow_mut();
+                search.bisect(query_num, &query, search_range.0, search_range.1)
             })
             .collect(); 
+        res.sort_by_key(|r| r.query_num);
 
-        // TODO: multithreading. will need to rework 2 and 3 to resemble suffix_search.
+        info!(
+            "Bisection of {} queries finished in {:?}",
+            args.queries.len(),
+            now.elapsed()
+        );
         
-        Ok(bisects)
+        Ok(res)
     }
 
     // --------------------------------------------------
