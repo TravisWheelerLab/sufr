@@ -1679,7 +1679,7 @@ mod test {
     // --------------------------------------------------
     #[test]
     fn test_bisect() -> Result<()> {
-        let mut sufr = SufrFile::<u32>::read("data/inputs/3.sufr", false)?;
+        let mut sufr = SufrFile::<u32>::read("../data/inputs/3.sufr", false)?;
         // bisect "A"
         let prefix = vec!["A".to_string()];
         let prefix_result = sufr.bisect(BisectOptions {
