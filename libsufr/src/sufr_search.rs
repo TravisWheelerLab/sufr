@@ -3,7 +3,7 @@
 use crate::{
     file_access::FileAccess,
     types::{
-        Comparison, FromUsize, Int, SearchResult, SearchResultLocations, SuffixSortType,
+        Comparison, FromUsize, Int, BisectResult, SearchResult, SearchResultLocations, SuffixSortType,
     },
     util::find_lcp_full_offset,
 };
@@ -164,6 +164,49 @@ where
                 query_num,
                 query: query.to_string(),
                 locations: None,
+            })
+        }
+    }
+
+
+    // --------------------------------------------------
+    /// Find the first and last positions of a query string in a suffix array,
+    /// given a range of viable positions.
+    /// Returns a `BisectResult`
+    ///
+    /// Args:
+    /// * `query_num`: ordinal number of the query
+    /// * `query`: a string to search for
+    /// * `low`: the lowest position at which the query may occur
+    /// * `high`: the highest position at which the query may occur
+    pub fn bisect(
+        &mut self,
+        query_num: usize,
+        query: &str,
+        low: usize,
+        high: usize,
+    ) -> Result<BisectResult> {
+        let qry = query.as_bytes();
+        if let Some(start) = self.suffix_search_first(qry, low, high, 0, 0) {
+            // something was found
+            let end = self
+                .suffix_search_last(qry, start, high, high + 1, 0, 0)
+                .unwrap_or(start);
+            Ok(BisectResult {
+                query_num: query_num,
+                query: query.to_string(),
+                count: end - start + 1,
+                first_position: start,
+                last_position: end,
+            })
+        } else {
+            // nothing was found
+            Ok(BisectResult {
+                query_num: query_num,
+                query: query.to_string(),
+                count: 0,
+                first_position: 0,
+                last_position: 0,
             })
         }
     }

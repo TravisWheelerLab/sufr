@@ -3,7 +3,7 @@ use crate::{
     sufr_builder::SufrBuilder,
     sufr_file::SufrFile,
     types::{
-        CountOptions, CountResult, ExtractOptions, ExtractResult, ListOptions,
+        BisectOptions, BisectResult, CountOptions, CountResult, ExtractOptions, ExtractResult, ListOptions,
         LocateOptions, LocateResult, SufrBuilderArgs, SufrMetadata,
     },
 };
@@ -17,6 +17,7 @@ pub(crate) trait SuffixArrayTrait: Send + Sync {
     fn locate(&mut self, args: LocateOptions) -> Result<Vec<LocateResult>>;
     fn metadata(&self) -> Result<SufrMetadata>;
     fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String>;
+    fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>>; 
 }
 
 // --------------------------------------------------
@@ -48,6 +49,10 @@ impl SuffixArrayTrait for SuffixArray32 {
     fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
     }
+
+    fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
+        self.inner.bisect(args)
+    }
 }
 
 pub(crate) struct SuffixArray64 {
@@ -78,6 +83,10 @@ impl SuffixArrayTrait for SuffixArray64 {
 
     fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
+    }
+
+    fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
+        self.inner.bisect(args)
     }
 }
 
@@ -135,6 +144,58 @@ impl SuffixArray {
         let low_memory = args.low_memory;
         let path = Self::write(args)?;
         Self::read(&path, low_memory)
+    }
+
+
+    // --------------------------------------------------
+    /// Bisect the index range of occurences of queries.
+    /// If the index range of a prefix is already known,
+    /// or if it is desirable to avoid enumerating every match,
+    /// this method can be used as a faster stand-in for `count`
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::{types::{BisectOptions, BisectResult}, suffix_array::SuffixArray};
+    /// 
+    /// fn main() -> Result<()> {
+    ///     let mut suffix_array = SuffixArray::read("../data/inputs/1.sufr", false)?;
+    ///     let opts_without_prefix = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "CG".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: false,
+    ///         prefix_result: None,
+    ///     };
+    ///     let result_without_prefix = suffix_array.bisect(opts_without_prefix)?;
+    ///     assert_eq!(
+    ///         result_without_prefix,
+    ///         vec![
+    ///             BisectResult { query_num: 0, query: "AC".to_string(), count: 2, first_position: 1, last_position: 2 }, 
+    ///             BisectResult { query_num: 1, query: "CG".to_string(), count: 2, first_position: 3, last_position: 4 }]
+    ///     );
+    ///     let prefix_opts = BisectOptions {
+    ///         queries: vec!["A".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: false,
+    ///         prefix_result: None,
+    ///     };
+    ///     let prefix_result = suffix_array.bisect(prefix_opts)?[0].clone();
+    ///     let opts_with_prefix = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "CG".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: false,
+    ///         prefix_result: Some(prefix_result),
+    ///     };
+    ///     let result_with_prefix = suffix_array.bisect(opts_with_prefix)?;
+    ///     assert_eq!(
+    ///         result_with_prefix,
+    ///         vec![
+    ///             BisectResult { query_num: 0, query: "AC".to_string(), count: 2, first_position: 1, last_position: 2 }, 
+    ///             BisectResult { query_num: 1, query: "CG".to_string(), count: 0, first_position: 0, last_position: 0 }]
+    ///     );
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
+        self.inner.bisect(args)
     }
 
     // --------------------------------------------------

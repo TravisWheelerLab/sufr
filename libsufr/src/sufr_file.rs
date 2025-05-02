@@ -7,7 +7,7 @@ use crate::{
     file_access::FileAccess,
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
-        CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence,
+        BisectOptions, BisectResult, CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence,
         FromUsize, Int, ListOptions, LocateOptions, LocatePosition, LocateResult,
         SearchOptions, SearchResult, SeedMask, SuffixSortType, SufrMetadata,
     },
@@ -668,6 +668,124 @@ where
     }
 
     // --------------------------------------------------
+    /// Bisect the index range of occurences of queries.
+    /// If the index range of a prefix is already known,
+    /// or if it is desirable to avoid enumerating every match,
+    /// this method can be used as a faster stand-in for `count`
+    /// ```
+    /// use anyhow::Result;
+    /// use libsufr::{types::{BisectOptions, BisectResult}, sufr_file::SufrFile};
+    /// 
+    /// fn main() -> Result<()> {
+    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
+    ///     // bisect without a prefix result, searching the whole suffix array:
+    ///     let opts_without_prefix = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "CG".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: false,
+    ///         prefix_result: None,
+    ///     };
+    ///     let result_without_prefix = sufr.bisect(opts_without_prefix)?;
+    ///     // ... both queries appear in the suffix array
+    ///     assert_eq!(
+    ///         result_without_prefix,
+    ///         vec![
+    ///             BisectResult { query_num: 0, query: "AC".to_string(), count: 2, first_position: 1, last_position: 2 }, 
+    ///             BisectResult { query_num: 1, query: "CG".to_string(), count: 2, first_position: 3, last_position: 4 }]
+    ///     );
+    ///     // bisect within the range of a prefix result:
+    ///     let prefix_opts = BisectOptions {
+    ///         queries: vec!["A".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: false,
+    ///         prefix_result: None,
+    ///     };
+    ///     let prefix_result = sufr.bisect(prefix_opts)?[0].clone();
+    ///     let opts_with_prefix = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "CG".to_string()],
+    ///         max_query_len: None,
+    ///         low_memory: false,
+    ///         prefix_result: Some(prefix_result),
+    ///     };
+    ///     let result_with_prefix = sufr.bisect(opts_with_prefix)?;
+    ///     // ... the query AC is found within the range of the prefix result for A, but CG is not.
+    ///     assert_eq!(
+    ///         result_with_prefix,
+    ///         vec![
+    ///             BisectResult { query_num: 0, query: "AC".to_string(), count: 2, first_position: 1, last_position: 2 }, 
+    ///             BisectResult { query_num: 1, query: "CG".to_string(), count: 0, first_position: 0, last_position: 0 }]
+    ///     );
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn bisect(&mut self, args: BisectOptions) -> Result<Vec<BisectResult>> {
+        // Set memory mode
+        self.query_low_memory = args.low_memory;
+        if !self.query_low_memory {
+            self.set_suffix_array_mem(args.max_query_len)?;
+        }
+
+        // Construct SufrSearch factory 
+        let now = Instant::now();
+        let new_search = || -> Result<RefCell<SufrSearch<T>>> {
+            let suffix_array_file: FileAccess<T> = FileAccess::new(
+                &self.filename,
+                self.suffix_array_pos as u64,
+                self.len_suffixes.to_usize(),
+            )?;
+            let text_file: FileAccess<u8> = FileAccess::new(
+                &self.filename,
+                self.text_pos as u64,
+                self.text_len.to_usize(),
+            )?;
+            let search_args = SufrSearchArgs {
+                text: &self.text,
+                text_len: self.text_len.to_usize(),
+                text_file,
+                file: suffix_array_file,
+                suffix_array: &self.suffix_array_mem,
+                rank: &self.suffix_array_rank_mem,
+                len_suffixes: self.len_suffixes.to_usize(),
+                sort_type: &self.sort_type,
+                max_query_len: args.max_query_len,
+            };
+            Ok(RefCell::new(SufrSearch::new(search_args)))
+        };
+
+        // Retrieve the prefix result's index range. 
+        // If no result was passed, deafult to the full range of the suffix array.
+        let n = self.len_suffixes.to_usize() - 1;
+        let search_range = match args.prefix_result {
+            Some(result)    => (result.first_position, result.last_position),
+            _               => (0, n),
+        };
+        
+        // Bisect each query in its own thread
+        let thread_local_search: ThreadLocal<RefCell<SufrSearch<T>>> =
+            ThreadLocal::new();
+        let mut res: Vec<_> = args
+            .queries
+            .clone()
+            .into_par_iter()
+            .enumerate()
+            .flat_map(|(query_num, query)| -> Result<BisectResult> {
+                let mut search = 
+                    thread_local_search.get_or_try(new_search)?.borrow_mut();
+                search.bisect(query_num, &query, search_range.0, search_range.1)
+            })
+            .collect(); 
+        res.sort_by_key(|r| r.query_num);
+
+        info!(
+            "Bisection of {} queries finished in {:?}",
+            args.queries.len(),
+            now.elapsed()
+        );
+        
+        Ok(res)
+    }
+
+    // --------------------------------------------------
     /// Count the occurrences of queries in a suffix array
     ///
     /// ```
@@ -1176,7 +1294,7 @@ mod test {
         sufr_file::SufrFile,
         types::{
             ExtractOptions, ExtractResult, ExtractSequence, LocateOptions,
-            LocatePosition, LocateResult,
+            LocatePosition, LocateResult, BisectOptions, BisectResult,
         },
     };
     use anyhow::Result;
@@ -1555,6 +1673,35 @@ mod test {
             assert_eq!(suf_by_rank[i], suffix);
         }
 
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_bisect() -> Result<()> {
+        let mut sufr = SufrFile::<u32>::read("../data/inputs/3.sufr", false)?;
+        // bisect "A"
+        let prefix = vec!["A".to_string()];
+        let prefix_result = sufr.bisect(BisectOptions {
+            queries: prefix,
+            max_query_len: None,
+            low_memory: false,
+            prefix_result: None
+        })?[0].clone();
+        // bisect "AA", "AC", "AG", "AT", "AN" within the range of "A".
+        let queries = vec!["AA".to_string(), "AC".to_string(), "AG".to_string(), "AT".to_string(), "AN".to_string()];
+        let queries_result = sufr.bisect(BisectOptions {
+            queries: queries,
+            max_query_len: None,
+            low_memory: false,
+            prefix_result: Some(prefix_result.clone()),
+        })?;
+        // because we queried all of the possible suffixes to "A", 
+        // the count of "A" should be the sum of counts of queries. 
+        assert_eq!(
+            prefix_result.count,
+            queries_result.iter().map(|res| res.count).sum(),
+        );
         Ok(())
     }
 

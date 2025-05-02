@@ -345,6 +345,45 @@ impl FromUsize<u64> for u64 {
 }
 
 // --------------------------------------------------
+/// Options for bisecting the index ranges of occurrences of query suffixes
+#[derive(Debug, Clone)]
+pub struct BisectOptions {
+    /// Vector of query strings
+    pub queries: Vec<String>,
+
+    /// Maximum query length for search
+    pub max_query_len: Option<usize>,
+
+    /// When `true`, the suffix array will be placed into memory. 
+    /// When `false`, the suffix array will be read from disk.
+    pub low_memory: bool,
+
+    /// Optional, the bisect result for a query that is the common prefix of queries.
+    /// If passed, search for query ranges will be restricted to the range defined by prefix_result.
+    pub prefix_result: Option<BisectResult>,
+}
+
+// --------------------------------------------------
+/// A struct representing the index range of occurrences of a suffix
+#[derive(Debug, Clone, PartialEq)]
+pub struct BisectResult {
+    /// The ordinal position of the original query
+    pub query_num: usize,
+
+    /// The query string
+    pub query: String,
+
+    /// The width of the interval
+    pub count: usize,
+
+    /// The first index of a suffix matching the query
+    pub first_position: usize,
+
+    /// The last index of a suffix matching the query
+    pub last_position: usize,
+}
+
+// --------------------------------------------------
 /// Options for counting the occurrences of suffixes
 #[derive(Debug, Clone)]
 pub struct CountOptions {
