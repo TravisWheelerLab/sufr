@@ -337,24 +337,15 @@ where
                         while self.text[start1 + k] == self.text[start2 + k] {
                             let mut inc = 1;
                             if k > 0 && k % 256 == 0 {
-                                //warn(format!(
-                                //    "  k {k} {start1:3}/{end1:3} - {start2:3}/{end2:3}"
-                                //));
-                                //println!("Check a {a:3} b {b:3}");
                                 if let Some(run) =
                                     Self::check_known_runs(a, b, k, known_runs)
                                 {
-                                    //warn(format!(
-                                    //    "  At k {k} ({}) Found run {run:?}",
-                                    //    a + k
-                                    //));
                                     run_found = true;
                                     if a < run.start {
                                         Self::update_known_run(a, b, k, known_runs);
                                     }
 
                                     inc = run.end - (a + k);
-                                    //warn(format!("  Inc k {k} by {inc}"));
                                 }
                             }
                             k += inc;
@@ -365,7 +356,6 @@ where
                         }
 
                         if k > 256 && !run_found {
-                            //warn(format!("  final k = {k} run_found = {run_found:?}"));
                             Self::add_known_run(a, b, k, known_runs);
                         }
 
@@ -415,10 +405,8 @@ where
         length: usize,
         known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) {
-        let now = Instant::now();
         if let Some(lock) = known_runs {
             if let Ok(mut lookup) = lock.write() {
-                println!("  add_known_run lock took {:?}", now.elapsed().as_micros());
                 let offset = start2 - start1;
                 let run_span_vec = lookup.entry(offset).or_default();
                 let new_span = RunSpan {
@@ -433,18 +421,6 @@ where
                         None => run_span_vec.push(new_span),
                     }
                 }
-
-                //println!("Adding offset {offset}");
-                //lookup.insert(
-                //    offset,
-                //    RunSpan {
-                //        start: start1,
-                //        end: start1 + length,
-                //    },
-                //);
-                //println!(
-                //    "  Add run of {length} ({start1}/{start2}/{offset}) =\n{lookup:#?}"
-                //);
             }
         }
     }
@@ -456,14 +432,9 @@ where
         k: usize,
         known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) -> Option<RunSpan> {
-        let now = Instant::now();
         known_runs
             .and_then(|lock| lock.read().ok())
             .and_then(|lookup| {
-                println!(
-                    "  check_known_runs lock took {:?}",
-                    now.elapsed().as_micros()
-                );
                 let offset = start2 - start1;
                 lookup.get(&offset).and_then(|runs| {
                     runs.iter().find(|run| run.contains(start1 + k)).cloned()
@@ -478,15 +449,10 @@ where
         k: usize,
         known_runs: Option<&Arc<RwLock<KnownRuns>>>,
     ) {
-        let now = Instant::now();
         if let Some(lock) = known_runs {
             if let Ok(mut lookup) = lock.write() {
                 let offset = start2 - start1;
                 if let Some(runs) = lookup.get_mut(&offset) {
-                    println!(
-                        "  update_known_run lock took {:?}",
-                        now.elapsed().as_micros()
-                    );
                     for run in runs {
                         if run.contains(start1 + k) {
                             run.extend_start(start1);
