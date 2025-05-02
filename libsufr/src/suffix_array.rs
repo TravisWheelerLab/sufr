@@ -155,79 +155,42 @@ impl SuffixArray {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{types::{BisectOptions, BisectResult}, suffix_array::SuffixArray};
-    ///
+    /// 
     /// fn main() -> Result<()> {
     ///     let mut suffix_array = SuffixArray::read("../data/inputs/1.sufr", false)?;
-    ///     let opts = BisectOptions {
-    ///         queries: vec!["A".to_string(), "AC".to_string(), "ACA".to_string(), "ACG".to_string(), "ACT".to_string(), "ACC".to_string()],
+    ///     let opts_without_prefix = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "CG".to_string()],
     ///         max_query_len: None,
     ///         low_memory: false,
     ///         prefix_result: None,
     ///     };
-    ///     let res = suffix_array.bisect(opts)?;
-    ///     let expected = vec![
-    ///         BisectResult { 
-    ///             query_num: 0, 
-    ///             query: "A".to_string(),  
-    ///             count: 2,  
-    ///             first_position: 1,  
-    ///             last_position: 2  
-    ///         },  
-    ///         BisectResult { 
-    ///             query_num: 1, 
-    ///             query: "AC".to_string(), 
-    ///             count: 2, 
-    ///             first_position: 1, 
-    ///             last_position: 2 
-    ///         }, 
-    ///         BisectResult { 
-    ///             query_num: 2, 
-    ///             query: "ACA".to_string(), 
-    ///             count: 0, 
-    ///             first_position: 0, 
-    ///             last_position: 0 
-    ///         }, 
-    ///         BisectResult { 
-    ///             query_num: 3, 
-    ///             query: "ACG".to_string(), 
-    ///             count: 2, 
-    ///             first_position: 1, 
-    ///             last_position: 2 
-    ///         }, 
-    ///         BisectResult { 
-    ///             query_num: 4, 
-    ///             query: "ACT".to_string(), 
-    ///             count: 0, 
-    ///             first_position: 0, 
-    ///             last_position: 0 
-    ///         }, 
-    ///         BisectResult {
-    ///             query_num: 5, 
-    ///             query: "ACC".to_string(), 
-    ///             count: 0, 
-    ///             first_position: 0, 
-    ///             last_position: 0 
-    ///         }
-    ///     ];
-    ///     assert_eq!(res, expected);
-    ///     
-    ///     let mut suffix_array = SuffixArray::read("../data/inputs/3.sufr", false)?;
-    ///     let opts1 = BisectOptions {
-    ///         queries: vec!["AC".to_string(), "ACA".to_string(), "ACG".to_string(), "ACT".to_string(), "ACC".to_string()],
+    ///     let result_without_prefix = suffix_array.bisect(opts_without_prefix)?;
+    ///     assert_eq!(
+    ///         result_without_prefix,
+    ///         vec![
+    ///             BisectResult { query_num: 0, query: "AC".to_string(), count: 2, first_position: 1, last_position: 2 }, 
+    ///             BisectResult { query_num: 1, query: "CG".to_string(), count: 2, first_position: 3, last_position: 4 }]
+    ///     );
+    ///     let prefix_opts = BisectOptions {
+    ///         queries: vec!["A".to_string()],
     ///         max_query_len: None,
     ///         low_memory: false,
     ///         prefix_result: None,
     ///     };
-    ///     let res1 = suffix_array.bisect(opts1)?;
-    ///     let opts2 = BisectOptions {
-    ///         queries: vec!["AC".to_string(), "ACA".to_string(), "ACG".to_string(), "ACT".to_string(), "ACC".to_string()],
+    ///     let prefix_result = suffix_array.bisect(prefix_opts)?[0].clone();
+    ///     let opts_with_prefix = BisectOptions {
+    ///         queries: vec!["AC".to_string(), "CG".to_string()],
     ///         max_query_len: None,
     ///         low_memory: false,
-    ///         prefix_result: Some(res1[0].clone()),
+    ///         prefix_result: Some(prefix_result),
     ///     };
-    ///     let res2 = suffix_array.bisect(opts2)?;
-    ///     assert_eq!(res1, res2);
-    ///
+    ///     let result_with_prefix = suffix_array.bisect(opts_with_prefix)?;
+    ///     assert_eq!(
+    ///         result_with_prefix,
+    ///         vec![
+    ///             BisectResult { query_num: 0, query: "AC".to_string(), count: 2, first_position: 1, last_position: 2 }, 
+    ///             BisectResult { query_num: 1, query: "CG".to_string(), count: 0, first_position: 0, last_position: 0 }]
+    ///     );
     ///     Ok(())
     /// }
     /// ```
