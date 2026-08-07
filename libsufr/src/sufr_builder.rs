@@ -20,6 +20,7 @@ use log::info;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use rayon::prelude::*;
 use std::{
+    borrow::Cow,
     cmp::{max, min, Ordering},
     collections::HashSet,
     fs::{self, File, OpenOptions},
@@ -35,7 +36,7 @@ use tempfile::NamedTempFile;
 // --------------------------------------------------
 /// A struct for partitioning, sorting, and writing suffixes to disk
 #[derive(Debug)]
-pub struct SufrBuilder<T: Int> {
+pub struct SufrBuilder<T: Int, B: ScratchBuffer = DiskScratchBuffer<T>> {
     /// The serialization version.
     pub version: u8,
 
@@ -76,7 +77,7 @@ pub struct SufrBuilder<T: Int> {
     pub sort_type: SuffixSortType,
 
     /// The number of partitions to use when building.
-    partitions: Vec<Partition>,
+    partitions: Vec<Partition<B>>,
 
     /// The locations of long runs of Ns in nucleotide text.
     pub n_ranges: Vec<Range<usize>>,
@@ -86,7 +87,7 @@ pub struct SufrBuilder<T: Int> {
 }
 
 // --------------------------------------------------
-impl<T: Int> SufrBuilder<T> {
+impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// Create a new suffix/LCP array.
     /// The results will live in temporary files on-disk.
     /// The integer values representing the positions of each suffix will
@@ -134,7 +135,7 @@ impl<T: Int> SufrBuilder<T> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T>> {
+    pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T, B>> {
         let mut text = args.text;
         text.iter_mut().for_each(|b| {
             // Check for lowercase
@@ -431,7 +432,7 @@ impl<T: Int> SufrBuilder<T> {
         &mut self,
         num_partitions: usize,
         random_seed: u64,
-    ) -> Result<PartitionBuildResult<T>> {
+    ) -> Result<PartitionBuildResult<B>> {
         // Create more partitions than requested because
         // we can't know how big they will end up being
         let max_partitions = self.text_len.to_usize() / 4;
@@ -457,11 +458,10 @@ impl<T: Int> SufrBuilder<T> {
             now.elapsed()
         );
 
-        let capacity = 4096;
-        let mut builders: Vec<_> = vec![];
+        let mut buffers: Vec<_> = vec![];
         for _ in 0..num_partitions {
-            let builder: PartitionBuilder<T> = PartitionBuilder::new(capacity)?;
-            builders.push(Mutex::new(builder));
+            let buffer = B::new()?;
+            buffers.push(Mutex::new(buffer));
         }
 
         let now = Instant::now();
@@ -475,9 +475,9 @@ impl<T: Int> SufrBuilder<T> {
                 {
                     let suffix = T::from_usize(i);
                     let partition_num = self.upper_bound(suffix, &pivot_sa);
-                    match builders[partition_num].lock() {
-                        Ok(mut partition) => {
-                            if partition.add(suffix).is_err() {
+                    match buffers[partition_num].lock() {
+                        Ok(mut buf) => {
+                            if buf.push(suffix).is_err() {
                                 bail!("Unable to write data to disk")
                             }
                         }
@@ -489,13 +489,13 @@ impl<T: Int> SufrBuilder<T> {
 
         // Flush out any remaining buffers
         let mut num_suffixes = 0;
-        let builders = builders
+        let buffers = buffers
             .into_iter()
-            .map(|builder| match builder.into_inner() {
-                Ok(mut val) => {
-                    val.write()?;
-                    num_suffixes += val.total_len;
-                    Ok(val)
+            .map(|buffer| match buffer.into_inner() {
+                Ok(mut buf) => {
+                    buf.flush()?;
+                    num_suffixes += buf.count();
+                    Ok(buf)
                 }
                 Err(e) => panic!("Failed to lock: {e}"),
             })
@@ -509,7 +509,7 @@ impl<T: Int> SufrBuilder<T> {
 
         //Ok((builders, num_suffixes))
         Ok(PartitionBuildResult {
-            builders,
+            buffers,
             num_suffixes,
         })
     }
@@ -529,20 +529,22 @@ impl<T: Int> SufrBuilder<T> {
             .ceil() as usize;
         let total_sort_time = Instant::now();
         let mut num_taken = 0;
-        let mut partition_inputs = vec![vec![]; num_partitions];
+        let mut partition_inputs = std::iter::repeat_with(|| Vec::new())
+            .take(num_partitions)
+            .collect::<Vec<_>>();
 
         // We (probably) have many more partitions than we need,
         // so here we accumulate the small partitions from the left
         // stopping when we reach a boundary like 1M/partition.
         // This evens out the workload to sort the partitions.
-        let mut part_builders = partition_build.builders.into_iter();
+        let mut part_buffers = partition_build.buffers.into_iter();
         for (partition_num, partition_input) in partition_inputs.iter_mut().enumerate()
         {
             let boundary = num_per_partition * (partition_num + 1);
-            for builder in part_builders.by_ref() {
-                if builder.total_len > 0 {
-                    partition_input.push((builder.path.clone(), builder.total_len));
-                    num_taken += builder.total_len;
+            for buffer in part_buffers.by_ref() {
+                if buffer.count() > 0 {
+                    num_taken += buffer.count();
+                    partition_input.push(buffer);
                 }
 
                 // Let the last partition soak up the rest
@@ -560,47 +562,52 @@ impl<T: Int> SufrBuilder<T> {
             );
         }
 
-        let mut partitions: Vec<Option<Partition>> =
+        let mut partitions: Vec<Option<Partition<B>>> =
             (0..num_partitions).map(|_| None).collect();
 
-        partitions.par_iter_mut().enumerate().try_for_each(
-            |(partition_num, partition)| -> Result<()> {
-                // Find the suffixes in this partition
-                let mut part_sa = vec![];
-                for (path, len) in &partition_inputs[partition_num] {
-                    let mut buffer = fs::read(path)?;
-                    let part = slice_u8_to_slice_int(&mut buffer, *len);
-                    part_sa.extend_from_slice(part);
-                    fs::remove_file(path)?;
-                }
+        partitions
+            .par_iter_mut()
+            .zip(partition_inputs)
+            .enumerate()
+            .try_for_each(
+                |(partition_num, (partition, partition_input))| -> Result<()> {
+                    // Find the suffixes in this partition
+                    let mut part_sa = vec![];
+                    for buffer in partition_input {
+                        part_sa.extend_from_slice(&buffer.consume()?);
+                    }
 
-                let len = part_sa.len();
-                if len > 0 {
-                    let mut sa_w = part_sa.clone();
-                    let mut lcp = vec![T::default(); len];
-                    let mut lcp_w = vec![T::default(); len];
-                    self.merge_sort(&mut sa_w, &mut part_sa, len, &mut lcp, &mut lcp_w);
+                    let len = part_sa.len();
+                    if len > 0 {
+                        let mut sa_w = part_sa.clone();
+                        let mut lcp = vec![T::default(); len];
+                        let mut lcp_w = vec![T::default(); len];
+                        self.merge_sort(
+                            &mut sa_w,
+                            &mut part_sa,
+                            len,
+                            &mut lcp,
+                            &mut lcp_w,
+                        );
 
-                    // Write to disk
-                    let mut sa_file = NamedTempFile::new()?;
-                    let _ = sa_file.write(vec_to_slice_u8(&part_sa))?;
-                    let mut lcp_file = NamedTempFile::new()?;
-                    let _ = lcp_file.write(vec_to_slice_u8(&lcp))?;
-                    let (_, sa_path) = sa_file.keep()?;
-                    let (_, lcp_path) = lcp_file.keep()?;
+                        // Write to disk
+                        let mut sa_buffer = B::new()?;
+                        sa_buffer.extend_from_slice(&part_sa)?;
+                        let mut lcp_buffer = B::new()?;
+                        lcp_buffer.extend_from_slice(&lcp)?;
 
-                    *partition = Some(Partition {
-                        order: partition_num,
-                        len,
-                        first_suffix: part_sa.first().unwrap().to_usize(),
-                        last_suffix: part_sa.last().unwrap().to_usize(),
-                        sa_path,
-                        lcp_path,
-                    });
-                }
-                Ok(())
-            },
-        )?;
+                        *partition = Some(Partition {
+                            order: partition_num,
+                            len,
+                            first_suffix: part_sa.first().unwrap().to_usize(),
+                            last_suffix: part_sa.last().unwrap().to_usize(),
+                            sa_buffer,
+                            lcp_buffer,
+                        });
+                    }
+                    Ok(())
+                },
+            )?;
 
         // Get rid of None/unwrap Some, put in order
         let mut partitions: Vec<_> = partitions.into_iter().flatten().collect();
@@ -898,24 +905,20 @@ impl<T: Int> SufrBuilder<T> {
         // Stitch partitioned suffix files together
         let sa_pos = bytes_out;
         for partition in &self.partitions {
-            let buffer = fs::read(&partition.sa_path)?;
-            bytes_out += buffer.len();
-            file.write_all(&buffer)?;
-            fs::remove_file(&partition.sa_path)?;
+            let sa_buffer = partition.sa_buffer.read()?;
+            let sa_bytes = vec_to_slice_u8(&sa_buffer);
+            bytes_out += sa_bytes.len();
+            file.write_all(sa_bytes)?;
         }
 
         let lcp_pos = bytes_out;
 
         // Stitch partitioned LCP files together
         for (i, partition) in self.partitions.iter().enumerate() {
-            let mut buffer = fs::read(&partition.lcp_path)?;
-            bytes_out += buffer.len();
+            let mut lcp = partition.lcp_buffer.read()?.into_owned();
 
-            if i == 0 {
-                file.write_all(&buffer)?;
-            } else {
+            if i != 0 {
                 // Fix LCP boundary
-                let lcp = slice_u8_to_slice_int(&mut buffer, partition.len);
                 if let Some(val) = lcp.first_mut() {
                     *val = self.find_lcp(
                         self.partitions[i - 1].last_suffix,
@@ -924,9 +927,11 @@ impl<T: Int> SufrBuilder<T> {
                         0, // start at beginning
                     );
                 }
-                file.write_all(vec_to_slice_u8(lcp))?;
             }
-            fs::remove_file(&partition.lcp_path)?;
+
+            let lcp_bytes = vec_to_slice_u8(&lcp);
+            bytes_out += lcp_bytes.len();
+            file.write_all(lcp_bytes)?;
         }
 
         // Sequence names are variable in length so they are at the end
@@ -945,7 +950,7 @@ impl<T: Int> SufrBuilder<T> {
 // --------------------------------------------------
 /// Represents the partition values written to disk
 #[derive(Debug)]
-struct Partition {
+struct Partition<B: ScratchBuffer> {
     /// The sorted position of this parition.
     order: usize,
 
@@ -958,89 +963,175 @@ struct Partition {
     /// The value of the last suffix. Used in stitching together the LCPs.
     last_suffix: usize,
 
-    /// The path to the file containing the suffix array.
-    sa_path: PathBuf,
+    /// The buffer containing the suffix array.
+    sa_buffer: B,
 
-    /// The path to the file containing the LCP array.
-    lcp_path: PathBuf,
+    /// The buffer containing the LCP array.
+    lcp_buffer: B,
 }
 
 // --------------------------------------------------
 /// This struct provides access to the on-disk partitions.
 #[derive(Debug)]
-struct PartitionBuildResult<T: Int> {
+struct PartitionBuildResult<B: ScratchBuffer<Item: Int>> {
     /// A thread-safe vector of `PartitionBuilder` values
-    builders: Vec<PartitionBuilder<T>>,
+    buffers: Vec<B>,
 
     /// The total number of suffixes that were written to disk.
     num_suffixes: usize,
 }
 
-// --------------------------------------------------
-/// A struct for writing suffixes to disk.
+/// Trait representing scratch buffers that may be backed by disk or memory.
+pub trait ScratchBuffer {
+    /// The type of items in the buffer
+    type Item: Int;
+
+    /// Create a new scratch buffer
+    fn new() -> Result<Self>
+    where
+        Self: Sized;
+
+    /// Append `val` to `self`.
+    fn push(&mut self, val: Self::Item) -> Result<()>;
+
+    /// Append a slice of `vals` to `self`.
+    fn extend_from_slice(&mut self, vals: &[Self::Item]) -> Result<()>;
+
+    /// Flush any unwritten data from `self` to the backing store.
+    fn flush(&mut self) -> Result<()>;
+
+    /// Return the number of items written to `self`.
+    fn count(&self) -> usize;
+
+    /// Return the full contents of `self`, either already in memory or loaded from disk.
+    fn read(&self) -> Result<Cow<'_, [Self::Item]>>;
+
+    /// Load the full contents of `self` into memory for the last time.
+    fn consume(self) -> Result<Vec<Self::Item>>;
+}
+
+/// Implements a scratch buffer that writes its items to disk, then reads them back from disk later
 #[derive(Debug)]
-struct PartitionBuilder<T: Int> {
-    vals: Vec<T>,
-    capacity: usize,
-    len: usize,
-    total_len: usize,
+pub struct DiskScratchBuffer<T: Int> {
+    buf: Vec<T>,
+    count: usize,
     path: PathBuf,
 }
 
-// --------------------------------------------------
-impl<T: Int> PartitionBuilder<T> {
-    /// Create a new `PartitionBuilder`. This struct is used to write it's
-    /// suffix positions to a temporary file.
-    ///
-    /// Args:
-    /// * `capacity`: the number of suffixes to hold in memory until the
-    ///   writing to disk. This minimizes the number of times we access the disk
-    ///   while also limiting the amount of memory used. Currently set to 4096
-    ///   but it might be worth tuning this, perhaps use more memory to hit
-    ///   disk less? Or if memory use is too high, lower and take a performance
-    ///   hit for disk access?
-    fn new(capacity: usize) -> Result<Self> {
+impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
+    type Item = T;
+
+    fn new() -> Result<Self> {
         let tmp = NamedTempFile::new()?;
         let (_, path) = tmp.keep()?;
 
-        Ok(PartitionBuilder {
-            // Re-use a static vector to avoid repeated allocations
-            vals: vec![T::default(); capacity],
-            len: 0,
-            total_len: 0,
-            capacity,
+        Ok(Self {
+            buf: Vec::with_capacity(4096),
+            count: 0,
             path,
         })
     }
 
-    /// Add a suffix to the partition. When the internal array of values hits
-    /// `capacity`, then write all the values to disk.
-    ///
-    /// Args:
-    /// * `val`: the suffix position to add
-    pub fn add(&mut self, val: T) -> Result<()> {
-        self.vals[self.len] = val;
-        self.len += 1;
-        if self.len == self.capacity {
-            self.write()?;
-            self.len = 0;
+    fn push(&mut self, val: T) -> Result<()> {
+        self.buf.push(val);
+        if self.buf.len() == self.buf.capacity() {
+            self.flush()?;
         }
 
         Ok(())
     }
 
-    /// Write the suffixes to disk. This must be called at the end to flush
-    /// any remaining values after the last call(s) from `add`.
-    pub fn write(&mut self) -> Result<()> {
-        if self.len > 0 {
+    fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
+        self.flush()?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        file.write_all(vec_to_slice_u8(vals))?;
+        self.count += vals.len();
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        if !self.buf.is_empty() {
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&self.path)?;
-            file.write_all(vec_to_slice_u8(&self.vals[0..self.len]))?;
-            self.total_len += self.len;
+            file.write_all(vec_to_slice_u8(&self.buf))?;
+            self.count += self.buf.len();
+            self.buf.clear();
         }
         Ok(())
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
+
+    fn read(&self) -> Result<Cow<'_, [T]>> {
+        let mut buffer = fs::read(&self.path)?;
+        let count = buffer.len() / std::mem::size_of::<T>();
+
+        let mut data = Vec::with_capacity(count);
+        data.extend_from_slice(slice_u8_to_slice_int(&mut buffer, count));
+        Ok(Cow::Owned(data))
+    }
+
+    fn consume(self) -> Result<Vec<Self::Item>> {
+        let buf = match self.read()? {
+            Cow::Owned(b) => b,
+            Cow::Borrowed(_) => unreachable!(),
+        };
+        fs::remove_file(&self.path)?;
+        Ok(buf)
+    }
+}
+
+impl<T: Int> Drop for DiskScratchBuffer<T> {
+    fn drop(&mut self) {
+        // best-effort since this is in Drop, and the file may have been consume()d already
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Implements a scratch buffer that always keeps all items in memory
+#[derive(Debug)]
+pub struct MemoryScratchBuffer<T: Int> {
+    data: Vec<T>,
+}
+
+impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
+    type Item = T;
+
+    fn new() -> Result<Self> {
+        Ok(Self { data: vec![] })
+    }
+
+    fn push(&mut self, val: T) -> Result<()> {
+        self.data.push(val);
+        Ok(())
+    }
+
+    fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
+        self.data.extend_from_slice(vals);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn count(&self) -> usize {
+        self.data.len()
+    }
+
+    fn read(&self) -> Result<Cow<'_, [T]>> {
+        Ok(Cow::Borrowed(self.data.as_ref()))
+    }
+
+    fn consume(self) -> Result<Vec<Self::Item>> {
+        Ok(self.data)
     }
 }
 
