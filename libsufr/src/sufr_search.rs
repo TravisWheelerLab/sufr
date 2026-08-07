@@ -2,9 +2,7 @@
 
 use crate::{
     file_access::FileAccess,
-    types::{
-        Comparison, FromUsize, Int, SearchResult, SearchResultLocations, SuffixSortType,
-    },
+    types::{Comparison, Int, SearchResult, SearchResultLocations, SuffixSortType},
     util::find_lcp_full_offset,
 };
 use anyhow::Result;
@@ -16,10 +14,7 @@ use std::{
 // --------------------------------------------------
 /// Arguments to create a search
 #[derive(Debug)]
-pub struct SufrSearchArgs<'a, T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct SufrSearchArgs<'a, T: Int> {
     /// The text being searched (which may be empty in the case of very
     /// low memory)
     pub text: &'a [u8],
@@ -51,10 +46,7 @@ where
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct SufrSearch<'a, T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct SufrSearch<'a, T: Int> {
     text: &'a [u8],
     text_len: usize,
     text_file: FileAccess<u8>,
@@ -67,10 +59,7 @@ where
 }
 
 // --------------------------------------------------
-impl<'a, T> SufrSearch<'a, T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+impl<'a, T: Int> SufrSearch<'a, T> {
     /// Create a `SufrSearch` struct
     ///
     /// Args:

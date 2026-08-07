@@ -8,7 +8,7 @@ use std::{
     fmt::{self, Debug, Display},
     hash::Hash,
     ops::Range,
-    ops::{Add, AddAssign, Div, Sub},
+    ops::{Add, AddAssign, Sub},
 };
 
 // --------------------------------------------------
@@ -228,10 +228,7 @@ pub struct SearchOptions {
 // --------------------------------------------------
 /// A struct representing the result of a suffix array search
 #[derive(Debug, PartialEq)]
-pub struct SearchResult<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct SearchResult<T: Int> {
     /// The ordinal position of the query
     pub query_num: usize,
 
@@ -290,21 +287,28 @@ pub trait Int:
     + AddAssign
     + Add<Output = Self>
     + Sub<Output = Self>
-    + Div<Output = Self>
     + Copy
     + Default
     + Display
     + Ord
     + Hash
-    + serde::ser::Serialize
+    + Send
+    + Sync
 {
     /// Convert an `Int` to a `usize`
     fn to_usize(&self) -> usize;
+
+    /// Convert a `usize` to an `Int`
+    fn from_usize(val: usize) -> Self;
 }
 
 impl Int for u8 {
     fn to_usize(&self) -> usize {
         *self as usize
+    }
+
+    fn from_usize(val: usize) -> Self {
+        val as Self
     }
 }
 
@@ -312,35 +316,19 @@ impl Int for u32 {
     fn to_usize(&self) -> usize {
         *self as usize
     }
+
+    fn from_usize(val: usize) -> Self {
+        val as Self
+    }
 }
 
 impl Int for u64 {
     fn to_usize(&self) -> usize {
         *self as usize
     }
-}
 
-/// Convert a `usize` to an `Int`
-pub trait FromUsize<T> {
-    /// Convert a `usize` to an `Int`
-    fn from_usize(val: usize) -> T;
-}
-
-impl FromUsize<u8> for u8 {
-    fn from_usize(val: usize) -> u8 {
-        val as u8
-    }
-}
-
-impl FromUsize<u32> for u32 {
-    fn from_usize(val: usize) -> u32 {
-        val as u32
-    }
-}
-
-impl FromUsize<u64> for u64 {
-    fn from_usize(val: usize) -> u64 {
-        val as u64
+    fn from_usize(val: usize) -> Self {
+        val as Self
     }
 }
 

@@ -1,8 +1,7 @@
 //! Utility functions
 
 use crate::types::{
-    FromUsize, Int, SequenceFileData, SuffixSortType, OUTFILE_VERSION,
-    SENTINEL_CHARACTER,
+    Int, SequenceFileData, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER,
 };
 use anyhow::{anyhow, bail, Result};
 use needletail::parse_fastx_file;
@@ -123,10 +122,7 @@ pub fn read_text_length(filename: &str) -> Result<usize> {
 /// Args:
 /// * `buffer`: vector of raw `u8` values (from disk)
 /// * `len`: the number of `T` values in the resulting vector
-pub fn slice_u8_to_vec<T>(buffer: &[u8], len: usize) -> Vec<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub fn slice_u8_to_vec<T: Int>(buffer: &[u8], len: usize) -> Vec<T> {
     unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const _, len).to_vec() }
 }
 
@@ -156,10 +152,7 @@ pub fn usize_to_bytes(value: usize) -> Vec<u8> {
 ///
 /// Args:
 /// * `vec`: a vector of `T` values
-pub fn vec_to_slice_u8<T>(vec: &[T]) -> &[u8]
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub fn vec_to_slice_u8<T: Int>(vec: &[T]) -> &[u8] {
     unsafe {
         slice::from_raw_parts(
             vec.as_ptr() as *const _,

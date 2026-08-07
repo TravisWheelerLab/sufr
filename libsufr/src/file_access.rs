@@ -1,9 +1,6 @@
 //! # Low memory access to Sufr's on-disk arrays (text/SA/LCP)
 
-use crate::{
-    types::{FromUsize, Int},
-    util::slice_u8_to_vec,
-};
+use crate::{types::Int, util::slice_u8_to_vec};
 use anyhow::{bail, Result};
 use std::{
     cmp::min,
@@ -16,10 +13,7 @@ use std::{
 // --------------------------------------------------
 /// Struct to mediate file access to on-disk arrays of text, suffix/LCP arrays
 #[derive(Debug)]
-pub struct FileAccess<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct FileAccess<T: Int> {
     /// A read-only filehandle to the _.sufr_ file
     file: File,
 
@@ -49,10 +43,7 @@ where
     exhausted: bool,
 }
 
-impl<T> FileAccess<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+impl<T: Int> FileAccess<T> {
     /// Create a read-only file access to a portion of a _.sufr_ file
     /// representing the text, suffix array, or LCP array.
     /// This struct must be initialized using an `Int` of `u8` for the `text`
@@ -141,17 +132,11 @@ where
 // --------------------------------------------------
 /// An iterator over the values from a `FileAccess`
 #[derive(Debug)]
-pub struct FileAccessIter<'a, T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct FileAccessIter<'a, T: Int> {
     file_access: &'a mut FileAccess<T>,
 }
 
-impl<T> Iterator for FileAccessIter<'_, T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+impl<T: Int> Iterator for FileAccessIter<'_, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {

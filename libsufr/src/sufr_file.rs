@@ -7,9 +7,9 @@ use crate::{
     file_access::FileAccess,
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
-        CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence,
-        FromUsize, Int, ListOptions, LocateOptions, LocatePosition, LocateResult,
-        SearchOptions, SearchResult, SeedMask, SuffixSortType, SufrMetadata,
+        CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence, Int,
+        ListOptions, LocateOptions, LocatePosition, LocateResult, SearchOptions,
+        SearchResult, SeedMask, SuffixSortType, SufrMetadata,
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
@@ -36,10 +36,7 @@ use thread_local::ThreadLocal;
 /// the suffix and LCP arrays for a given text.
 /// Provides methods to query suffix array.
 #[derive(Debug)]
-pub struct SufrFile<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct SufrFile<T: Int> {
     /// The _.sufr_ filename
     pub filename: String,
 
@@ -112,10 +109,7 @@ where
 }
 
 // --------------------------------------------------
-impl<T> SufrFile<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync,
-{
+impl<T: Int> SufrFile<T> {
     /// Read serialized Sufr file
     ///
     /// Args:

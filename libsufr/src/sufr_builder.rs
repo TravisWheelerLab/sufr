@@ -10,7 +10,7 @@
 
 use crate::{
     types::{
-        FromUsize, Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
+        Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
         SENTINEL_CHARACTER,
     },
     util::{find_lcp_full_offset, slice_u8_to_vec, usize_to_bytes, vec_to_slice_u8},
@@ -35,10 +35,7 @@ use tempfile::NamedTempFile;
 // --------------------------------------------------
 /// A struct for partitioning, sorting, and writing suffixes to disk
 #[derive(Debug)]
-pub struct SufrBuilder<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+pub struct SufrBuilder<T: Int> {
     /// The serialization version.
     pub version: u8,
 
@@ -89,10 +86,7 @@ where
 }
 
 // --------------------------------------------------
-impl<T> SufrBuilder<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync,
-{
+impl<T: Int> SufrBuilder<T> {
     /// Create a new suffix/LCP array.
     /// The results will live in temporary files on-disk.
     /// The integer values representing the positions of each suffix will
@@ -944,10 +938,7 @@ struct Partition {
 // --------------------------------------------------
 /// This struct provides access to the on-disk partitions.
 #[derive(Debug)]
-struct PartitionBuildResult<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+struct PartitionBuildResult<T: Int> {
     /// A thread-safe vector of `PartitionBuilder` values
     builders: Vec<Arc<Mutex<PartitionBuilder<T>>>>,
 
@@ -958,10 +949,7 @@ where
 // --------------------------------------------------
 /// A struct for writing suffixes to disk.
 #[derive(Debug)]
-struct PartitionBuilder<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+struct PartitionBuilder<T: Int> {
     vals: Vec<T>,
     capacity: usize,
     len: usize,
@@ -970,10 +958,7 @@ where
 }
 
 // --------------------------------------------------
-impl<T> PartitionBuilder<T>
-where
-    T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
-{
+impl<T: Int> PartitionBuilder<T> {
     /// Create a new `PartitionBuilder`. This struct is used to write it's
     /// suffix positions to a temporary file.
     ///
