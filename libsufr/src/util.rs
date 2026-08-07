@@ -64,12 +64,11 @@ pub fn read_sequence_file(
 
         // Record current length as start position
         start_positions.push(seq.len());
-        let mut tmp: Vec<u8> = rec.seq().iter().copied().collect();
-        seq.append(&mut tmp);
+        seq.extend_from_slice(&rec.seq());
         i += 1;
 
         // Only take ID value up to first whitespace
-        let id = String::from_utf8(rec.id().to_vec())?
+        let id = std::str::from_utf8(rec.id())?
             .split_whitespace()
             .next()
             .map_or((i + 1).to_string(), |v| v.to_string());
@@ -105,7 +104,7 @@ pub fn read_text_length(filename: &str) -> Result<usize> {
         // Length of text is the next usize
         let mut buffer = [0; 8];
         file.read_exact(&mut buffer)?;
-        let text_len = u64::from_ne_bytes(buffer);
+        let text_len = u64::from_le_bytes(buffer);
         if std::mem::size_of::<usize>() == 4 && text_len > usize::MAX as u64 {
             bail!("text_len exceeds native usize");
         }
@@ -123,27 +122,20 @@ pub fn read_text_length(filename: &str) -> Result<usize> {
 /// * `buffer`: vector of raw `u8` values (from disk)
 /// * `len`: the number of `T` values in the resulting vector
 pub fn slice_u8_to_vec<T: Int>(buffer: &[u8], len: usize) -> Vec<T> {
+    // TODO: rework - unaligned access and endianness-dependent
     unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const _, len).to_vec() }
 }
 
 // --------------------------------------------------
-/// Turn a `usize` into a vector of `u8` for serializing to disk.
+/// Convert a (mutable) slice of raw U8 read from disk into a
+/// `&mut [T]` (where `T` is the `Int` 32/64)
 ///
 /// Args:
-/// * `value`: a `usize`
-pub fn usize_to_bytes(value: usize) -> Vec<u8> {
-    // Determine the size of usize in bytes
-    let size = std::mem::size_of::<usize>();
-
-    // Create a vector to hold the bytes
-    let mut bytes = Vec::with_capacity(size);
-
-    // Convert usize to bytes
-    for i in 0..size {
-        bytes.push((value >> (i * 8)) as u8);
-    }
-
-    bytes
+/// * `buffer`: slice of raw `u8` values (from disk)
+/// * `len`: the number of `T` values in the resulting slice
+pub fn slice_u8_to_slice_int<T: Int>(buffer: &mut [u8], len: usize) -> &mut [T] {
+    // TODO: rework - unaligned access and endianness-dependent
+    unsafe { std::slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut _, len) }
 }
 
 // --------------------------------------------------
@@ -153,6 +145,7 @@ pub fn usize_to_bytes(value: usize) -> Vec<u8> {
 /// Args:
 /// * `vec`: a vector of `T` values
 pub fn vec_to_slice_u8<T: Int>(vec: &[T]) -> &[u8] {
+    // TODO: rework - endianness-dependent
     unsafe {
         slice::from_raw_parts(
             vec.as_ptr() as *const _,
@@ -166,7 +159,7 @@ pub fn vec_to_slice_u8<T: Int>(vec: &[T]) -> &[u8] {
 mod tests {
     use super::{
         find_lcp_full_offset, read_sequence_file, read_text_length, slice_u8_to_vec,
-        usize_to_bytes, vec_to_slice_u8,
+        vec_to_slice_u8,
     };
     use crate::types::{SeedMask, SuffixSortType};
     use anyhow::Result;
@@ -193,22 +186,6 @@ mod tests {
         assert!(res.is_ok());
         let len = res.unwrap();
         assert_eq!(len, 18);
-        Ok(())
-    }
-
-    #[test]
-    fn test_usize_to_bytes() -> Result<()> {
-        assert_eq!(usize_to_bytes(usize::MIN), [0, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(usize_to_bytes(1), [1, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(usize_to_bytes(10), [10, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(usize_to_bytes(100), [100, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(usize_to_bytes(1000), [232, 3, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(usize_to_bytes(10000), [16, 39, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(usize_to_bytes(100000), [160, 134, 1, 0, 0, 0, 0, 0]);
-        assert_eq!(
-            usize_to_bytes(usize::MAX),
-            [255, 255, 255, 255, 255, 255, 255, 255]
-        );
         Ok(())
     }
 

@@ -98,6 +98,7 @@ impl<T: Int> FileAccess<T> {
             let mut buffer: Vec<u8> = vec![0; mem::size_of::<T>()];
             let bytes_read = self.file.read(&mut buffer).unwrap();
             (bytes_read == mem::size_of::<T>()).then(|| {
+                // TODO: rework - unaligned access and endianness-dependent
                 let res = unsafe {
                     std::slice::from_raw_parts(buffer.as_ptr() as *const _, 1)
                 };

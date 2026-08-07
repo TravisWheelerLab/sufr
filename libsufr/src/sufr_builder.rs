@@ -13,7 +13,7 @@ use crate::{
         Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
         SENTINEL_CHARACTER,
     },
-    util::{find_lcp_full_offset, slice_u8_to_vec, usize_to_bytes, vec_to_slice_u8},
+    util::{find_lcp_full_offset, slice_u8_to_slice_int, vec_to_slice_u8},
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -135,23 +135,18 @@ impl<T: Int> SufrBuilder<T> {
     /// }
     /// ```
     pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T>> {
-        let text: Vec<_> = args
-            .text
-            .iter()
-            .map(|b| {
-                // Check for lowercase
-                if (97..=122).contains(b) {
-                    if args.ignore_softmask {
-                        b'N'
-                    } else {
-                        // only shift lowercase ASCII
-                        b & 0b1011111
-                    }
+        let mut text = args.text;
+        text.iter_mut().for_each(|b| {
+            // Check for lowercase
+            if (97..=122).contains(b) {
+                if args.ignore_softmask {
+                    *b = b'N'
                 } else {
-                    *b
+                    // only shift lowercase ASCII
+                    *b &= 0b1011111
                 }
-            })
-            .collect();
+            }
+        });
         let text_len = T::from_usize(text.len());
 
         if args.seed_mask.is_some() && args.max_query_len.is_some() {
@@ -540,9 +535,9 @@ impl<T: Int> SufrBuilder<T> {
                 // Find the suffixes in this partition
                 let mut part_sa = vec![];
                 for (path, len) in &partition_inputs[partition_num] {
-                    let buffer = fs::read(path)?;
-                    let mut part: Vec<T> = slice_u8_to_vec(&buffer, *len);
-                    part_sa.append(&mut part);
+                    let mut buffer = fs::read(path)?;
+                    let part = slice_u8_to_slice_int(&mut buffer, *len);
+                    part_sa.extend_from_slice(part);
                     fs::remove_file(path)?;
                 }
 
@@ -808,13 +803,15 @@ impl<T: Int> SufrBuilder<T> {
     ///
     /// Args:
     /// * `filename`: the name of the output file.
-    fn write(&self) -> Result<()> {
+    fn write(&self) -> Result<usize> {
         let filename = &self.path;
         let mut file = BufWriter::new(
             File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
         );
 
         let mut bytes_out: usize = 0;
+
+        // TODO (throughout this method): write() can write less than the whole buffer
 
         // Various metadata
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
@@ -824,17 +821,17 @@ impl<T: Int> SufrBuilder<T> {
             file.write(&[OUTFILE_VERSION, is_dna, allow_ambiguity, ignore_softmask])?;
 
         // Text length
-        bytes_out += file.write(&usize_to_bytes(self.text_len.to_usize()))?;
+        bytes_out += file.write(&self.text_len.to_usize().to_le_bytes())?;
 
         // Locations of text, suffix array, and LCP
         // Will be corrected at the end
         let locs_pos = file.stream_position()?;
-        bytes_out += file.write(&usize_to_bytes(0usize))?;
-        bytes_out += file.write(&usize_to_bytes(0usize))?;
-        bytes_out += file.write(&usize_to_bytes(0usize))?;
+        bytes_out += file.write(&0usize.to_le_bytes())?;
+        bytes_out += file.write(&0usize.to_le_bytes())?;
+        bytes_out += file.write(&0usize.to_le_bytes())?;
 
         // Number of suffixes
-        bytes_out += file.write(&usize_to_bytes(self.num_suffixes.to_usize()))?;
+        bytes_out += file.write(&self.num_suffixes.to_usize().to_le_bytes())?;
 
         // Max query length
         let max_query_len = if let SuffixSortType::MaxQueryLen(val) = &self.sort_type {
@@ -842,10 +839,10 @@ impl<T: Int> SufrBuilder<T> {
         } else {
             0
         };
-        bytes_out += file.write(&usize_to_bytes(max_query_len))?;
+        bytes_out += file.write(&max_query_len.to_le_bytes())?;
 
         // Number of sequences
-        bytes_out += file.write(&usize_to_bytes(self.sequence_starts.len()))?;
+        bytes_out += file.write(&self.sequence_starts.len().to_le_bytes())?;
 
         // Sequence starts
         bytes_out += file.write(vec_to_slice_u8(&self.sequence_starts))?;
@@ -853,11 +850,11 @@ impl<T: Int> SufrBuilder<T> {
         // Seed mask
         match &self.sort_type {
             SuffixSortType::Mask(seed_mask) => {
-                bytes_out += file.write(&usize_to_bytes(seed_mask.bytes.len()))?;
+                bytes_out += file.write(&seed_mask.bytes.len().to_le_bytes())?;
                 file.write_all(&seed_mask.bytes)?;
                 bytes_out += seed_mask.bytes.len();
             }
-            _ => bytes_out += file.write(&usize_to_bytes(0))?,
+            _ => bytes_out += file.write(&0usize.to_le_bytes())?,
         }
 
         // Text
@@ -869,7 +866,7 @@ impl<T: Int> SufrBuilder<T> {
         let sa_pos = bytes_out;
         for partition in &self.partitions {
             let buffer = fs::read(&partition.sa_path)?;
-            bytes_out += &buffer.len();
+            bytes_out += buffer.len();
             file.write_all(&buffer)?;
             fs::remove_file(&partition.sa_path)?;
         }
@@ -878,14 +875,14 @@ impl<T: Int> SufrBuilder<T> {
 
         // Stitch partitioned LCP files together
         for (i, partition) in self.partitions.iter().enumerate() {
-            let buffer = fs::read(&partition.lcp_path)?;
-            bytes_out += &buffer.len();
+            let mut buffer = fs::read(&partition.lcp_path)?;
+            bytes_out += buffer.len();
 
             if i == 0 {
                 file.write_all(&buffer)?;
             } else {
                 // Fix LCP boundary
-                let mut lcp: Vec<T> = slice_u8_to_vec(&buffer, partition.len);
+                let lcp = slice_u8_to_slice_int(&mut buffer, partition.len);
                 if let Some(val) = lcp.first_mut() {
                     *val = self.find_lcp(
                         self.partitions[i - 1].last_suffix,
@@ -894,21 +891,21 @@ impl<T: Int> SufrBuilder<T> {
                         0, // start at beginning
                     );
                 }
-                file.write_all(vec_to_slice_u8(&lcp))?;
+                file.write_all(vec_to_slice_u8(lcp))?;
             }
             fs::remove_file(&partition.lcp_path)?;
         }
 
         // Sequence names are variable in length so they are at the end
-        _ = file.write(&bincode::serialize(&self.sequence_names)?)?;
+        bytes_out += file.write(&bincode::serialize(&self.sequence_names)?)?;
 
         // Go back to header and record the locations
         file.seek(SeekFrom::Start(locs_pos))?;
-        let _ = file.write(&usize_to_bytes(text_pos))?;
-        let _ = file.write(&usize_to_bytes(sa_pos))?;
-        let _ = file.write(&usize_to_bytes(lcp_pos))?;
+        let _ = file.write(&text_pos.to_le_bytes())?;
+        let _ = file.write(&sa_pos.to_le_bytes())?;
+        let _ = file.write(&lcp_pos.to_le_bytes())?;
 
-        Ok(())
+        Ok(bytes_out)
     }
 }
 
