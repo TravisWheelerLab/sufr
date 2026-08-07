@@ -27,7 +27,7 @@ use std::{
     mem,
     ops::Range,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::Mutex,
     time::Instant,
 };
 use tempfile::NamedTempFile;
@@ -424,7 +424,7 @@ impl<T: Int> SufrBuilder<T> {
         let mut builders: Vec<_> = vec![];
         for _ in 0..num_partitions {
             let builder: PartitionBuilder<T> = PartitionBuilder::new(capacity)?;
-            builders.push(Arc::new(Mutex::new(builder)));
+            builders.push(Mutex::new(builder));
         }
 
         let now = Instant::now();
@@ -452,15 +452,17 @@ impl<T: Int> SufrBuilder<T> {
 
         // Flush out any remaining buffers
         let mut num_suffixes = 0;
-        for builder in &builders {
-            match builder.lock() {
+        let builders = builders
+            .into_iter()
+            .map(|builder| match builder.into_inner() {
                 Ok(mut val) => {
                     val.write()?;
                     num_suffixes += val.total_len;
+                    Ok(val)
                 }
                 Err(e) => panic!("Failed to lock: {e}"),
-            }
-        }
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         info!(
             "Wrote {num_suffixes} unsorted suffixes to partition{} in {:?}",
@@ -482,7 +484,7 @@ impl<T: Int> SufrBuilder<T> {
     /// * `num_partitions`: the number of partitions to used
     /// * `random_seed`: a value for initializing the RNG
     fn sort(&mut self, num_partitions: usize, random_seed: u64) -> Result<()> {
-        let mut partition_build = self.partition(num_partitions, random_seed)?;
+        let partition_build = self.partition(num_partitions, random_seed)?;
 
         // Be sure to round up to get all the suffixes
         let num_per_partition = (partition_build.num_suffixes as f64
@@ -496,20 +498,14 @@ impl<T: Int> SufrBuilder<T> {
         // so here we accumulate the small partitions from the left
         // stopping when we reach a boundary like 1M/partition.
         // This evens out the workload to sort the partitions.
+        let mut part_builders = partition_build.builders.into_iter();
         for (partition_num, partition_input) in partition_inputs.iter_mut().enumerate()
         {
             let boundary = num_per_partition * (partition_num + 1);
-            while !partition_build.builders.is_empty() {
-                let part = partition_build.builders.remove(0);
-                match part.lock() {
-                    Ok(builder) => {
-                        if builder.total_len > 0 {
-                            partition_input
-                                .push((builder.path.clone(), builder.total_len));
-                            num_taken += builder.total_len;
-                        }
-                    }
-                    Err(e) => panic!("Can't get partition: {e}"),
+            for builder in part_builders.by_ref() {
+                if builder.total_len > 0 {
+                    partition_input.push((builder.path.clone(), builder.total_len));
+                    num_taken += builder.total_len;
                 }
 
                 // Let the last partition soak up the rest
@@ -937,7 +933,7 @@ struct Partition {
 #[derive(Debug)]
 struct PartitionBuildResult<T: Int> {
     /// A thread-safe vector of `PartitionBuilder` values
-    builders: Vec<Arc<Mutex<PartitionBuilder<T>>>>,
+    builders: Vec<PartitionBuilder<T>>,
 
     /// The total number of suffixes that were written to disk.
     num_suffixes: usize,
