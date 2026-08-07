@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 use log::info;
+use std::{fs::File, io::BufWriter};
 use sufr::{Cli, Command, LogLevel};
-use std::{io::BufWriter, fs::File};
 
 // --------------------------------------------------
 fn main() {
@@ -22,9 +22,9 @@ fn run(args: Cli) -> Result<()> {
         })
         .target(match args.log_file {
             // Optional log file, default to STDOUT
-            Some(ref filename) => env_logger::Target::Pipe(Box::new(
-                BufWriter::new(File::create(filename)?),
-            )),
+            Some(ref filename) => env_logger::Target::Pipe(Box::new(BufWriter::new(
+                File::create(filename)?,
+            ))),
             _ => env_logger::Target::Stdout,
         })
         .init();

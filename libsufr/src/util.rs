@@ -42,12 +42,12 @@ pub fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
 /// Args:
 /// * `path`: to FASTA/FASTQ file
 /// * `sequence_delimiter`: the character/byte you wish to place
-///    between sequences. For many applications (both nucleotide and
-///    protein), you might choose a character like `%` that sorts below
-///    the alphabet (A-Z) but above the sentinel `$` that is placed at
-///    the end of the returned text; however, when building a suffix array
-///    for use in a Burrows-Wheeler Transform, it might be better to use
-///    `N` for nucleotides and `X` for protein.
+///   between sequences. For many applications (both nucleotide and
+///   protein), you might choose a character like `%` that sorts below
+///   the alphabet (A-Z) but above the sentinel `$` that is placed at
+///   the end of the returned text; however, when building a suffix array
+///   for use in a Burrows-Wheeler Transform, it might be better to use
+///   `N` for nucleotides and `X` for protein.
 pub fn read_sequence_file(
     path: &Path,
     sequence_delimiter: u8,

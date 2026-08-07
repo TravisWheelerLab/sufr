@@ -544,10 +544,11 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
 // Ensures the number does not start with '+'.
 fn parse_index(input: &str) -> Result<usize> {
     let value_error = || anyhow!(r#"illegal list value: "{input}""#);
-    input
-        .starts_with('+')
-        .then(|| Err(value_error()))
-        .unwrap_or_else(|| input.parse::<usize>().map_err(|_| value_error()))
+    if input.starts_with('+') {
+        Err(value_error())
+    } else {
+        input.parse::<usize>().map_err(|_| value_error())
+    }
 }
 
 // --------------------------------------------------

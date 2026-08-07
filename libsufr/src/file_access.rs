@@ -1,15 +1,15 @@
 //! # Low memory access to Sufr's on-disk arrays (text/SA/LCP)
 
-use anyhow::{bail, Result};
 use crate::{
+    types::{FromUsize, Int},
     util::slice_u8_to_vec,
-    types::{FromUsize, Int}
 };
+use anyhow::{bail, Result};
 use std::{
-    mem,
     cmp::min,
     fs::File,
     io::{Read, Seek, SeekFrom},
+    mem,
     ops::Range,
 };
 
@@ -20,7 +20,7 @@ pub struct FileAccess<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
-    /// A read-only filehandle to the _.sufr_ file 
+    /// A read-only filehandle to the _.sufr_ file
     file: File,
 
     /// Internal buffer for reading a portion of the file
@@ -38,7 +38,7 @@ where
     /// The starting byte position of the structure being read (text/SA/LCP)
     start_position: u64,
 
-    /// The current position after reading a portion of the structure 
+    /// The current position after reading a portion of the structure
     /// from disk and into the `buffer`
     current_position: u64,
 
@@ -53,7 +53,7 @@ impl<T> FileAccess<T>
 where
     T: Int + FromUsize<T> + Sized + Send + Sync + serde::ser::Serialize,
 {
-    /// Create a read-only file access to a portion of a _.sufr_ file 
+    /// Create a read-only file access to a portion of a _.sufr_ file
     /// representing the text, suffix array, or LCP array.
     /// This struct must be initialized using an `Int` of `u8` for the `text`
     /// or `u32`/`u64` for the SA/LCP.
@@ -88,7 +88,7 @@ where
     }
 
     /// Create a `FileAccessIter` iterator.
-    pub fn iter(&mut self) -> FileAccessIter<T> {
+    pub fn iter(&mut self) -> FileAccessIter<'_, T> {
         FileAccessIter { file_access: self }
     }
 

@@ -507,15 +507,15 @@ where
         // so here we accumulate the small partitions from the left
         // stopping when we reach a boundary like 1M/partition.
         // This evens out the workload to sort the partitions.
-        #[allow(clippy::needless_range_loop)]
-        for partition_num in 0..num_partitions {
+        for (partition_num, partition_input) in partition_inputs.iter_mut().enumerate()
+        {
             let boundary = num_per_partition * (partition_num + 1);
             while !partition_build.builders.is_empty() {
                 let part = partition_build.builders.remove(0);
                 match part.lock() {
                     Ok(builder) => {
                         if builder.total_len > 0 {
-                            partition_inputs[partition_num]
+                            partition_input
                                 .push((builder.path.clone(), builder.total_len));
                             num_taken += builder.total_len;
                         }
@@ -1034,9 +1034,9 @@ where
 mod test {
     use super::{SufrBuilder, SufrBuilderArgs};
     use anyhow::Result;
+    use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::NamedTempFile;
-    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_is_less() -> Result<()> {

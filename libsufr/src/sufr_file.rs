@@ -13,7 +13,7 @@ use crate::{
     },
     util::{slice_u8_to_vec, usize_to_bytes},
 };
-use anyhow::{anyhow, Result, bail};
+use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
 use home::home_dir;
 use log::info;
@@ -512,7 +512,6 @@ where
     /// Args:
     /// * `max_query_len`: prefix length
     fn set_suffix_array_mem(&mut self, max_query_len: Option<usize>) -> Result<()> {
-
         let mut max_query_len = max_query_len.unwrap_or(0);
 
         // If ".sufr" file was built with a nonzero max_query_len or seed mask
@@ -543,7 +542,7 @@ where
             info!("Using existing suffix_array_mem");
             return Ok(());
         } else if max_query_len == built_max_query_len {
-             // The requested MQL matches how the SA was built
+            // The requested MQL matches how the SA was built
             // Stuff entire SA into memory
             let now = Instant::now();
             self.suffix_array_file.reset();
@@ -553,7 +552,6 @@ where
             // There will be no ranks
             self.suffix_array_rank_mem = vec![];
         } else {
-
             info!("Loading suffix_array_mem using max_query_len {max_query_len}");
 
             let sufr_dir = &self.get_sufr_dir()?;
