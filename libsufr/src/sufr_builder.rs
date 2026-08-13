@@ -638,22 +638,22 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         if n == 1 {
             lcp[0] = T::default();
         } else {
+            const NESTED_PAR_GRAIN_SIZE: usize = 1 << 13;
             let mid = n / 2;
-            self.merge_sort(
-                &mut y[..mid],
-                &mut x[..mid],
-                mid,
-                &mut lcp_w[..mid],
-                &mut lcp[..mid],
-            );
+            let (xl, xr) = x.split_at_mut(mid);
+            let (yl, yr) = y.split_at_mut(mid);
+            let (lcpw_l, lcpw_r) = lcp_w.split_at_mut(mid);
+            let (lcp_l, lcp_r) = lcp.split_at_mut(mid);
 
-            self.merge_sort(
-                &mut y[mid..],
-                &mut x[mid..],
-                n - mid,
-                &mut lcp_w[mid..],
-                &mut lcp[mid..],
-            );
+            if mid < NESTED_PAR_GRAIN_SIZE {
+                self.merge_sort(yl, xl, mid, lcpw_l, lcp_l);
+                self.merge_sort(yr, xr, n - mid, lcpw_r, lcp_r);
+            } else {
+                rayon::join(
+                    || self.merge_sort(yl, xl, mid, lcpw_l, lcp_l),
+                    || self.merge_sort(yr, xr, n - mid, lcpw_r, lcp_r),
+                );
+            }
 
             self.merge(x, mid, lcp_w, y, lcp);
         }
