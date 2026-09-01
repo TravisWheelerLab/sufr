@@ -563,10 +563,6 @@ pub struct SufrBuilderArgs {
     /// An optional seed mask of 1/0 for care/don't-care positions,
     /// cf. `SeedMask`.
     pub seed_mask: Option<String>,
-
-    /// A seed value for reproducibility when randomly choosing the
-    /// suffixes for partitioning.
-    pub random_seed: u64,
 }
 
 // --------------------------------------------------

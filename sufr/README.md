@@ -84,7 +84,6 @@ Options:
   -i, --ignore-softmask             Ignore suffixes in soft-mask/lowercase regions
   -D, --sequence-delimiter <DELIM>  Character to separate sequences [default: %]
   -s, --seed-mask <MASK>            Spaced seeds mask
-  -r, --random-seed <RANDSEED>      Random seed [default: 42]
   -h, --help                        Print help
 ```
 
@@ -111,7 +110,9 @@ Multiple sequence are separated by a specified character (`%` by default).
 A sentinel character is appended to the end (default `$`) is appended to the end of the input text.
 If the `--dna` flag is present, suffixes are skipped if they begin with any character other than _A_, _C_, _G_, or _T_ unless the `--allow-ambiguity` flag is present.
 
-Next, we partition the suffixes into some number partitions by randomly selecting `--num-partitions` - 1 pivot suffixes, sorting them, and using the pivots to place each suffix into the highest bounded partition.
+Next, we partition the suffixes into bins based on the first few bytes of each suffix. The bins are calculated and chosen based on the
+observed alphabet of the sequence (nucleic acid alphabet for only `ACGTN`, amino acid alphabet otherwise).
+Adjacent bins are then aggregated into the specified `--num-partitions` partitions, aiming for roughly equally sized partitions.
 The partitions are sorted using a merge sort algorithm that also generates an LCP (longest common prefix) array.
 The sorted suffix/LCP arrays are then concatenated to produce the final output.
 

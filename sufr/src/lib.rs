@@ -118,10 +118,6 @@ pub struct CreateArgs {
     /// Spaced seeds mask
     #[arg(short, long, value_name = "MASK")]
     pub seed_mask: Option<String>,
-
-    /// Random seed
-    #[arg(short, long, value_name = "RANDSEED", default_value = "42")]
-    pub random_seed: u64,
 }
 
 #[derive(Debug, Parser)]
@@ -351,7 +347,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sequence_names: seq_data.sequence_names,
         num_partitions: args.num_partitions,
         seed_mask: args.seed_mask.clone(),
-        random_seed: args.random_seed,
     };
 
     let now = Instant::now();

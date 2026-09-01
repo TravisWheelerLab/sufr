@@ -17,12 +17,10 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
-use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
     cmp::{max, min, Ordering},
-    collections::HashSet,
     fs::{self, File, OpenOptions},
     io::{BufWriter, Seek, SeekFrom, Write},
     mem,
@@ -121,7 +119,6 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     ///         sequence_names: seq_data.sequence_names,
     ///         num_partitions: 1024,
     ///         seed_mask: None,
-    ///         random_seed: 42,
     ///     };
     ///
     ///     if text_len < u32::MAX as u64 {
@@ -137,6 +134,9 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// ```
     pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T, B>> {
         let mut text = args.text;
+
+        // Count the byte occurrences so that the best alphabet can be selected for partitioning...
+        let mut occupancy = [0u8; 256];
         text.iter_mut().for_each(|b| {
             // Check for lowercase
             if (97..=122).contains(b) {
@@ -147,6 +147,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                     *b &= 0b1011111
                 }
             }
+            occupancy[*b as usize] |= 1;
         });
         let text_len = T::from_usize(text.len());
 
@@ -204,7 +205,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             n_ranges,
             path: args.path.unwrap_or("out.sufr".to_string()),
         };
-        sa.sort(args.num_partitions, args.random_seed)?;
+        sa.sort(args.num_partitions, occupancy)?;
         sa.write()?;
         Ok(sa)
     }
@@ -369,6 +370,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// Args:
     /// * `start1`: the position of the first suffix
     /// * `start2`: the position of the second suffix
+    #[cfg(test)]
     #[inline(always)]
     fn is_less(&self, start1: T, start2: T) -> bool {
         if start1 == start2 {
@@ -414,6 +416,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// Args:
     /// * `suffix`: a suffix position
     /// * `pivots`: randomly selected suffix positions sorted lexicographically
+    #[cfg(test)]
     #[inline(always)]
     fn upper_bound(&self, suffix: T, pivots: &[T]) -> usize {
         // Returns 0 when pivots is empty
@@ -422,66 +425,91 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
 
     // --------------------------------------------------
     /// Write the suffixes into temporary files for sorting
-    ///
-    /// Args:
-    /// * `num_partitions`: how many partitions to create
-    /// * `random_seed`: a value for initializing the pseudo-random number
-    ///   generator for reproducibility when selecting the suffixes used
-    ///   for partitioning
-    fn partition(
+    fn partition<A: PartitioningAlphabet + Send + Sync>(
         &mut self,
-        num_partitions: usize,
-        random_seed: u64,
     ) -> Result<PartitionBuildResult<B>> {
-        // Create more partitions than requested because
-        // we can't know how big they will end up being
-        let max_partitions = self.text_len.to_usize() / 4;
-        let num_partitions = if num_partitions * 10 < max_partitions {
-            num_partitions * 10
-        } else if num_partitions * 5 < max_partitions {
-            num_partitions * 5
-        } else if num_partitions * 2 < max_partitions {
-            num_partitions * 2
-        } else if num_partitions < max_partitions {
-            num_partitions
-        } else {
-            max_partitions
-        };
-
-        // Randomly select some pivots
-        let now = Instant::now();
-        let pivot_sa = self.select_pivots(self.text.len(), num_partitions, random_seed);
-        let num_pivots = pivot_sa.len();
-        info!(
-            "Selected {num_pivots} pivot{} in {:?}",
-            if num_pivots == 1 { "" } else { "s" },
-            now.elapsed()
-        );
-
+        let alphabet = A::init();
         let mut buffers: Vec<_> = vec![];
-        for _ in 0..num_partitions {
-            let buffer = B::new()?;
+        for _ in 0..A::NUM_PARTITIONS {
+            let buffer = B::default();
             buffers.push(Mutex::new(buffer));
         }
 
         let now = Instant::now();
-        self.text
-            .par_iter()
-            .enumerate()
-            .try_for_each(|(i, &val)| -> Result<()> {
-                if val == SENTINEL_CHARACTER
-                    || !self.is_dna // Allow anything else if not DNA
-                    || (b"ACGT".contains(&val) || self.allow_ambiguity)
-                {
-                    let suffix = T::from_usize(i);
-                    let partition_num = self.upper_bound(suffix, &pivot_sa);
-                    match buffers[partition_num].lock() {
-                        Ok(mut buf) => {
-                            if buf.push(suffix).is_err() {
-                                bail!("Unable to write data to disk")
+        const CHUNK_SIZE: usize = 1 << 19;
+        (0..self.text.len().div_ceil(CHUNK_SIZE))
+            .into_par_iter()
+            .try_for_each(|chunk| -> Result<()> {
+                let start = chunk * CHUNK_SIZE;
+                let end = (start + CHUNK_SIZE).min(self.text.len());
+
+                let mut suffixes = Vec::with_capacity(end - start);
+                let mut keys = Vec::with_capacity(end - start);
+                let mut counts = vec![0; A::NUM_PARTITIONS];
+
+                for i in start..end {
+                    let val = self.text.get(i).copied().unwrap_or(0);
+                    if !(val == SENTINEL_CHARACTER
+                        || !self.is_dna // Allow anything else if not DNA
+                        || (b"ACGT".contains(&val) || self.allow_ambiguity))
+                    {
+                        continue;
+                    }
+
+                    let mut key = 0;
+                    match &self.sort_type {
+                        SuffixSortType::Mask(mask) => {
+                            for (j, &off) in
+                                mask.positions.iter().enumerate().take(A::COUNT)
+                            {
+                                let c = self.text.get(i + off).copied().unwrap_or(0);
+                                key |= alphabet.lookup(c)
+                                    << ((A::COUNT - j - 1) * A::BITS);
                             }
                         }
-                        Err(e) => bail!("{e}"),
+                        SuffixSortType::MaxQueryLen(_) => {
+                            for (j, &c) in
+                                self.text[i..].iter().enumerate().take(A::COUNT)
+                            {
+                                key |= alphabet.lookup(c)
+                                    << ((A::COUNT - j - 1) * A::BITS);
+                            }
+                        }
+                    }
+
+                    keys.push(key);
+                    counts[key as usize] += 1;
+                    suffixes.push(T::from_usize(i));
+                }
+
+                let mut offsets = Vec::with_capacity(A::NUM_PARTITIONS);
+                let mut total = 0;
+                for &n in counts.iter() {
+                    offsets.push(total);
+                    total += n;
+                }
+
+                let mut ordered = vec![T::default(); keys.len()];
+                let mut cursors = offsets.clone();
+                for (&key, &suf) in keys.iter().zip(suffixes.iter()) {
+                    let offset = &mut cursors[key as usize];
+                    ordered[*offset] = suf;
+                    *offset += 1;
+                }
+
+                for (partition_num, (&offset, &count)) in
+                    offsets.iter().zip(counts.iter()).enumerate()
+                {
+                    if count > 0 {
+                        let slice = &ordered[offset..offset + count];
+                        match buffers[partition_num].lock() {
+                            Ok(mut buf) => {
+                                if buf.extend_from_slice(slice).is_err() {
+                                    bail!("Unable to write data to disk")
+                                }
+                            }
+                            Err(e) => bail!("{e}"),
+                        }
                     }
                 }
                 Ok(())
@@ -503,7 +531,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
 
         info!(
             "Wrote {num_suffixes} unsorted suffixes to partition{} in {:?}",
-            if num_pivots == 1 { "" } else { "s" },
+            if A::NUM_PARTITIONS == 1 { "" } else { "s" },
             now.elapsed()
         );
 
@@ -519,9 +547,30 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     ///
     /// Args:
     /// * `num_partitions`: the number of partitions to used
-    /// * `random_seed`: a value for initializing the RNG
-    fn sort(&mut self, num_partitions: usize, random_seed: u64) -> Result<()> {
-        let partition_build = self.partition(num_partitions, random_seed)?;
+    /// * `occupancy`: occurrences of bytes, used to select partitioning strategy
+    fn sort(&mut self, num_partitions: usize, mut occupancy: [u8; 256]) -> Result<()> {
+        // ... and if there are none outside of the nucleic alphabet then use it.
+        for &c in NucleicAcidAlphabet::ALPHABET.iter() {
+            occupancy[c as usize] = 0;
+        }
+        let partition_build = if occupancy.iter().map(|&b| b as usize).sum::<usize>()
+            == 0
+        {
+            info!("Detected Nucleic Acid alphabet: using 5-character prefix for partitioning");
+            self.partition::<NucleicAcidAlphabet>()?
+        } else {
+            // Otherwise check the same for the amino acid alphabet
+            for &c in AminoAcidAlphabet::ALPHABET.iter() {
+                occupancy[c as usize] = 0;
+            }
+            if occupancy.iter().map(|&b| b as usize).sum::<usize>() == 0 {
+                info!("Detected Amino Acid alphabet: using 3-character prefix for partitioning");
+                self.partition::<AminoAcidAlphabet>()?
+            } else {
+                info!("Detected non-Nucleic/non-Amino Acid: using 2-byte prefix for partitioning");
+                self.partition::<BytesAlphabet>()?
+            }
+        };
 
         // Be sure to round up to get all the suffixes
         let num_per_partition = (partition_build.num_suffixes as f64
@@ -591,9 +640,9 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                         );
 
                         // Write to disk
-                        let mut sa_buffer = B::new()?;
+                        let mut sa_buffer = B::default();
                         sa_buffer.extend_from_slice(&part_sa)?;
-                        let mut lcp_buffer = B::new()?;
+                        let mut lcp_buffer = B::default();
                         lcp_buffer.extend_from_slice(&lcp)?;
 
                         *partition = Some(Partition {
@@ -796,54 +845,12 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     }
 
     // --------------------------------------------------
-    #[inline(always)]
-    fn select_pivots(
-        &self,
-        text_len: usize,
-        num_partitions: usize,
-        random_seed: u64,
-    ) -> Vec<T> {
-        if num_partitions > 1 {
-            // Use a HashMap because selecting pivots one-at-a-time
-            // can result in duplicates.
-            let num_pivots = num_partitions - 1;
-            let mut rng: Box<dyn RngCore> = if random_seed > 0 {
-                Box::new(StdRng::seed_from_u64(random_seed))
-            } else {
-                Box::new(rand::rng())
-            };
-            let mut pivot_sa = HashSet::<T>::new();
-            loop {
-                let pos = rng.random_range(0..text_len);
-                if self.is_dna && !b"ACGT$".contains(&self.text[pos]) {
-                    continue;
-                }
-                let _ = pivot_sa.insert(T::from_usize(pos));
-                if pivot_sa.len() == num_pivots {
-                    break;
-                }
-            }
-
-            // Sort the selected pivots
-            let mut pivot_sa: Vec<T> = pivot_sa.iter().cloned().collect();
-            let mut sa_w = pivot_sa.clone();
-            let len = pivot_sa.len();
-            let mut lcp = vec![T::default(); len];
-            let mut lcp_w = vec![T::default(); len];
-            self.merge_sort(&mut sa_w, &mut pivot_sa, len, &mut lcp, &mut lcp_w);
-            pivot_sa
-        } else {
-            vec![]
-        }
-    }
-
-    // --------------------------------------------------
     /// Serialize contents of the sorted partitions to a _.sufr_ file.
     /// Returns the number of bytes written to disk.
     ///
     /// Args:
     /// * `filename`: the name of the output file.
-    fn write(&self) -> Result<usize> {
+    fn write(&mut self) -> Result<usize> {
         let filename = &self.path;
         let mut file = BufWriter::new(
             File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
@@ -903,9 +910,10 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         bytes_out += self.text.len();
 
         // Stitch partitioned suffix files together
+        // NB: Using mem::take() and consume() to free memory/disk space along the way
         let sa_pos = bytes_out;
-        for partition in &self.partitions {
-            let sa_buffer = partition.sa_buffer.read()?;
+        for partition in &mut self.partitions {
+            let sa_buffer = mem::take(&mut partition.sa_buffer).consume()?;
             let sa_bytes = vec_to_slice_u8(&sa_buffer);
             bytes_out += sa_bytes.len();
             file.write_all(sa_bytes)?;
@@ -914,15 +922,15 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         let lcp_pos = bytes_out;
 
         // Stitch partitioned LCP files together
-        for (i, partition) in self.partitions.iter().enumerate() {
-            let mut lcp = partition.lcp_buffer.read()?.into_owned();
+        for i in 0..self.partitions.len() {
+            let mut lcp = mem::take(&mut self.partitions[i].lcp_buffer).consume()?;
 
             if i != 0 {
                 // Fix LCP boundary
                 if let Some(val) = lcp.first_mut() {
                     *val = self.find_lcp(
                         self.partitions[i - 1].last_suffix,
-                        partition.first_suffix,
+                        self.partitions[i].first_suffix,
                         self.text_len,
                         0, // start at beginning
                     );
@@ -944,6 +952,92 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         let _ = file.write(&lcp_pos.to_le_bytes())?;
 
         Ok(bytes_out)
+    }
+}
+
+/// Alphabet for partitioning by a prefix key,
+/// i.e. placing suffixes into partitions based
+/// on the first `COUNT` characters. The "key" is a packed integer;
+/// `BITS`, `COUNT`, and `NUM_PARTITIONS` constants describe the size.
+///
+/// Implementations need only provide the value for `ALPHABET`; the rest
+/// are computed.
+///
+/// Consumers should use only the `init()` and `lookup()` functions,
+/// in particular to support `BytesAlphabet` which does not use a lookup
+/// table.
+trait PartitioningAlphabet {
+    /// The alphabet used; must be in ascending sorted order
+    const ALPHABET: &'static [u8];
+
+    /// Number of bits required to represent a character in ALPHABET
+    const BITS: usize = {
+        let mut bits = 0;
+        while (1usize << bits) < Self::ALPHABET.len() {
+            bits += 1;
+        }
+        bits
+    };
+
+    /// Number of characters (packed into BITS) that fit into the accumulator (u16)
+    const COUNT: usize = u16::BITS as usize / Self::BITS;
+
+    /// Number of resulting partitions: `2 ^ BITS ^ COUNT`
+    const NUM_PARTITIONS: usize = 2usize.pow(Self::BITS as u32).pow(Self::COUNT as u32);
+
+    /// Returns the lookup table from a UTF-8/ASCII byte input to its rank.
+    fn make_lookup_table() -> [u16; 256] {
+        let mut lookup = [0u16; 256];
+        for (i, &c) in Self::ALPHABET.iter().enumerate() {
+            lookup[c as usize] = i as u16;
+        }
+        lookup
+    }
+
+    /// Initialize the alphabet, usually by creating a lookup table.
+    fn init() -> Self;
+
+    /// Get the value of `c` in the lower `BITS` bits of a `u16`.
+    fn lookup(&self, c: u8) -> u16;
+}
+
+struct AminoAcidAlphabet([u16; 256]);
+impl PartitioningAlphabet for AminoAcidAlphabet {
+    const ALPHABET: &'static [u8] = b"$%*-ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    fn init() -> Self {
+        Self(Self::make_lookup_table())
+    }
+
+    fn lookup(&self, c: u8) -> u16 {
+        self.0[c as usize]
+    }
+}
+
+struct NucleicAcidAlphabet([u16; 256]);
+impl PartitioningAlphabet for NucleicAcidAlphabet {
+    const ALPHABET: &'static [u8] = b"$%ACGNT";
+
+    fn init() -> Self {
+        Self(Self::make_lookup_table())
+    }
+
+    fn lookup(&self, c: u8) -> u16 {
+        self.0[c as usize]
+    }
+}
+
+struct BytesAlphabet;
+impl PartitioningAlphabet for BytesAlphabet {
+    const ALPHABET: &'static [u8] = b"";
+    const BITS: usize = 8;
+
+    fn init() -> Self {
+        Self
+    }
+
+    fn lookup(&self, c: u8) -> u16 {
+        c as u16
     }
 }
 
@@ -982,14 +1076,9 @@ struct PartitionBuildResult<B: ScratchBuffer<Item: Int>> {
 }
 
 /// Trait representing scratch buffers that may be backed by disk or memory.
-pub trait ScratchBuffer {
+pub trait ScratchBuffer: Default {
     /// The type of items in the buffer
     type Item: Int;
-
-    /// Create a new scratch buffer
-    fn new() -> Result<Self>
-    where
-        Self: Sized;
 
     /// Append `val` to `self`.
     fn push(&mut self, val: Self::Item) -> Result<()>;
@@ -1015,26 +1104,40 @@ pub trait ScratchBuffer {
 pub struct DiskScratchBuffer<T: Int> {
     buf: Vec<T>,
     count: usize,
-    path: PathBuf,
+    path: Option<PathBuf>,
+}
+
+impl<T: Int> DiskScratchBuffer<T> {
+    const FLUSH_AT: usize = 4096;
+
+    fn open(&mut self) -> Result<File> {
+        if self.path.is_none() {
+            let tmp = NamedTempFile::new()?;
+            let (_, path) = tmp.keep()?;
+            self.path = Some(path)
+        }
+        Ok(OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.path.as_ref().unwrap())?)
+    }
+}
+
+impl<T: Int> Default for DiskScratchBuffer<T> {
+    fn default() -> Self {
+        Self {
+            buf: vec![],
+            count: 0,
+            path: None,
+        }
+    }
 }
 
 impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
     type Item = T;
-
-    fn new() -> Result<Self> {
-        let tmp = NamedTempFile::new()?;
-        let (_, path) = tmp.keep()?;
-
-        Ok(Self {
-            buf: Vec::with_capacity(4096),
-            count: 0,
-            path,
-        })
-    }
-
     fn push(&mut self, val: T) -> Result<()> {
         self.buf.push(val);
-        if self.buf.len() == self.buf.capacity() {
+        if self.buf.len() >= Self::FLUSH_AT {
             self.flush()?;
         }
 
@@ -1042,56 +1145,61 @@ impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
     }
 
     fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
-        self.flush()?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        file.write_all(vec_to_slice_u8(vals))?;
-        self.count += vals.len();
+        self.buf.extend_from_slice(vals);
+        if self.buf.len() >= Self::FLUSH_AT {
+            self.flush()?;
+        }
         Ok(())
     }
 
     fn flush(&mut self) -> Result<()> {
         if !self.buf.is_empty() {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.path)?;
+            let mut file = self.open()?;
             file.write_all(vec_to_slice_u8(&self.buf))?;
             self.count += self.buf.len();
             self.buf.clear();
+            self.buf.shrink_to_fit();
         }
         Ok(())
     }
 
     fn count(&self) -> usize {
-        self.count
+        self.count + self.buf.len()
     }
 
     fn read(&self) -> Result<Cow<'_, [T]>> {
-        let mut buffer = fs::read(&self.path)?;
-        let count = buffer.len() / std::mem::size_of::<T>();
+        match &self.path {
+            Some(path) => {
+                let mut buffer = fs::read(path)?;
+                let count = buffer.len() / std::mem::size_of::<T>();
 
-        let mut data = Vec::with_capacity(count);
-        data.extend_from_slice(slice_u8_to_slice_int(&mut buffer, count));
-        Ok(Cow::Owned(data))
+                let mut data = Vec::with_capacity(self.buf.len() + count);
+                data.extend_from_slice(slice_u8_to_slice_int(&mut buffer, count));
+                data.extend_from_slice(&self.buf);
+                Ok(Cow::Owned(data))
+            }
+            None => Ok(Cow::Borrowed(&self.buf)),
+        }
     }
 
-    fn consume(self) -> Result<Vec<Self::Item>> {
+    fn consume(mut self) -> Result<Vec<Self::Item>> {
         let buf = match self.read()? {
             Cow::Owned(b) => b,
-            Cow::Borrowed(_) => unreachable!(),
+            Cow::Borrowed(b) => b.to_vec(),
         };
-        fs::remove_file(&self.path)?;
+        if let Some(path) = self.path.take() {
+            fs::remove_file(path)?;
+        }
         Ok(buf)
     }
 }
 
 impl<T: Int> Drop for DiskScratchBuffer<T> {
     fn drop(&mut self) {
-        // best-effort since this is in Drop, and the file may have been consume()d already
-        let _ = fs::remove_file(&self.path);
+        if let Some(path) = self.path.take() {
+            // best-effort since this is in Drop, and the file may have been consume()d already
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
@@ -1101,12 +1209,14 @@ pub struct MemoryScratchBuffer<T: Int> {
     data: Vec<T>,
 }
 
+impl<T: Int> Default for MemoryScratchBuffer<T> {
+    fn default() -> Self {
+        Self { data: vec![] }
+    }
+}
+
 impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
     type Item = T;
-
-    fn new() -> Result<Self> {
-        Ok(Self { data: vec![] })
-    }
 
     fn push(&mut self, val: T) -> Result<()> {
         self.data.push(val);
@@ -1161,7 +1271,6 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
-            random_seed: 0,
         };
         let sufr = SufrBuilder::<u32>::new(args)?;
 
@@ -1203,7 +1312,6 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
-            random_seed: 0,
         };
         let sufr = SufrBuilder::<u32>::new(args)?;
 
@@ -1248,7 +1356,6 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("101".to_string()),
-            random_seed: 0,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1294,7 +1401,6 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
-            random_seed: 0,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1342,7 +1448,6 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("1101".to_string()),
-            random_seed: 42,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1380,7 +1485,6 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
-            random_seed: 42,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1415,7 +1519,6 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
-            random_seed: 42,
         };
 
         let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
@@ -1470,7 +1573,6 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("101".to_string()),
-            random_seed: 42,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1508,5 +1610,16 @@ mod test {
         fs::remove_file(outfile)?;
 
         Ok(())
+    }
+
+    #[test]
+    fn test_alphabet_properties() {
+        use super::{AminoAcidAlphabet, NucleicAcidAlphabet, PartitioningAlphabet};
+
+        assert_eq!(NucleicAcidAlphabet::BITS, 3);
+        assert_eq!(NucleicAcidAlphabet::COUNT, 5);
+
+        assert_eq!(AminoAcidAlphabet::BITS, 5);
+        assert_eq!(AminoAcidAlphabet::COUNT, 3);
     }
 }

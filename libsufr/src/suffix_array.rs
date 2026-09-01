@@ -117,7 +117,6 @@ impl SuffixArray {
     ///         sequence_names: seq_data.sequence_names,
     ///         num_partitions: 16,
     ///         seed_mask: None,
-    ///         random_seed: 42,
     ///     };
     ///
     ///     let suffix_array = SuffixArray::new(builder_args)?;
@@ -447,7 +446,6 @@ impl SuffixArray {
     ///         sequence_names: seq_data.sequence_names,
     ///         num_partitions: 16,
     ///         seed_mask: None,
-    ///         random_seed: 42,
     ///     };
     ///
     ///     let outpath = SuffixArray::write(builder_args)?;
