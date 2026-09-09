@@ -22,6 +22,7 @@
 //! * Travis Wheeler <twheeler@arizona.edu>
 
 mod file_access;
+mod lcp;
 pub mod suffix_array;
 pub mod sufr_builder;
 pub mod sufr_file;
