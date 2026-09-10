@@ -426,10 +426,6 @@ impl<T: Int> SufrFile<T> {
     ) -> (Vec<T>, Vec<T>) {
         let max_query_len = T::from_usize(max_query_len);
 
-        // Ensure we start from the beginning of the SA/LCP files
-        self.lcp_file.reset();
-        self.suffix_array_file.reset();
-
         let max_len = self.len_suffixes.to_usize();
         let mut suffix_array: Vec<T> = Vec::with_capacity(max_len);
         let mut rank: Vec<T> = Vec::with_capacity(max_len);
@@ -539,7 +535,6 @@ impl<T: Int> SufrFile<T> {
             // The requested MQL matches how the SA was built
             // Stuff entire SA into memory
             let now = Instant::now();
-            self.suffix_array_file.reset();
             self.suffix_array_mem = self.suffix_array_file.iter().collect();
             info!("Read entire SA from disk in {:?}", now.elapsed());
 
@@ -1050,7 +1045,6 @@ impl<T: Int> SufrFile<T> {
 
         let number = args.number.unwrap_or(0);
         if args.ranks.is_empty() {
-            self.suffix_array_file.reset();
             for (rank, suffix) in self.suffix_array_file.iter().enumerate() {
                 print(rank, suffix.to_usize(), self.lcp_file.get(rank).unwrap())?;
 
@@ -1499,7 +1493,7 @@ mod test {
     #[test]
     fn test_file_access() -> Result<()> {
         let input_file = "../data/expected/abba.sufr";
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(input_file, false)?;
+        let sufr_file: SufrFile<u32> = SufrFile::read(input_file, false)?;
         let suf_by_rank = [
             14, //  0: #
             0,  //  1: AABABABABBABAB#

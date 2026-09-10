@@ -89,8 +89,8 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
     assert!(output.status.success());
     assert!(outfile.path().exists());
 
-    let mut actual: SufrFile<u32> = SufrFile::read(outpath, false)?;
-    let mut expected: SufrFile<u32> = SufrFile::read(expected_file, false)?;
+    let actual: SufrFile<u32> = SufrFile::read(outpath, false)?;
+    let expected: SufrFile<u32> = SufrFile::read(expected_file, false)?;
 
     let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
     let expected_sa: Vec<_> = expected.suffix_array_file.iter().collect();

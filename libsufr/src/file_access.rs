@@ -1,14 +1,8 @@
 //! # Low memory access to Sufr's on-disk arrays (text/SA/LCP)
 
-use crate::{types::Int, util::slice_u8_to_vec};
+use crate::{types::Int, util::slice_int_to_slice_u8};
 use anyhow::{bail, Result};
-use std::{
-    cmp::min,
-    fs::File,
-    io::{Read, Seek, SeekFrom},
-    mem,
-    ops::Range,
-};
+use std::{cmp::min, fs::File, io, marker::PhantomData, mem, ops::Range};
 
 // --------------------------------------------------
 /// Struct to mediate file access to on-disk arrays of text, suffix/LCP arrays
@@ -17,30 +11,16 @@ pub struct FileAccess<T: Int> {
     /// A read-only filehandle to the _.sufr_ file
     file: File,
 
-    /// Internal buffer for reading a portion of the file
-    buffer: Vec<T>,
-
-    /// The maximum size in bytes of the buffer (currently 2^30)
-    buffer_size: usize,
-
-    /// The current position when reading the buffer
-    buffer_pos: usize,
-
     /// The size in bytes for the entire text/SA/LCP
     pub size: usize,
 
     /// The starting byte position of the structure being read (text/SA/LCP)
     start_position: u64,
 
-    /// The current position after reading a portion of the structure
-    /// from disk and into the `buffer`
-    current_position: u64,
-
     /// The final byte position of the structure being read (text/SA/LCP)
     end_position: u64,
 
-    /// Whether or not the last read off disk made it to the end of the array
-    exhausted: bool,
+    _marker: PhantomData<fn() -> T>,
 }
 
 impl<T: Int> FileAccess<T> {
@@ -59,28 +39,22 @@ impl<T: Int> FileAccess<T> {
         let size = num_elements * mem::size_of::<T>();
         Ok(FileAccess {
             file,
-            buffer: vec![],
-            buffer_size: 2usize.pow(30),
-            buffer_pos: 0,
             size,
             start_position: start,
-            current_position: start,
             end_position: start + size as u64,
-            exhausted: false,
+            _marker: PhantomData,
         })
     }
 
-    /// Reset the buffer to start reading from the beginning.
-    pub fn reset(&mut self) {
-        self.buffer = vec![];
-        self.buffer_pos = 0;
-        self.current_position = self.start_position;
-        self.exhausted = false;
-    }
-
     /// Create a `FileAccessIter` iterator.
-    pub fn iter(&mut self) -> FileAccessIter<'_, T> {
-        FileAccessIter { file_access: self }
+    pub fn iter(&self) -> FileAccessIter<'_, T> {
+        FileAccessIter {
+            file_access: self,
+            buffer: vec![],
+            buffer_pos: 0,
+            current_position: self.start_position,
+            exhausted: false,
+        }
     }
 
     // --------------------------------------------------
@@ -90,20 +64,18 @@ impl<T: Int> FileAccess<T> {
     /// * `pos`: position in the array
     //
     // TODO: Ignoring lots of Results to return Option
-    pub fn get(&mut self, pos: usize) -> Option<T> {
+    pub fn get(&self, pos: usize) -> Option<T> {
         // Don't bother looking for something beyond the end
         let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
         if seek < self.end_position {
-            let _ = self.file.seek(SeekFrom::Start(seek));
-            let mut buffer: Vec<u8> = vec![0; mem::size_of::<T>()];
-            let bytes_read = self.file.read(&mut buffer).unwrap();
-            (bytes_read == mem::size_of::<T>()).then(|| {
-                // TODO: rework - unaligned access and endianness-dependent
-                let res = unsafe {
-                    std::slice::from_raw_parts(buffer.as_ptr() as *const _, 1)
-                };
-                res[0]
-            })
+            let mut val = T::from_usize(0);
+            read_exact_at(
+                &self.file,
+                slice_int_to_slice_u8(std::slice::from_mut(&mut val)),
+                seek,
+            )
+            .unwrap();
+            Some(val)
         } else {
             None
         }
@@ -114,16 +86,20 @@ impl<T: Int> FileAccess<T> {
     ///
     /// Args:
     /// * `range`: start/stop positions in the array
-    pub fn get_range(&mut self, range: Range<usize>) -> Result<Vec<T>> {
+    pub fn get_range(&self, range: Range<usize>) -> Result<Vec<T>> {
+        assert!(range.start <= range.end);
         let start = self.start_position as usize + (range.start * mem::size_of::<T>());
         let end = self.start_position as usize + (range.end * mem::size_of::<T>());
         let valid = self.start_position as usize..self.end_position as usize + 1;
         if valid.contains(&start) && valid.contains(&end) {
-            self.file.seek(SeekFrom::Start(start as u64))?;
-            let mut buffer: Vec<u8> = vec![0; end - start];
-            let bytes_read = self.file.read(&mut buffer)?;
-            let num_vals = bytes_read / mem::size_of::<T>();
-            Ok(slice_u8_to_vec(&buffer, num_vals))
+            let num_vals = range.len();
+            let mut buffer: Vec<T> = vec![T::from_usize(0); num_vals];
+            read_exact_at(
+                &self.file,
+                slice_int_to_slice_u8(&mut buffer),
+                start as u64,
+            )?;
+            Ok(buffer)
         } else {
             bail!("Invalid range: {range:?}")
         }
@@ -134,54 +110,95 @@ impl<T: Int> FileAccess<T> {
 /// An iterator over the values from a `FileAccess`
 #[derive(Debug)]
 pub struct FileAccessIter<'a, T: Int> {
-    file_access: &'a mut FileAccess<T>,
+    file_access: &'a FileAccess<T>,
+    /// Internal buffer for reading a portion of the file
+    buffer: Vec<T>,
+    /// The current position when reading the buffer
+    buffer_pos: usize,
+    /// The current position after reading a portion of the structure
+    /// from disk and into the `buffer`
+    current_position: u64,
+    /// Whether or not the last read off disk made it to the end of the array
+    exhausted: bool,
+}
+
+impl<'a, T: Int> FileAccessIter<'a, T> {
+    /// The maximum size in bytes of the buffer (currently 2^30)
+    const BUFFER_SIZE: usize = 2usize.pow(30);
 }
 
 impl<T: Int> Iterator for FileAccessIter<'_, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.file_access.exhausted {
+        if self.exhausted {
             None
         } else {
             // Fill the buffer
-            if self.file_access.buffer.is_empty()
-                || self.file_access.buffer_pos == self.file_access.buffer.len()
-            {
-                if self.file_access.current_position >= self.file_access.end_position {
-                    self.file_access.exhausted = true;
+            if self.buffer.is_empty() || self.buffer_pos == self.buffer.len() {
+                if self.current_position >= self.file_access.end_position {
+                    self.exhausted = true;
                     return None;
                 }
 
-                self.file_access
-                    .file
-                    .seek(SeekFrom::Start(self.file_access.current_position))
-                    .unwrap();
-
                 let bytes_wanted = min(
-                    self.file_access.buffer_size * mem::size_of::<T>(),
-                    (self.file_access.end_position - self.file_access.current_position)
-                        as usize,
+                    Self::BUFFER_SIZE,
+                    (self.file_access.end_position - self.current_position) as usize,
                 );
-
-                let mut buffer: Vec<u8> = vec![0; bytes_wanted];
-                self.file_access.file.read_exact(&mut buffer).unwrap();
-                self.file_access.current_position =
-                    self.file_access.file.stream_position().unwrap();
-
                 let num_vals = bytes_wanted / mem::size_of::<T>();
-                self.file_access.buffer = slice_u8_to_vec(&buffer, num_vals);
-                self.file_access.buffer_pos = 0;
+                let mut buffer: Vec<T> = vec![T::from_usize(0); num_vals];
+                read_exact_at(
+                    &self.file_access.file,
+                    slice_int_to_slice_u8(&mut buffer),
+                    self.current_position,
+                )
+                .unwrap();
+
+                self.current_position += (num_vals * mem::size_of::<T>()) as u64;
+
+                self.buffer = buffer;
+                self.buffer_pos = 0;
             }
 
-            let val = self
-                .file_access
-                .buffer
-                .get(self.file_access.buffer_pos)
-                .copied();
+            let val = self.buffer.get(self.buffer_pos).copied();
 
-            self.file_access.buffer_pos += 1;
+            self.buffer_pos += 1;
             val
         }
+    }
+}
+
+// Position-independent reads for both Unix and Windows
+
+#[cfg(unix)]
+fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    use std::os::unix::fs::FileExt;
+
+    file.read_exact_at(buf, offset)
+}
+
+// Essentially the same as the Unix read_exact_at implementation, but using seek_read
+#[cfg(windows)]
+fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
+    use std::os::windows::fs::FileExt;
+
+    while !buf.is_empty() {
+        match file.seek_read(buf, offset) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf = &mut buf[n..];
+                offset += n as u64;
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    if !buf.is_empty() {
+        Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "failed to fill whole buffer",
+        ))
+    } else {
+        Ok(())
     }
 }

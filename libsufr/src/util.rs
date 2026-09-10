@@ -139,6 +139,22 @@ pub fn slice_u8_to_slice_int<T: Int>(buffer: &mut [u8], len: usize) -> &mut [T] 
 }
 
 // --------------------------------------------------
+/// Convert a (mutable) slice of T into a
+/// `&mut [u8]` (where `T` is the `Int` 32/64)
+///
+/// Args:
+/// * `buffer`: slice of `T` values
+pub fn slice_int_to_slice_u8<T: Int>(buffer: &mut [T]) -> &mut [u8] {
+    // TODO: rework - endianness-dependent
+    unsafe {
+        std::slice::from_raw_parts_mut(
+            buffer.as_mut_ptr() as *mut _,
+            std::mem::size_of_val(buffer),
+        )
+    }
+}
+
+// --------------------------------------------------
 /// Convert a `Vec<T>` (where `T` is the `Int` 32/64) into a
 /// slice of raw U8 for serializing to disk
 ///
