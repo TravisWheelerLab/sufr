@@ -115,36 +115,12 @@ pub fn read_text_length(filename: &str) -> Result<usize> {
 }
 
 // --------------------------------------------------
-/// Convert a slice of raw U8 read from disk into a
-/// `Vec<T>` (where `T` is the `Int` 32/64)
-///
-/// Args:
-/// * `buffer`: vector of raw `u8` values (from disk)
-/// * `len`: the number of `T` values in the resulting vector
-pub fn slice_u8_to_vec<T: Int>(buffer: &[u8], len: usize) -> Vec<T> {
-    // TODO: rework - unaligned access and endianness-dependent
-    unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const _, len).to_vec() }
-}
-
-// --------------------------------------------------
-/// Convert a (mutable) slice of raw U8 read from disk into a
-/// `&mut [T]` (where `T` is the `Int` 32/64)
-///
-/// Args:
-/// * `buffer`: slice of raw `u8` values (from disk)
-/// * `len`: the number of `T` values in the resulting slice
-pub fn slice_u8_to_slice_int<T: Int>(buffer: &mut [u8], len: usize) -> &mut [T] {
-    // TODO: rework - unaligned access and endianness-dependent
-    unsafe { std::slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut _, len) }
-}
-
-// --------------------------------------------------
 /// Convert a (mutable) slice of T into a
 /// `&mut [u8]` (where `T` is the `Int` 32/64)
 ///
 /// Args:
 /// * `buffer`: slice of `T` values
-pub fn slice_int_to_slice_u8<T: Int>(buffer: &mut [T]) -> &mut [u8] {
+pub(crate) fn slice_int_to_slice_u8<T: Int>(buffer: &mut [T]) -> &mut [u8] {
     // TODO: rework - endianness-dependent
     unsafe {
         std::slice::from_raw_parts_mut(
@@ -160,7 +136,7 @@ pub fn slice_int_to_slice_u8<T: Int>(buffer: &mut [T]) -> &mut [u8] {
 ///
 /// Args:
 /// * `vec`: a vector of `T` values
-pub fn vec_to_slice_u8<T: Int>(vec: &[T]) -> &[u8] {
+pub(crate) fn vec_to_slice_u8<T: Int>(vec: &[T]) -> &[u8] {
     // TODO: rework - endianness-dependent
     unsafe {
         slice::from_raw_parts(
@@ -174,8 +150,8 @@ pub fn vec_to_slice_u8<T: Int>(vec: &[T]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_lcp_full_offset, read_sequence_file, read_text_length, slice_u8_to_vec,
-        vec_to_slice_u8,
+        find_lcp_full_offset, read_sequence_file, read_text_length,
+        slice_int_to_slice_u8, vec_to_slice_u8,
     };
     use crate::types::{SeedMask, SuffixSortType};
     use anyhow::Result;
@@ -206,36 +182,42 @@ mod tests {
     }
 
     #[test]
-    fn test_slice_u8_to_vec() -> Result<()> {
-        let res: Vec<u32> = slice_u8_to_vec(&[0, 0, 0, 0], 1);
-        assert_eq!(res, &[0u32]);
+    fn test_slice_int_to_slice_u8() -> Result<()> {
+        let mut buf: Vec<u32> = vec![1];
+        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[0, 0, 0, 0]);
+        assert_eq!(buf, &[0u32]);
 
-        let res: Vec<u64> = slice_u8_to_vec(&[0, 0, 0, 0, 0, 0, 0, 0], 1);
-        assert_eq!(res, &[0u64]);
+        let mut buf: Vec<u64> = vec![1];
+        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(buf, &[0u64]);
 
-        let res: Vec<u32> = slice_u8_to_vec(&[1, 0, 0, 0], 1);
-        assert_eq!(res, &[1u32]);
+        let mut buf: Vec<u32> = vec![1];
+        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[1, 0, 0, 0]);
+        assert_eq!(buf, &[1u32]);
 
-        let res: Vec<u64> = slice_u8_to_vec(&[1, 0, 0, 0, 0, 0, 0, 0], 1);
-        assert_eq!(res, &[1u64]);
+        let mut buf: Vec<u64> = vec![1];
+        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(buf, &[1u64]);
 
-        let res: Vec<u32> = slice_u8_to_vec(&[255, 255, 255, 255], 1);
-        assert_eq!(res, &[u32::MAX]);
+        let mut buf: Vec<u32> = vec![1];
+        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[255, 255, 255, 255]);
+        assert_eq!(buf, &[u32::MAX]);
 
-        let res: Vec<u64> =
-            slice_u8_to_vec(&[255, 255, 255, 255, 255, 255, 255, 255], 1);
-        assert_eq!(res, &[u64::MAX]);
+        let mut buf: Vec<u64> = vec![1];
+        slice_int_to_slice_u8(&mut buf)
+            .copy_from_slice(&[255, 255, 255, 255, 255, 255, 255, 255]);
+        assert_eq!(buf, &[u64::MAX]);
 
-        let res: Vec<u32> = slice_u8_to_vec(&[0, 0, 0, 0, 255, 255, 255, 255], 2);
-        assert_eq!(res, &[0u32, u32::MAX]);
+        let mut buf: Vec<u32> = vec![1, 1];
+        slice_int_to_slice_u8(&mut buf)
+            .copy_from_slice(&[0, 0, 0, 0, 255, 255, 255, 255]);
+        assert_eq!(buf, &[0u32, u32::MAX]);
 
-        let res: Vec<u64> = slice_u8_to_vec(
-            &[
-                0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255,
-            ],
-            2,
-        );
-        assert_eq!(res, &[0u64, u64::MAX]);
+        let mut buf: Vec<u64> = vec![1, 1];
+        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[
+            0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255,
+        ]);
+        assert_eq!(buf, &[0u64, u64::MAX]);
 
         Ok(())
     }

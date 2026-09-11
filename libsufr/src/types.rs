@@ -278,10 +278,20 @@ pub struct SequenceFileData {
     pub sequence_names: Vec<String>,
 }
 
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for u8 {}
+    impl Sealed for u32 {}
+    impl Sealed for u64 {}
+}
+
 // --------------------------------------------------
 /// Trait to generically describe an "integer" of size `u8` (for text/bytes),
 /// `u32` for suffix/LCP arrays over a text with a length < 2^32,
 /// or `u64` for longer texts.
+///
+/// This trait is `Sealed` and cannot be implemented by downstream crates,
+/// due to guarantees and assumptions in sufr's `unsafe` code.
 pub trait Int:
     Debug
     + AddAssign
@@ -294,6 +304,7 @@ pub trait Int:
     + Hash
     + Send
     + Sync
+    + sealed::Sealed
 {
     /// Convert an `Int` to a `usize`
     fn to_usize(&self) -> usize;

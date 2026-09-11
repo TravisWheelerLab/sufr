@@ -14,7 +14,7 @@ use crate::{
         Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
         SENTINEL_CHARACTER,
     },
-    util::{find_lcp_full_offset, slice_u8_to_slice_int, vec_to_slice_u8},
+    util::{find_lcp_full_offset, slice_int_to_slice_u8, vec_to_slice_u8},
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -24,7 +24,7 @@ use std::{
     cell::RefCell,
     cmp::{max, min, Ordering},
     fs::{self, File, OpenOptions},
-    io::{BufWriter, Seek, SeekFrom, Write},
+    io::{BufWriter, Read, Seek, SeekFrom, Write},
     mem,
     ops::Range,
     path::PathBuf,
@@ -1164,11 +1164,14 @@ impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
     fn read(&self) -> Result<Cow<'_, [T]>> {
         match &self.path {
             Some(path) => {
-                let mut buffer = fs::read(path)?;
-                let count = buffer.len() / std::mem::size_of::<T>();
+                let mut file = File::open(path)?;
+                let size = file.metadata()?.len() as usize;
 
-                let mut data = Vec::with_capacity(self.buf.len() + count);
-                data.extend_from_slice(slice_u8_to_slice_int(&mut buffer, count));
+                let file_count = size / std::mem::size_of::<T>();
+                let mut data = Vec::with_capacity(file_count + self.buf.len());
+                data.resize(file_count, T::from_usize(0));
+                file.read_exact(slice_int_to_slice_u8(&mut data))?;
+
                 data.extend_from_slice(&self.buf);
                 Ok(Cow::Owned(data))
             }

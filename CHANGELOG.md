@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - (breaking) Simplify the `Int` trait definition and bounds, subsuming `FromUsize`
+- (breaking) Make `Int` unable to implement from other crates, due to guarantees required by sufr's `unsafe` code
 - (breaking) Change the partitioning strategy to be based on a prefix of each suffix,
   instead of using random sampling
 - Reduce some unnecessary internal allocations
@@ -32,3 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Remove `SufrBuilderArgs::random_seed` aka `sufr create -r,--random-seed`,
   which is not used for the prefix-based partitioning
+- Remove and make private the `unsafe` byte-reading utilities
+  `slice_u8_to_vec`, `usize_to_bytes`, `vec_to_slice_u8`.
+
+### Fixed
+
+- Disk I/O is updated to reduce intermediate allocations and remove unaligned memory reads/writes
+- Searches (count, extract, or locate) with a `max_query_len`/`--max-query-len` could create cache
+  files containing extraneous garbage memory; they no longer do so. The extra data was never read,
+  so existing cache files should still be readable/writable across versions.

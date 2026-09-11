@@ -11,7 +11,7 @@ use crate::{
         ListOptions, LocateOptions, LocatePosition, LocateResult, SearchOptions,
         SearchResult, SeedMask, SuffixSortType, SufrMetadata,
     },
-    util::slice_u8_to_vec,
+    util::{slice_int_to_slice_u8, vec_to_slice_u8},
 };
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
@@ -23,10 +23,8 @@ use std::{
     cmp::min,
     fs::{self, File},
     io::{self, Read, Seek, Write},
-    mem,
     ops::Range,
     path::{Path, PathBuf},
-    slice,
     time::Instant,
 };
 use thread_local::ThreadLocal;
@@ -187,10 +185,8 @@ impl<T: Int> SufrFile<T> {
         let num_sequences = T::from_usize(u64::from_le_bytes(buffer) as usize);
 
         // Sequence starts
-        let mut buffer = vec![0; num_sequences.to_usize() * mem::size_of::<T>()];
-        file.read_exact(&mut buffer)?;
-        let sequence_starts: Vec<T> =
-            slice_u8_to_vec(&buffer, num_sequences.to_usize());
+        let mut sequence_starts = vec![T::from_usize(0); num_sequences.to_usize()];
+        file.read_exact(slice_int_to_slice_u8(&mut sequence_starts))?;
 
         // Seed mask len
         let mut buffer = [0; 8];
@@ -574,27 +570,16 @@ impl<T: Int> SufrFile<T> {
                 file.read_exact(&mut buffer)?;
                 let suffix_array_len = u64::from_le_bytes(buffer) as usize;
 
-                self.suffix_array_mem = if suffix_array_len == 0 {
-                    vec![]
-                } else {
-                    let mut buffer = vec![0; suffix_array_len * mem::size_of::<T>()];
-                    file.read_exact(&mut buffer)?;
-                    slice_u8_to_vec(&buffer, suffix_array_len)
+                self.suffix_array_mem = {
+                    let mut buffer = vec![T::from_usize(0); suffix_array_len];
+                    file.read_exact(slice_int_to_slice_u8(&mut buffer))?;
+                    buffer
                 };
 
-                let mut buffer = vec![];
-                file.read_to_end(&mut buffer)?;
-                self.suffix_array_rank_mem = if buffer.is_empty() {
-                    vec![]
-                } else {
-                    // TODO: rework - unaligned access and endianness-dependent
-                    unsafe {
-                        std::slice::from_raw_parts(
-                            buffer.as_ptr() as *const _,
-                            suffix_array_len,
-                        )
-                        .to_vec()
-                    }
+                self.suffix_array_rank_mem = {
+                    let mut buffer = vec![T::from_usize(0); suffix_array_len];
+                    file.read_exact(slice_int_to_slice_u8(&mut buffer))?;
+                    buffer
                 };
 
                 info!(
@@ -622,27 +607,9 @@ impl<T: Int> SufrFile<T> {
                     let now = Instant::now();
                     let mut file = File::create(&cache_path)
                         .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
-                    let _ = file.write(&self.suffix_array_mem.len().to_le_bytes())?;
-                    // TODO: rework - endianness-dependent
-                    let bytes = unsafe {
-                        slice::from_raw_parts(
-                            self.suffix_array_mem.as_ptr() as *const u8,
-                            self.suffix_array_mem.len() * std::mem::size_of::<T>(),
-                        )
-                    };
-                    file.write_all(bytes)?;
-
-                    if !self.suffix_array_rank_mem.is_empty() {
-                        // TODO: rework - endianness-dependent
-                        let bytes = unsafe {
-                            slice::from_raw_parts(
-                                self.suffix_array_rank_mem.as_ptr() as *const u8,
-                                self.suffix_array_rank_mem.len()
-                                    * std::mem::size_of::<usize>(),
-                            )
-                        };
-                        file.write_all(bytes)?;
-                    }
+                    file.write_all(&self.suffix_array_mem.len().to_le_bytes())?;
+                    file.write_all(vec_to_slice_u8(&self.suffix_array_mem))?;
+                    file.write_all(vec_to_slice_u8(&self.suffix_array_rank_mem))?;
 
                     info!(
                         "Wrote to cache {} in {:?}",
