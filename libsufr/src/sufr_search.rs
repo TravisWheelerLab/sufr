@@ -91,7 +91,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
     /// * `query`: a string to search for
     /// * `find_suffixes`: whether or not to return the suffixes locations
     pub fn search(
-        &mut self,
+        &self,
         query_num: usize,
         query: &str,
         find_suffixes: bool,
@@ -159,7 +159,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
 
     // --------------------------------------------------
     fn suffix_search_first(
-        &mut self,
+        &self,
         qry: &[u8],
         low: usize,
         high: usize,
@@ -195,7 +195,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
 
     // --------------------------------------------------
     fn suffix_search_last(
-        &mut self,
+        &self,
         qry: &[u8],
         low: usize,
         high: usize,
@@ -241,7 +241,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
     /// * `query`: string to search for
     /// * `suffix_pos`: suffix position
     /// * `skip`: number of places to skip
-    fn compare(&mut self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
+    fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
         let (lcp, max_query_len) = match &self.sort_type {
             SuffixSortType::MaxQueryLen(mql) => {
                 // The "MaxQueryLen(mql)" refers to how the suffix array
@@ -339,7 +339,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
     }
 
     // --------------------------------------------------
-    fn get_text(&mut self, pos: usize) -> Option<u8> {
+    fn get_text(&self, pos: usize) -> Option<u8> {
         if self.text.is_empty() {
             self.text_file.get(pos)
         } else {
@@ -348,7 +348,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
     }
 
     // --------------------------------------------------
-    pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
+    pub fn get_text_range(&self, pos: Range<usize>) -> Result<Vec<u8>> {
         // this is too expensive, copies loooooong stretches of text into vec
         if self.text.is_empty() {
             self.text_file.get_range(pos.clone())
@@ -358,7 +358,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
     }
 
     // --------------------------------------------------
-    fn get_suffix(&mut self, pos: usize) -> Option<T> {
+    fn get_suffix(&self, pos: usize) -> Option<T> {
         if self.suffix_array_mem.is_empty() {
             self.suffix_array_file.get(pos)
         } else {

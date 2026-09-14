@@ -19,7 +19,6 @@ use home::home_dir;
 use log::info;
 use rayon::prelude::*;
 use std::{
-    cell::RefCell,
     cmp::min,
     fs::{self, File},
     io::{self, Read, Seek, Write},
@@ -27,7 +26,6 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
-use thread_local::ThreadLocal;
 
 // --------------------------------------------------
 /// Struct used to read a serialized _.sufr_ file representing
@@ -742,33 +740,28 @@ impl<T: Int> SufrFile<T> {
         }
 
         let now = Instant::now();
-        let new_search = || -> Result<RefCell<SufrSearch<T>>> {
-            let suffix_array_file: FileAccess<T> = FileAccess::new(
-                &self.filename,
-                self.suffix_array_pos as u64,
-                self.len_suffixes.to_usize(),
-            )?;
-            let text_file: FileAccess<u8> = FileAccess::new(
-                &self.filename,
-                self.text_pos as u64,
-                self.text_len.to_usize(),
-            )?;
-            let search_args = SufrSearchArgs {
-                text: &self.text,
-                text_len: self.text_len.to_usize(),
-                text_file,
-                file: suffix_array_file,
-                suffix_array: &self.suffix_array_mem,
-                rank: &self.suffix_array_rank_mem,
-                len_suffixes: self.len_suffixes.to_usize(),
-                sort_type: &self.sort_type,
-                max_query_len: args.max_query_len,
-            };
-            Ok(RefCell::new(SufrSearch::new(search_args)))
+        let suffix_array_file: FileAccess<T> = FileAccess::new(
+            &self.filename,
+            self.suffix_array_pos as u64,
+            self.len_suffixes.to_usize(),
+        )?;
+        let text_file: FileAccess<u8> = FileAccess::new(
+            &self.filename,
+            self.text_pos as u64,
+            self.text_len.to_usize(),
+        )?;
+        let search_args = SufrSearchArgs {
+            text: &self.text,
+            text_len: self.text_len.to_usize(),
+            text_file,
+            file: suffix_array_file,
+            suffix_array: &self.suffix_array_mem,
+            rank: &self.suffix_array_rank_mem,
+            len_suffixes: self.len_suffixes.to_usize(),
+            sort_type: &self.sort_type,
+            max_query_len: args.max_query_len,
         };
-
-        let thread_local_search: ThreadLocal<RefCell<SufrSearch<T>>> =
-            ThreadLocal::new();
+        let searcher = SufrSearch::new(search_args);
 
         let mut res: Vec<_> = args
             .queries
@@ -776,9 +769,7 @@ impl<T: Int> SufrFile<T> {
             .into_par_iter()
             .enumerate()
             .flat_map(|(query_num, query)| -> Result<SearchResult<T>> {
-                let mut search =
-                    thread_local_search.get_or_try(new_search)?.borrow_mut();
-                search.search(query_num, &query, args.find_suffixes)
+                searcher.search(query_num, &query, args.find_suffixes)
             })
             .collect();
         res.sort_by_key(|r| r.query_num);
