@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   possible to use memory instead of disk for `SufrBuilder::new`.
 - Implement vectorized LCP calculation (AVX2 on x86-64), significantly
   improving build time on some inputs
+- Implement an LCP cache, significantly improving build time on some inputs with very long
+  duplications or tandem repeats
 
 ### Changed
 

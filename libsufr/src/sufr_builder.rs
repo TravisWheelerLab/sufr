@@ -9,6 +9,7 @@
 //!
 
 use crate::{
+    lcp::{lcp, LcpCache},
     types::{
         Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
         SENTINEL_CHARACTER,
@@ -20,6 +21,7 @@ use log::info;
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
+    cell::RefCell,
     cmp::{max, min, Ordering},
     fs::{self, File, OpenOptions},
     io::{BufWriter, Seek, SeekFrom, Write},
@@ -30,6 +32,7 @@ use std::{
     time::Instant,
 };
 use tempfile::NamedTempFile;
+use thread_local::ThreadLocal;
 
 // --------------------------------------------------
 /// A struct for partitioning, sorting, and writing suffixes to disk
@@ -255,8 +258,16 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// * `skip`: skip over the this many characters at the beginning.
     ///   Because of the incremental way the LCPs are calculated, we may know
     ///   that two suffixes share the `skip` number in common already.
+    /// * `lcp_cache`: optional LcpCache to store/retrieve from, for optimization
     #[inline(always)]
-    fn find_lcp(&self, start1: usize, start2: usize, len: T, skip: usize) -> T {
+    fn find_lcp(
+        &self,
+        start1: usize,
+        start2: usize,
+        len: T,
+        skip: usize,
+        lcp_cache: Option<&mut LcpCache>,
+    ) -> T {
         // TODO: Could we use traits for SortType, parameterize the builder
         // on initialization and avoid conditionals here?
         match &self.sort_type {
@@ -307,12 +318,18 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                         let start2 = start2 + skip;
                         let end1 = min(start1 + len, text_len);
                         let end2 = min(start2 + len, text_len);
-                        T::from_usize(
-                            skip + crate::lcp::lcp(
-                                &self.text[start1..end1],
-                                &self.text[start2..end2],
-                            ),
-                        )
+                        let lcp = lcp(
+                            &self.text[start1..end1],
+                            &self.text[start2..end2],
+                            lcp_cache.as_deref().map(|c| (c, start1, start2)),
+                        );
+                        // IMPORTANT: Only cache if lcp < len (uncapped, "true" LCP)
+                        if skip + lcp >= LcpCache::MIN_CACHEABLE && lcp < len {
+                            if let Some(c) = lcp_cache {
+                                c.set(start1 - skip, start2 - skip, skip + lcp);
+                            }
+                        }
+                        T::from_usize(skip + lcp)
                     }
                 }
             }
@@ -346,8 +363,14 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             };
 
             let len_lcp = find_lcp_full_offset(
-                self.find_lcp(start1.to_usize(), start2.to_usize(), max_query_len, 0)
-                    .to_usize(),
+                self.find_lcp(
+                    start1.to_usize(),
+                    start2.to_usize(),
+                    max_query_len,
+                    0,
+                    None,
+                )
+                .to_usize(),
                 &self.sort_type,
             );
 
@@ -572,6 +595,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         let mut partitions: Vec<Option<Partition<B>>> =
             (0..num_partitions).map(|_| None).collect();
 
+        let lcp_cache: ThreadLocal<RefCell<LcpCache>> = ThreadLocal::new();
         partitions
             .par_iter_mut()
             .zip(partition_inputs)
@@ -595,6 +619,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                             len,
                             &mut lcp,
                             &mut lcp_w,
+                            &lcp_cache,
                         );
 
                         // Write to disk
@@ -641,6 +666,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         n: usize,
         lcp: &mut [T],
         lcp_w: &mut [T],
+        lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
     ) {
         if n == 1 {
             lcp[0] = T::default();
@@ -653,16 +679,23 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             let (lcp_l, lcp_r) = lcp.split_at_mut(mid);
 
             if mid < NESTED_PAR_GRAIN_SIZE {
-                self.merge_sort(yl, xl, mid, lcpw_l, lcp_l);
-                self.merge_sort(yr, xr, n - mid, lcpw_r, lcp_r);
+                self.merge_sort(yl, xl, mid, lcpw_l, lcp_l, lcp_cache);
+                self.merge_sort(yr, xr, n - mid, lcpw_r, lcp_r, lcp_cache);
             } else {
                 rayon::join(
-                    || self.merge_sort(yl, xl, mid, lcpw_l, lcp_l),
-                    || self.merge_sort(yr, xr, n - mid, lcpw_r, lcp_r),
+                    || self.merge_sort(yl, xl, mid, lcpw_l, lcp_l, lcp_cache),
+                    || self.merge_sort(yr, xr, n - mid, lcpw_r, lcp_r, lcp_cache),
                 );
             }
 
-            self.merge(x, mid, lcp_w, y, lcp);
+            self.merge(
+                x,
+                mid,
+                lcp_w,
+                y,
+                lcp,
+                &mut lcp_cache.get_or_default().borrow_mut(),
+            );
         }
     }
 
@@ -674,6 +707,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         lcp_w: &mut [T],
         target_sa: &mut [T],
         target_lcp: &mut [T],
+        lcp_cache: &mut LcpCache,
     ) {
         let (mut x, mut y) = suffix_array.split_at_mut(mid);
         let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
@@ -725,6 +759,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                             y[idx_y].to_usize(),
                             context - m,
                             m.to_usize(), // skip
+                            Some(lcp_cache),
                         );
                         let full_lcp =
                             find_lcp_full_offset(lcp.to_usize(), &self.sort_type);
@@ -891,6 +926,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                         self.partitions[i].first_suffix,
                         self.text_len,
                         0, // start at beginning
+                        None,
                     );
                 }
             }
@@ -1365,22 +1401,22 @@ mod test {
         // 0: TTTAGC
         // 1:  TTAGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 1, 6, 0), 2);
+        assert_eq!(sufr.find_lcp(0, 1, 6, 0, None), 2);
 
         // 0: TTTAGC
         // 2:   TAGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 2, 6, 0), 1);
+        assert_eq!(sufr.find_lcp(0, 2, 6, 0, None), 1);
 
         // 0: TTTAGC
         // 1:  TTAGC
         // 1: max query len = 1
-        assert_eq!(sufr.find_lcp(0, 1, 1, 0), 1);
+        assert_eq!(sufr.find_lcp(0, 1, 1, 0, None), 1);
 
         // 0: TTTAGC
         // 3:    AGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 3, 6, 0), 0);
+        assert_eq!(sufr.find_lcp(0, 3, 6, 0, None), 0);
 
         // TODO: Add a test with skip
 
@@ -1411,15 +1447,15 @@ mod test {
 
         // 0: TTTTTA
         // 1:  TTTTA
-        assert_eq!(sufr.find_lcp(0, 1, 3, 0), 3);
+        assert_eq!(sufr.find_lcp(0, 1, 3, 0, None), 3);
 
         // 0: TTTTTA
         // 2:   TTTA
-        assert_eq!(sufr.find_lcp(0, 2, 3, 0), 2);
+        assert_eq!(sufr.find_lcp(0, 2, 3, 0, None), 2);
 
         // 0: TTTTTA
         // 5:      A
-        assert_eq!(sufr.find_lcp(0, 5, 3, 0), 0);
+        assert_eq!(sufr.find_lcp(0, 5, 3, 0, None), 0);
 
         fs::remove_file(outfile)?;
 
