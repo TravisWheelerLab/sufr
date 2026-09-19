@@ -119,7 +119,7 @@ unsafe fn lcp_avx2(
             }
         }
         i += UNROLL * 32;
-        if i == LcpCache::PROBE_AT {
+        if i % LcpCache::PROBE_AT == 0 {
             if let Some((lcp_cache, ia, ib)) = cache {
                 if let Some(lcp) = lcp_cache.get(ia + i, ib + i) {
                     return (i + lcp).min(n);
