@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Subsample the suffix array for a query-time max query length without an
   LCP array by streaming the suffix array in blocks of four million
   elements and comparing each suffix with its predecessor in the text
+- Add `sufr create --sort-strategy radix-mem|radix-disk` and
+  `SuffixArrayBuilder::with_sort_strategy` for seed-mask and max-query-len
+  modes. Each suffix's key (the bytes at the mask's care positions, or the
+  first `max_query_len` bytes) is packed into a `u64` and the positions are
+  sorted with an LSD radix sort; `radix-disk` buckets positions by the top
+  16 key bits into the builder's scratch buffers (disk, or memory with
+  `with_memory_scratch`) and sorts one partition at a time. Output is
+  identical to `merge`, which remains the default.
 
 ### Changed
 

@@ -4,7 +4,7 @@ use format_num::NumberFormat;
 use libsufr::{
     types::{
         CountOptions, ExtractOptions, ListOptions, LocateOptions, SeedMask,
-        SuffixSortType,
+        SortStrategy, SuffixSortType,
     },
     SuffixArray, SuffixArrayBuilder,
 };
@@ -118,6 +118,10 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "MASK")]
     pub seed_mask: Option<String>,
 
+    /// Sort strategy (radix strategies need a seed mask or max query length)
+    #[arg(long, value_name = "STRATEGY", default_value = "merge")]
+    pub sort_strategy: SortStrategyArg,
+
     /// Also write the LCP array (needed by "list --show-lcp"; speeds up
     /// query-time max query lengths shorter than the build-time value)
     #[arg(long)]
@@ -126,6 +130,29 @@ pub struct CreateArgs {
     /// Directory for temporary files (default: system temporary directory)
     #[arg(short('T'), long, value_name = "DIR")]
     pub tmp_dir: Option<PathBuf>,
+}
+
+/// CLI name for a `libsufr::types::SortStrategy`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SortStrategyArg {
+    /// Partition on prefixes, then merge sort with LCP (default)
+    Merge,
+
+    /// Radix sort of packed keys, whole text in memory (ignores --num-partitions)
+    RadixMem,
+
+    /// Radix sort of packed keys, one partition at a time
+    RadixDisk,
+}
+
+impl From<SortStrategyArg> for SortStrategy {
+    fn from(val: SortStrategyArg) -> Self {
+        match val {
+            SortStrategyArg::Merge => SortStrategy::Merge,
+            SortStrategyArg::RadixMem => SortStrategy::RadixInMemory,
+            SortStrategyArg::RadixDisk => SortStrategy::RadixPartitioned,
+        }
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -345,7 +372,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         (None, None) => (),
     }
 
-    builder = builder.with_write_lcp(args.write_lcp);
+    builder = builder
+        .with_sort_strategy(args.sort_strategy.into())
+        .with_write_lcp(args.write_lcp);
     if let Some(tmp_dir) = &args.tmp_dir {
         builder = builder.with_temp_dir(tmp_dir);
     }

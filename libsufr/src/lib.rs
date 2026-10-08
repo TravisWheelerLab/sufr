@@ -22,6 +22,9 @@
 
 mod file_access;
 mod lcp;
+mod radix;
+#[cfg(test)]
+mod radix_tests;
 #[cfg(test)]
 mod subsample_tests;
 mod suffix_array;

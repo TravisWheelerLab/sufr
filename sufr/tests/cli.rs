@@ -1,8 +1,8 @@
 use anyhow::Result;
 use assert_cmd::Command;
 use libsufr::{
-    SufrFile,
     types::{SeedMask, OUTFILE_VERSION},
+    SufrFile,
 };
 use pretty_assertions::assert_eq;
 use regex::Regex;
