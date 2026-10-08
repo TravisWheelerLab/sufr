@@ -31,6 +31,26 @@ pub enum SuffixSortType {
 }
 
 // --------------------------------------------------
+/// How suffixes are sorted during construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortStrategy {
+    /// Prefix partitioning followed by merge sort with LCP
+    /// (the original algorithm; works for every sort type).
+    #[default]
+    Merge,
+
+    /// Pack each suffix's seed-mask (or max-query-length) key into a `u64`
+    /// and radix-sort all positions in memory. Requires a seed mask or a
+    /// max query length whose key fits in 64 bits.
+    RadixInMemory,
+
+    /// Like `RadixInMemory` but first buckets positions on disk by the
+    /// high bits of their key so that only one partition is sorted in
+    /// memory at a time.
+    RadixPartitioned,
+}
+
+// --------------------------------------------------
 /// A struct describing a seed mask
 #[derive(Debug, PartialEq, Clone)]
 pub struct SeedMask {
@@ -574,6 +594,11 @@ pub struct SufrBuilderArgs {
     /// An optional seed mask of 1/0 for care/don't-care positions,
     /// cf. `SeedMask`.
     pub seed_mask: Option<String>,
+
+    /// How to sort the suffixes. `SortStrategy::Merge` works for every
+    /// input; the radix strategies need a seed mask or a max query length
+    /// whose packed key fits in 64 bits.
+    pub sort_strategy: SortStrategy,
 
     /// Whether to write the LCP array. Searching does not use it;
     /// listing LCP values does, and query-time max query lengths shorter

@@ -4,8 +4,8 @@ use format_num::NumberFormat;
 use libsufr::{
     suffix_array::SuffixArray,
     types::{
-        CountOptions, ExtractOptions, ListOptions, LocateOptions, SuffixSortType,
-        SufrBuilderArgs,
+        CountOptions, ExtractOptions, ListOptions, LocateOptions, SortStrategy,
+        SuffixSortType, SufrBuilderArgs,
     },
     util::read_sequence_file,
 };
@@ -119,10 +119,37 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "MASK")]
     pub seed_mask: Option<String>,
 
+    /// Sort strategy (radix strategies need a seed mask or max query length)
+    #[arg(long, value_name = "STRATEGY", default_value = "merge")]
+    pub sort_strategy: SortStrategyArg,
+
     /// Also write the LCP array (needed by "list --show-lcp"; speeds up
     /// query-time max query lengths shorter than the build-time value)
     #[arg(long)]
     pub write_lcp: bool,
+}
+
+/// CLI name for a `libsufr::types::SortStrategy`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SortStrategyArg {
+    /// Partition on prefixes, then merge sort with LCP (default)
+    Merge,
+
+    /// Radix sort of packed keys, whole text in memory
+    RadixMem,
+
+    /// Radix sort of packed keys, one disk partition at a time
+    RadixDisk,
+}
+
+impl From<SortStrategyArg> for SortStrategy {
+    fn from(val: SortStrategyArg) -> Self {
+        match val {
+            SortStrategyArg::Merge => SortStrategy::Merge,
+            SortStrategyArg::RadixMem => SortStrategy::RadixInMemory,
+            SortStrategyArg::RadixDisk => SortStrategy::RadixPartitioned,
+        }
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -352,6 +379,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sequence_names: seq_data.sequence_names,
         num_partitions: args.num_partitions,
         seed_mask: args.seed_mask.clone(),
+        sort_strategy: args.sort_strategy.into(),
         write_lcp: args.write_lcp,
     };
 

@@ -95,7 +95,7 @@ impl SuffixArray {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{
-    ///     types::SufrBuilderArgs,
+    ///     types::{SortStrategy, SufrBuilderArgs},
     ///     suffix_array::SuffixArray,
     ///     util::read_sequence_file,
     /// };
@@ -117,6 +117,7 @@ impl SuffixArray {
     ///         sequence_names: seq_data.sequence_names,
     ///         num_partitions: 16,
     ///         seed_mask: None,
+    ///         sort_strategy: SortStrategy::Merge,
     ///         write_lcp: true,
     ///     };
     ///
@@ -425,7 +426,7 @@ impl SuffixArray {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{
-    ///     types::SufrBuilderArgs,
+    ///     types::{SortStrategy, SufrBuilderArgs},
     ///     suffix_array::SuffixArray,
     ///     util::read_sequence_file,
     /// };
@@ -447,6 +448,7 @@ impl SuffixArray {
     ///         sequence_names: seq_data.sequence_names,
     ///         num_partitions: 16,
     ///         seed_mask: None,
+    ///         sort_strategy: SortStrategy::Merge,
     ///         write_lcp: true,
     ///     };
     ///

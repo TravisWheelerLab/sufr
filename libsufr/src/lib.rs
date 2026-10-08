@@ -23,6 +23,9 @@
 
 mod file_access;
 mod lcp;
+mod radix;
+#[cfg(test)]
+mod radix_tests;
 #[cfg(test)]
 mod subsample_tests;
 pub mod suffix_array;
@@ -38,7 +41,7 @@ mod tests {
     use super::{
         sufr_builder::SufrBuilder,
         sufr_file::SufrFile,
-        types::{SufrBuilderArgs, OUTFILE_VERSION},
+        types::{SortStrategy, SufrBuilderArgs, OUTFILE_VERSION},
         util::read_sequence_file,
     };
     use anyhow::Result;
@@ -64,6 +67,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 2,
             seed_mask: None,
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let res = SufrBuilder::<u32>::new(args);
@@ -113,6 +117,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 2,
             seed_mask: None,
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
 
@@ -161,6 +166,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 2,
             seed_mask: None,
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let res = SufrBuilder::<u32>::new(builder_args);
@@ -240,6 +246,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 1,
             seed_mask: Some("101".to_string()),
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
 
@@ -285,6 +292,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 1,
             seed_mask: Some("11011".to_string()),
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
 
@@ -343,6 +351,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 1,
             seed_mask: Some("11000111".to_string()),
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
 

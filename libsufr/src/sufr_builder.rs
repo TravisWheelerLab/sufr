@@ -11,9 +11,10 @@
 use crate::{
     file_access::write_at,
     lcp::{lcp, LcpCache},
+    radix::{lsd_radix_sort, Item, KeyEncoder},
     types::{
-        Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
-        SENTINEL_CHARACTER,
+        Int, SeedMask, SortStrategy, SuffixSortType, SufrBuilderArgs,
+        OUTFILE_VERSION, SENTINEL_CHARACTER,
     },
     util::{find_lcp_full_offset, slice_int_to_slice_u8, vec_to_slice_u8},
 };
@@ -25,7 +26,7 @@ use std::{
     cell::RefCell,
     cmp::{max, min, Ordering},
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{BufWriter, Read, Write},
     mem,
     ops::Range,
     path::PathBuf,
@@ -146,7 +147,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// use std::{fs, path::Path};
     /// use libsufr::{
     ///     sufr_builder::SufrBuilder,
-    ///     types::SufrBuilderArgs,
+    ///     types::{SortStrategy, SufrBuilderArgs},
     ///     util::read_sequence_file,
     /// };
     ///
@@ -168,6 +169,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     ///         sequence_names: seq_data.sequence_names,
     ///         num_partitions: 1024,
     ///         seed_mask: None,
+    ///         sort_strategy: SortStrategy::Merge,
     ///         write_lcp: true,
     ///     };
     ///
@@ -256,9 +258,351 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             path: args.path.unwrap_or("out.sufr".to_string()),
             write_lcp: args.write_lcp,
         };
-        sa.sort(args.num_partitions, occupancy)?;
-        sa.write()?;
+        match args.sort_strategy {
+            SortStrategy::Merge => {
+                sa.sort(args.num_partitions, occupancy)?;
+                sa.write()?;
+            }
+            SortStrategy::RadixInMemory => sa.sort_radix_in_memory()?,
+            SortStrategy::RadixPartitioned => {
+                sa.sort_radix_partitioned(args.num_partitions)?
+            }
+        }
         Ok(sa)
+    }
+
+    // --------------------------------------------------
+    /// Whether the suffix starting with byte `val` is indexed
+    fn is_suffix_start(&self, val: u8) -> bool {
+        val == SENTINEL_CHARACTER
+            || !self.is_dna
+            || (b"ACGT".contains(&val) || self.allow_ambiguity)
+    }
+
+    // --------------------------------------------------
+    /// The offsets that make up a suffix's packed radix key: the care
+    /// positions of the seed mask, or `0..max_query_len`.
+    fn radix_key_encoder(&self) -> Result<KeyEncoder> {
+        let positions: Vec<usize> = match &self.sort_type {
+            SuffixSortType::Mask(seed_mask) => seed_mask.positions.clone(),
+            SuffixSortType::MaxQueryLen(0) => {
+                bail!("Radix sort requires a seed mask or a max query length")
+            }
+            SuffixSortType::MaxQueryLen(max_query_len) => {
+                if !self.n_ranges.is_empty() {
+                    bail!(
+                        "Radix sort does not support long runs of Ns with \
+                         ambiguity allowed in max-query-len mode"
+                    );
+                }
+                (0..*max_query_len).collect()
+            }
+        };
+        KeyEncoder::new(&self.text, &positions)
+    }
+
+    // --------------------------------------------------
+    /// All indexed suffix positions in descending order. The radix sort is
+    /// stable, so this input order is what breaks ties between equal keys:
+    /// the shorter suffix (larger position) comes first, as in `merge`.
+    fn suffix_positions_descending(&self) -> Vec<T> {
+        let chunk_len = 1 << 22;
+        let mut chunks: Vec<Vec<T>> = self
+            .text
+            .par_chunks(chunk_len)
+            .enumerate()
+            .map(|(chunk_num, chunk)| {
+                let base = chunk_num * chunk_len;
+                chunk
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .filter(|&(_, &val)| self.is_suffix_start(val))
+                    .map(|(i, _)| T::from_usize(base + i))
+                    .collect()
+            })
+            .collect();
+        chunks.reverse();
+        chunks.concat()
+    }
+
+    // --------------------------------------------------
+    /// Write sorted items into the output as the suffix-array elements
+    /// starting at `offset`, plus their LCPs when requested. `prev` is the
+    /// last item of the preceding partition, for the LCP at the boundary.
+    fn emit_radix_partition(
+        &self,
+        out: &Output,
+        encoder: &KeyEncoder,
+        items: &[Item<T>],
+        offset: usize,
+        prev: Option<Item<T>>,
+    ) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let int_size = mem::size_of::<T>();
+
+        let now = Instant::now();
+        let sa: Vec<T> = items.par_iter().map(|item| item.pos).collect();
+        write_all_at(
+            &out.file,
+            vec_to_slice_u8(&sa),
+            (out.sa_pos + offset * int_size) as u64,
+        )?;
+        drop(sa);
+        info!(
+            "Wrote {} suffixes at offset {offset} in {:?}",
+            items.len(),
+            now.elapsed()
+        );
+
+        if self.write_lcp {
+            let now = Instant::now();
+            let lcp: Vec<T> = (0..items.len())
+                .into_par_iter()
+                .map(|i| {
+                    let b = &items[i];
+                    let a = if i > 0 {
+                        &items[i - 1]
+                    } else {
+                        match &prev {
+                            Some(prev) => prev,
+                            None => return T::default(),
+                        }
+                    };
+                    T::from_usize(encoder.lcp(
+                        a.key,
+                        a.pos.to_usize(),
+                        b.key,
+                        b.pos.to_usize(),
+                    ))
+                })
+                .collect();
+            write_all_at(
+                &out.file,
+                vec_to_slice_u8(&lcp),
+                (out.lcp_pos + offset * int_size) as u64,
+            )?;
+            info!(
+                "Computed and wrote {} LCPs in {:?}",
+                lcp.len(),
+                now.elapsed()
+            );
+        }
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    /// Sort every suffix in memory by packed key with an LSD radix sort
+    /// and write the output.
+    fn sort_radix_in_memory(&mut self) -> Result<()> {
+        let total_time = Instant::now();
+        let encoder = self.radix_key_encoder()?;
+        info!(
+            "Radix keys: {} symbols x {} bits = {} bits",
+            encoder.positions.len(),
+            encoder.bits,
+            encoder.total_bits
+        );
+
+        let now = Instant::now();
+        let positions = self.suffix_positions_descending();
+        let num_suffixes = positions.len();
+        let mut items: Vec<Item<T>> = positions
+            .into_par_iter()
+            .map(|pos| Item {
+                key: encoder.key(&self.text, pos.to_usize()),
+                pos,
+            })
+            .collect();
+        info!("Computed {num_suffixes} keys in {:?}", now.elapsed());
+
+        let now = Instant::now();
+        lsd_radix_sort(&mut items, encoder.total_bits);
+        info!("Radix sorted {num_suffixes} suffixes in {:?}", now.elapsed());
+
+        let out = self.open_output(num_suffixes)?;
+        self.emit_radix_partition(&out, &encoder, &items, 0, None)?;
+        drop(items);
+        self.finish_output(&out)?;
+        self.num_suffixes = T::from_usize(num_suffixes);
+        info!(
+            "Sorted and wrote {num_suffixes} suffixes (in-memory radix) in {:?}",
+            total_time.elapsed()
+        );
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    /// Bucket suffix positions on disk by the high bits of their packed
+    /// key, grouping buckets into roughly `num_partitions` partitions of
+    /// similar size, then radix-sort one partition at a time in memory.
+    fn sort_radix_partitioned(&mut self, num_partitions: usize) -> Result<()> {
+        let total_time = Instant::now();
+        let encoder = self.radix_key_encoder()?;
+        let num_partitions = num_partitions.max(1);
+        let digit_bits = encoder.total_bits.min(16);
+        let shift = encoder.total_bits - digit_bits;
+        let num_buckets = 1usize << digit_bits;
+        info!(
+            "Radix keys: {} symbols x {} bits = {} bits; bucketing on top {digit_bits} bits",
+            encoder.positions.len(),
+            encoder.bits,
+            encoder.total_bits
+        );
+
+        // Pass 1: histogram of the top digit over all indexed suffixes
+        let now = Instant::now();
+        let chunk_len = 1 << 22;
+        let histogram: Vec<usize> = self
+            .text
+            .par_chunks(chunk_len)
+            .enumerate()
+            .map(|(chunk_num, chunk)| {
+                let base = chunk_num * chunk_len;
+                let mut hist = vec![0usize; num_buckets];
+                for (i, &val) in chunk.iter().enumerate() {
+                    if self.is_suffix_start(val) {
+                        let key = encoder.key(&self.text, base + i);
+                        hist[(key >> shift) as usize] += 1;
+                    }
+                }
+                hist
+            })
+            .reduce(
+                || vec![0usize; num_buckets],
+                |mut a, b| {
+                    for (x, y) in a.iter_mut().zip(b) {
+                        *x += y;
+                    }
+                    a
+                },
+            );
+        let num_suffixes: usize = histogram.iter().sum();
+        info!(
+            "Bucket histogram of {num_suffixes} suffixes in {:?}",
+            now.elapsed()
+        );
+
+        // Group consecutive buckets into partitions of about equal size
+        let target = num_suffixes.div_ceil(num_partitions).max(1);
+        let mut bucket_to_partition = vec![0usize; num_buckets];
+        let mut partition_num = 0;
+        let mut running = 0;
+        for (bucket, &count) in histogram.iter().enumerate() {
+            bucket_to_partition[bucket] = partition_num;
+            running += count;
+            if running >= target && partition_num + 1 < num_partitions {
+                partition_num += 1;
+                running = 0;
+            }
+        }
+        let num_partitions = partition_num + 1;
+
+        // Pass 2: scatter positions to one file per partition. Chunks are
+        // processed from the end of the text and positions within a chunk
+        // are emitted in descending order so each file is in descending
+        // position order (the tie rule for equal keys).
+        let now = Instant::now();
+        let mut files: Vec<(PathBuf, BufWriter<File>)> = Vec::new();
+        for _ in 0..num_partitions {
+            let (file, path) = NamedTempFile::new()?.keep()?;
+            files.push((path, BufWriter::new(file)));
+        }
+        let mut counts = vec![0usize; num_partitions];
+        let text_len = self.text.len();
+        let big_chunk = 1 << 26;
+        let sub_chunk = 1 << 20;
+        let mut end = text_len;
+        while end > 0 {
+            let start = end.saturating_sub(big_chunk);
+            let chunk = &self.text[start..end];
+            let scattered: Vec<Vec<Vec<T>>> = chunk
+                .par_chunks(sub_chunk)
+                .enumerate()
+                .map(|(sub_num, sub)| {
+                    let base = start + sub_num * sub_chunk;
+                    let mut out: Vec<Vec<T>> = vec![vec![]; num_partitions];
+                    for (i, &val) in sub.iter().enumerate().rev() {
+                        if self.is_suffix_start(val) {
+                            let pos = base + i;
+                            let key = encoder.key(&self.text, pos);
+                            let partition =
+                                bucket_to_partition[(key >> shift) as usize];
+                            out[partition].push(T::from_usize(pos));
+                        }
+                    }
+                    out
+                })
+                .collect();
+            for sub in scattered.iter().rev() {
+                for (partition, vals) in sub.iter().enumerate() {
+                    if !vals.is_empty() {
+                        files[partition].1.write_all(vec_to_slice_u8(vals))?;
+                        counts[partition] += vals.len();
+                    }
+                }
+            }
+            end = start;
+        }
+        for (_, file) in files.iter_mut() {
+            file.flush()?;
+        }
+        let paths: Vec<PathBuf> = files.into_iter().map(|(path, _)| path).collect();
+        info!(
+            "Wrote {} unsorted suffixes to {num_partitions} partition{} in {:?}",
+            counts.iter().sum::<usize>(),
+            if num_partitions == 1 { "" } else { "s" },
+            now.elapsed()
+        );
+
+        // Sort each partition in memory, in order, writing each straight
+        // into the output file
+        let out = self.open_output(num_suffixes)?;
+        let mut offset = 0;
+        let mut prev: Option<Item<T>> = None;
+        for (partition_num, path) in paths.iter().enumerate() {
+            let len = counts[partition_num];
+            if len == 0 {
+                fs::remove_file(path)?;
+                continue;
+            }
+            let now = Instant::now();
+            let mut positions = vec![T::default(); len];
+            File::open(path)?.read_exact(slice_int_to_slice_u8(&mut positions))?;
+            fs::remove_file(path)?;
+            let mut items: Vec<Item<T>> = positions
+                .into_par_iter()
+                .map(|pos| Item {
+                    key: encoder.key(&self.text, pos.to_usize()),
+                    pos,
+                })
+                .collect();
+            info!(
+                "Partition {partition_num}: read and keyed {len} suffixes in {:?}",
+                now.elapsed()
+            );
+
+            let now = Instant::now();
+            lsd_radix_sort(&mut items, encoder.total_bits);
+            info!(
+                "Partition {partition_num}: radix sorted {len} suffixes in {:?}",
+                now.elapsed()
+            );
+
+            self.emit_radix_partition(&out, &encoder, &items, offset, prev)?;
+            offset += items.len();
+            prev = items.last().copied();
+        }
+        self.finish_output(&out)?;
+
+        self.num_suffixes = T::from_usize(num_suffixes);
+        info!(
+            "Sorted and wrote {num_suffixes} suffixes in {num_partitions} partitions (partitioned radix) in {:?}",
+            total_time.elapsed()
+        );
+        Ok(())
     }
 
     // --------------------------------------------------
@@ -1351,7 +1695,7 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
 // --------------------------------------------------
 #[cfg(test)]
 mod test {
-    use super::{SufrBuilder, SufrBuilderArgs};
+    use super::{SortStrategy, SufrBuilder, SufrBuilderArgs};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::fs;
@@ -1374,6 +1718,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let sufr = SufrBuilder::<u32>::new(args)?;
@@ -1416,6 +1761,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let sufr = SufrBuilder::<u32>::new(args)?;
@@ -1461,6 +1807,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("101".to_string()),
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
@@ -1507,6 +1854,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
@@ -1555,6 +1903,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("1101".to_string()),
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
@@ -1593,6 +1942,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
@@ -1628,6 +1978,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
 
@@ -1683,6 +2034,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("101".to_string()),
+            sort_strategy: SortStrategy::Merge,
             write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;

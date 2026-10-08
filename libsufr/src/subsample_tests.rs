@@ -1,24 +1,28 @@
 //! Tests that subsampling a suffix array for a shorter max query length
 //! gives the same result with and without an LCP array on disk.
 
-use crate::{sufr_builder::SufrBuilder, sufr_file::SufrFile, types::SufrBuilderArgs};
+use crate::{
+    sufr_builder::SufrBuilder,
+    sufr_file::SufrFile,
+    types::{SortStrategy, SufrBuilderArgs},
+};
 use anyhow::Result;
 use pretty_assertions::assert_eq;
 use tempfile::NamedTempFile;
 
 /// A small deterministic generator (xorshift64*) so the test needs no
 /// random-number crate
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
         self.0.wrapping_mul(0x2545F4914F6CDD1D)
     }
 
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
 }
@@ -63,6 +67,7 @@ fn build(
         sequence_names: vec!["s".to_string()],
         num_partitions: 3,
         seed_mask: seed_mask.map(String::from),
+        sort_strategy: SortStrategy::Merge,
         write_lcp,
     })?;
     let sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
