@@ -59,8 +59,12 @@ pub struct SufrFile<T: Int> {
     /// The byte position in the file where the suffix array begins.
     pub suffix_array_pos: usize,
 
-    /// The byte position in the file where the LCP array begins.
+    /// The byte position in the file where the LCP array begins,
+    /// or 0 when the file has no LCP array.
     pub lcp_pos: usize,
+
+    /// Whether or not the file has an on-disk LCP array
+    pub has_lcp: bool,
 
     /// How the suffixes were sorted (fully, max query length, spaced seeds)
     pub sort_type: SuffixSortType,
@@ -219,9 +223,13 @@ impl<T: Int> SufrFile<T> {
             FileAccess::new(filename, suffix_array_pos as u64, len_suffixes)?;
         file.seek_relative(suffix_array_file.size as i64)?;
 
-        // LCP
-        let lcp_file: FileAccess<T> =
-            FileAccess::new(filename, lcp_pos as u64, len_suffixes)?;
+        // LCP (lcp_pos == 0 means the file was written without an LCP array)
+        let has_lcp = lcp_pos > 0;
+        let lcp_file: FileAccess<T> = if has_lcp {
+            FileAccess::new(filename, lcp_pos as u64, len_suffixes)?
+        } else {
+            FileAccess::new(filename, suffix_array_pos as u64, 0)?
+        };
         file.seek_relative(lcp_file.size as i64)?;
 
         // Sequence names are variable in length so they are at the end
@@ -246,6 +254,7 @@ impl<T: Int> SufrFile<T> {
             text_pos,
             suffix_array_pos,
             lcp_pos,
+            has_lcp,
             text_len: T::from_usize(text_len),
             len_suffixes: T::from_usize(len_suffixes),
             sort_type,
@@ -410,7 +419,9 @@ impl<T: Int> SufrFile<T> {
     }
 
     // --------------------------------------------------
-    /// Subsample a suffix array using a maximum query length
+    /// Subsample a suffix array using a maximum query length.
+    /// Uses the LCP array when the file has one, and otherwise compares
+    /// each suffix with its predecessor in the text.
     ///
     /// Args:
     /// * `max_query_len`: prefix length
@@ -418,6 +429,10 @@ impl<T: Int> SufrFile<T> {
         &mut self,
         max_query_len: usize,
     ) -> (Vec<T>, Vec<T>) {
+        if !self.has_lcp {
+            return self.subsample_suffix_array_by_text(max_query_len);
+        }
+
         let max_query_len = T::from_usize(max_query_len);
 
         let max_len = self.len_suffixes.to_usize();
@@ -435,6 +450,109 @@ impl<T: Int> SufrFile<T> {
                 rank.push(T::from_usize(i));
             }
         }
+
+        (suffix_array, rank)
+    }
+
+    // --------------------------------------------------
+    /// Subsample without an LCP array: keep a suffix when its first
+    /// `max_query_len` key symbols differ from its predecessor's, comparing
+    /// the text directly. In max-query-len mode the key is the first
+    /// `max_query_len` bytes (compared as slices, which lowers to memcmp);
+    /// in seed-mask mode it is the first `max_query_len` care positions.
+    /// The suffix array is streamed from disk in blocks, so memory is the
+    /// text plus the subsample plus one block.
+    ///
+    /// Args:
+    /// * `max_query_len`: prefix length
+    fn subsample_suffix_array_by_text(
+        &mut self,
+        max_query_len: usize,
+    ) -> (Vec<T>, Vec<T>) {
+        let now = Instant::now();
+        let text_len = self.text_len.to_usize();
+        let text_owned: Vec<u8>;
+        let text: &[u8] = if self.text.is_empty() {
+            // Reading the whole text cannot be out of range, so this only
+            // fails on an I/O error, like the iterator over the SA file
+            text_owned = self
+                .text_file
+                .get_range(0..text_len)
+                .expect("failed to read text");
+            &text_owned
+        } else {
+            &self.text
+        };
+
+        let differs: Box<dyn Fn(usize, usize) -> bool + Send + Sync> = match &self
+            .sort_type
+        {
+            SuffixSortType::Mask(seed_mask) => {
+                let positions =
+                    &seed_mask.positions[..min(max_query_len, seed_mask.weight)];
+                Box::new(move |a: usize, b: usize| {
+                    !positions.iter().all(|&offset| {
+                        matches!(
+                            (text.get(a + offset), text.get(b + offset)),
+                            (Some(x), Some(y)) if x == y
+                        )
+                    })
+                })
+            }
+            SuffixSortType::MaxQueryLen(_) => Box::new(move |a: usize, b: usize| {
+                let end_a = min(a + max_query_len, text_len);
+                let end_b = min(b + max_query_len, text_len);
+                // A suffix shorter than max_query_len always starts a new group
+                end_a - a < max_query_len
+                    || end_b - b < max_query_len
+                    || text[a..end_a] != text[b..end_b]
+            }),
+        };
+
+        // Stream the suffix array in blocks; compare within a block in
+        // parallel, carrying the last suffix of the previous block across.
+        let block_len = 1 << 22;
+        let mut block: Vec<T> = Vec::with_capacity(block_len);
+        let mut suffix_array: Vec<T> = vec![];
+        let mut rank: Vec<T> = vec![];
+        let mut prev: Option<usize> = None;
+        let mut seen = 0usize;
+        let mut suffixes = self.suffix_array_file.iter();
+        loop {
+            block.clear();
+            block.extend(suffixes.by_ref().take(block_len));
+            if block.is_empty() {
+                break;
+            }
+            let keep: Vec<bool> = block
+                .par_iter()
+                .enumerate()
+                .map(|(i, &suffix)| {
+                    let before = if i > 0 {
+                        Some(block[i - 1].to_usize())
+                    } else {
+                        prev
+                    };
+                    match before {
+                        None => true,
+                        Some(a) => differs(a, suffix.to_usize()),
+                    }
+                })
+                .collect();
+            for (i, (&suffix, &kept)) in block.iter().zip(&keep).enumerate() {
+                if kept {
+                    suffix_array.push(suffix);
+                    rank.push(T::from_usize(seen + i));
+                }
+            }
+            seen += block.len();
+            prev = block.last().map(|v| v.to_usize());
+        }
+        info!(
+            "Subsampled SA ({}/{seen}) from text (no LCP array) in {:?}",
+            suffix_array.len(),
+            now.elapsed()
+        );
 
         (suffix_array, rank)
     }
@@ -461,6 +579,7 @@ impl<T: Int> SufrFile<T> {
     ///     assert_eq!(meta.sequence_starts, vec![0]);
     ///     assert_eq!(meta.sequence_names, vec!["1".to_string()]);
     ///     assert_eq!(meta.sort_type, SuffixSortType::MaxQueryLen(0));
+    ///     assert_eq!(meta.has_lcp, true);
     ///
     ///     Ok(())
     /// }
@@ -487,6 +606,7 @@ impl<T: Int> SufrFile<T> {
                 .collect::<Vec<_>>(),
             sequence_names: self.sequence_names.clone(),
             sort_type: self.sort_type.clone(),
+            has_lcp: self.has_lcp,
         })
     }
 
@@ -959,6 +1079,13 @@ impl<T: Int> SufrFile<T> {
     /// ```
     ///
     pub fn list(&mut self, args: ListOptions) -> Result<()> {
+        if args.show_lcp && !self.has_lcp {
+            bail!(
+                "{} has no LCP array; rebuild with --write-lcp to show LCP values",
+                self.filename
+            );
+        }
+
         let width = self.text_len.to_string().len();
         let text_len = self.text_len.to_usize();
         let suffix_len = args.len.unwrap_or(text_len);
@@ -1004,7 +1131,12 @@ impl<T: Int> SufrFile<T> {
         let number = args.number.unwrap_or(0);
         if args.ranks.is_empty() {
             for (rank, suffix) in self.suffix_array_file.iter().enumerate() {
-                print(rank, suffix.to_usize(), self.lcp_file.get(rank).unwrap())?;
+                let lcp = if self.has_lcp {
+                    self.lcp_file.get(rank).unwrap()
+                } else {
+                    T::from_usize(0)
+                };
+                print(rank, suffix.to_usize(), lcp)?;
 
                 if number > 0 && rank == number - 1 {
                     break;
@@ -1013,7 +1145,12 @@ impl<T: Int> SufrFile<T> {
         } else {
             for rank in args.ranks {
                 if let Some(suffix) = self.suffix_array_file.get(rank) {
-                    print(rank, suffix.to_usize(), self.lcp_file.get(rank).unwrap())?;
+                    let lcp = if self.has_lcp {
+                        self.lcp_file.get(rank).unwrap()
+                    } else {
+                        T::from_usize(0)
+                    };
+                    print(rank, suffix.to_usize(), lcp)?;
                 } else {
                     eprintln!("Invalid rank: {rank}");
                 }

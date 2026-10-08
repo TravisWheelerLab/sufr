@@ -9,6 +9,7 @@
 //!
 
 use crate::{
+    file_access::write_at,
     lcp::{lcp, LcpCache},
     types::{
         Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
@@ -24,7 +25,7 @@ use std::{
     cell::RefCell,
     cmp::{max, min, Ordering},
     fs::{self, File, OpenOptions},
-    io::{BufWriter, Read, Seek, SeekFrom, Write},
+    io::{Read, Write},
     mem,
     ops::Range,
     path::PathBuf,
@@ -85,6 +86,51 @@ pub struct SufrBuilder<T: Int, B: ScratchBuffer = DiskScratchBuffer<T>> {
 
     /// The name of the output file
     pub path: String,
+
+    /// Whether to write the LCP array
+    pub write_lcp: bool,
+}
+
+// --------------------------------------------------
+/// The output file after the header and text have been written.
+/// The suffix and LCP arrays are written into it at known offsets,
+/// possibly from several threads.
+struct Output {
+    file: File,
+
+    /// Where the header records the text/SA/LCP positions
+    locs_pos: u64,
+
+    /// Byte position of the text
+    text_pos: usize,
+
+    /// Byte position of the suffix array
+    sa_pos: usize,
+
+    /// Byte position of the LCP array, or 0 when none is written
+    lcp_pos: usize,
+
+    /// Byte position after the arrays, where the sequence names go
+    end_pos: usize,
+}
+
+/// Write all of `buf` at `offset`, in parallel 64 MB chunks.
+fn write_all_at(file: &File, buf: &[u8], offset: u64) -> Result<()> {
+    let chunk_len = 1 << 26;
+    buf.par_chunks(chunk_len)
+        .enumerate()
+        .try_for_each(|(i, mut chunk)| -> Result<()> {
+            let mut pos = offset + (i * chunk_len) as u64;
+            while !chunk.is_empty() {
+                let n = write_at(file, chunk, pos)?;
+                if n == 0 {
+                    bail!("Failed to write to output file");
+                }
+                chunk = &chunk[n..];
+                pos += n as u64;
+            }
+            Ok(())
+        })
 }
 
 // --------------------------------------------------
@@ -122,6 +168,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     ///         sequence_names: seq_data.sequence_names,
     ///         num_partitions: 1024,
     ///         seed_mask: None,
+    ///         write_lcp: true,
     ///     };
     ///
     ///     if text_len < u32::MAX as u64 {
@@ -207,6 +254,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             partitions: vec![],
             n_ranges,
             path: args.path.unwrap_or("out.sufr".to_string()),
+            write_lcp: args.write_lcp,
         };
         sa.sort(args.num_partitions, occupancy)?;
         sa.write()?;
@@ -625,8 +673,13 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                         // Write to disk
                         let mut sa_buffer = B::default();
                         sa_buffer.extend_from_slice(&part_sa)?;
-                        let mut lcp_buffer = B::default();
-                        lcp_buffer.extend_from_slice(&lcp)?;
+                        let lcp_buffer = if self.write_lcp {
+                            let mut lcp_buffer = B::default();
+                            lcp_buffer.extend_from_slice(&lcp)?;
+                            Some(lcp_buffer)
+                        } else {
+                            None
+                        };
 
                         *partition = Some(Partition {
                             order: partition_num,
@@ -839,39 +892,100 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
 
     // --------------------------------------------------
     /// Serialize contents of the sorted partitions to a _.sufr_ file.
+    /// The header and text are written first, then each partition's
+    /// suffix array (and LCP array, when requested) is written in
+    /// parallel at its precomputed offset, then the header is patched
+    /// with the array positions.
     /// Returns the number of bytes written to disk.
-    ///
-    /// Args:
-    /// * `filename`: the name of the output file.
     fn write(&mut self) -> Result<usize> {
-        let filename = &self.path;
-        let mut file = BufWriter::new(
-            File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
+        let now = Instant::now();
+        let out = self.open_output(self.num_suffixes.to_usize())?;
+        let int_size = mem::size_of::<T>();
+
+        // Offset (in elements) of each partition in the arrays, and the
+        // last suffix of the preceding partition for fixing the LCP boundary
+        let mut offsets = Vec::with_capacity(self.partitions.len());
+        let mut total = 0;
+        let mut prev_last_suffix = None;
+        for partition in &self.partitions {
+            offsets.push((total, prev_last_suffix));
+            total += partition.len;
+            prev_last_suffix = Some(partition.last_suffix);
+        }
+
+        // NB: Taking the partitions and consuming their buffers frees
+        // memory/disk space along the way
+        let partitions = mem::take(&mut self.partitions);
+        partitions.into_par_iter().zip(offsets).try_for_each(
+            |(partition, (offset, prev_last_suffix))| -> Result<()> {
+                let sa = partition.sa_buffer.consume()?;
+                write_all_at(
+                    &out.file,
+                    vec_to_slice_u8(&sa),
+                    (out.sa_pos + offset * int_size) as u64,
+                )?;
+                drop(sa);
+
+                if let Some(lcp_buffer) = partition.lcp_buffer {
+                    let mut lcp = lcp_buffer.consume()?;
+                    if let Some(prev_last_suffix) = prev_last_suffix {
+                        // Fix LCP boundary
+                        if let Some(val) = lcp.first_mut() {
+                            *val = self.find_lcp(
+                                prev_last_suffix,
+                                partition.first_suffix,
+                                self.text_len,
+                                0, // start at beginning
+                                None,
+                            );
+                        }
+                    }
+                    write_all_at(
+                        &out.file,
+                        vec_to_slice_u8(&lcp),
+                        (out.lcp_pos + offset * int_size) as u64,
+                    )?;
+                }
+                Ok(())
+            },
+        )?;
+
+        let bytes_out = self.finish_output(&out)?;
+        info!(
+            "Wrote suffix array to '{}' in {:?}",
+            self.path,
+            now.elapsed()
         );
+        Ok(bytes_out)
+    }
 
-        let mut bytes_out: usize = 0;
-
-        // TODO (throughout this method): write() can write less than the whole buffer
+    // --------------------------------------------------
+    /// Create the output file and write the header and text. The suffix
+    /// (and optional LCP) arrays are written afterwards at the positions
+    /// recorded in the returned `Output`.
+    fn open_output(&self, num_suffixes: usize) -> Result<Output> {
+        let now = Instant::now();
+        let filename = &self.path;
+        let file = File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
         // Various metadata
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
         let allow_ambiguity: u8 = if self.allow_ambiguity { 1 } else { 0 };
         let ignore_softmask: u8 = if self.ignore_softmask { 1 } else { 0 };
-        bytes_out +=
-            file.write(&[OUTFILE_VERSION, is_dna, allow_ambiguity, ignore_softmask])?;
+        let mut header: Vec<u8> =
+            vec![OUTFILE_VERSION, is_dna, allow_ambiguity, ignore_softmask];
 
         // Text length
-        bytes_out += file.write(&self.text_len.to_usize().to_le_bytes())?;
+        header.extend(self.text_len.to_usize().to_le_bytes());
 
-        // Locations of text, suffix array, and LCP
-        // Will be corrected at the end
-        let locs_pos = file.stream_position()?;
-        bytes_out += file.write(&0usize.to_le_bytes())?;
-        bytes_out += file.write(&0usize.to_le_bytes())?;
-        bytes_out += file.write(&0usize.to_le_bytes())?;
+        // Locations of text, suffix array, and LCP; filled in by finish_output
+        let locs_pos = header.len() as u64;
+        header.extend(0usize.to_le_bytes());
+        header.extend(0usize.to_le_bytes());
+        header.extend(0usize.to_le_bytes());
 
         // Number of suffixes
-        bytes_out += file.write(&self.num_suffixes.to_usize().to_le_bytes())?;
+        header.extend(num_suffixes.to_le_bytes());
 
         // Max query length
         let max_query_len = if let SuffixSortType::MaxQueryLen(val) = &self.sort_type {
@@ -879,73 +993,65 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         } else {
             0
         };
-        bytes_out += file.write(&max_query_len.to_le_bytes())?;
+        header.extend(max_query_len.to_le_bytes());
 
         // Number of sequences
-        bytes_out += file.write(&self.sequence_starts.len().to_le_bytes())?;
+        header.extend(self.sequence_starts.len().to_le_bytes());
 
         // Sequence starts
-        bytes_out += file.write(vec_to_slice_u8(&self.sequence_starts))?;
+        header.extend_from_slice(vec_to_slice_u8(&self.sequence_starts));
 
         // Seed mask
         match &self.sort_type {
             SuffixSortType::Mask(seed_mask) => {
-                bytes_out += file.write(&seed_mask.bytes.len().to_le_bytes())?;
-                file.write_all(&seed_mask.bytes)?;
-                bytes_out += seed_mask.bytes.len();
+                header.extend(seed_mask.bytes.len().to_le_bytes());
+                header.extend_from_slice(&seed_mask.bytes);
             }
-            _ => bytes_out += file.write(&0usize.to_le_bytes())?,
+            _ => header.extend(0usize.to_le_bytes()),
         }
+
+        write_all_at(&file, &header, 0)?;
 
         // Text
-        let text_pos = bytes_out;
-        file.write_all(&self.text)?;
-        bytes_out += self.text.len();
+        let text_pos = header.len();
+        write_all_at(&file, &self.text, text_pos as u64)?;
 
-        // Stitch partitioned suffix files together
-        // NB: Using mem::take() and consume() to free memory/disk space along the way
-        let sa_pos = bytes_out;
-        for partition in &mut self.partitions {
-            let sa_buffer = mem::take(&mut partition.sa_buffer).consume()?;
-            let sa_bytes = vec_to_slice_u8(&sa_buffer);
-            bytes_out += sa_bytes.len();
-            file.write_all(sa_bytes)?;
-        }
+        let int_size = mem::size_of::<T>();
+        let sa_pos = text_pos + self.text.len();
+        let sa_end = sa_pos + num_suffixes * int_size;
+        let (lcp_pos, end_pos) = if self.write_lcp {
+            (sa_end, sa_end + num_suffixes * int_size)
+        } else {
+            (0, sa_end)
+        };
+        info!("Wrote header and text in {:?}", now.elapsed());
 
-        let lcp_pos = bytes_out;
+        Ok(Output {
+            file,
+            locs_pos,
+            text_pos,
+            sa_pos,
+            lcp_pos,
+            end_pos,
+        })
+    }
 
-        // Stitch partitioned LCP files together
-        for i in 0..self.partitions.len() {
-            let mut lcp = mem::take(&mut self.partitions[i].lcp_buffer).consume()?;
-
-            if i != 0 {
-                // Fix LCP boundary
-                if let Some(val) = lcp.first_mut() {
-                    *val = self.find_lcp(
-                        self.partitions[i - 1].last_suffix,
-                        self.partitions[i].first_suffix,
-                        self.text_len,
-                        0, // start at beginning
-                        None,
-                    );
-                }
-            }
-
-            let lcp_bytes = vec_to_slice_u8(&lcp);
-            bytes_out += lcp_bytes.len();
-            file.write_all(lcp_bytes)?;
-        }
-
+    // --------------------------------------------------
+    /// Write the sequence names after the arrays and record the array
+    /// positions in the header. Returns the total number of bytes in
+    /// the file.
+    fn finish_output(&self, out: &Output) -> Result<usize> {
         // Sequence names are variable in length so they are at the end
-        bytes_out += file.write(&bincode::serialize(&self.sequence_names)?)?;
+        let names = bincode::serialize(&self.sequence_names)?;
+        write_all_at(&out.file, &names, out.end_pos as u64)?;
 
         // Go back to header and record the locations
-        file.seek(SeekFrom::Start(locs_pos))?;
-        let _ = file.write(&text_pos.to_le_bytes())?;
-        let _ = file.write(&sa_pos.to_le_bytes())?;
-        let _ = file.write(&lcp_pos.to_le_bytes())?;
+        let mut locs = out.text_pos.to_le_bytes().to_vec();
+        locs.extend(out.sa_pos.to_le_bytes());
+        locs.extend(out.lcp_pos.to_le_bytes());
+        write_all_at(&out.file, &locs, out.locs_pos)?;
 
-        Ok(bytes_out)
+        Ok(out.end_pos + names.len())
     }
 }
 
@@ -1054,8 +1160,8 @@ struct Partition<B: ScratchBuffer> {
     /// The buffer containing the suffix array.
     sa_buffer: B,
 
-    /// The buffer containing the LCP array.
-    lcp_buffer: B,
+    /// The buffer containing the LCP array, when one is written.
+    lcp_buffer: Option<B>,
 }
 
 // --------------------------------------------------
@@ -1268,6 +1374,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            write_lcp: true,
         };
         let sufr = SufrBuilder::<u32>::new(args)?;
 
@@ -1309,6 +1416,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            write_lcp: true,
         };
         let sufr = SufrBuilder::<u32>::new(args)?;
 
@@ -1353,6 +1461,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("101".to_string()),
+            write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1398,6 +1507,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1445,6 +1555,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("1101".to_string()),
+            write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1482,6 +1593,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 
@@ -1516,6 +1628,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: None,
+            write_lcp: true,
         };
 
         let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
@@ -1570,6 +1683,7 @@ mod test {
             sequence_names: vec!["1".to_string()],
             num_partitions: 2,
             seed_mask: Some("101".to_string()),
+            write_lcp: true,
         };
         let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
 

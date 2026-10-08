@@ -574,6 +574,11 @@ pub struct SufrBuilderArgs {
     /// An optional seed mask of 1/0 for care/don't-care positions,
     /// cf. `SeedMask`.
     pub seed_mask: Option<String>,
+
+    /// Whether to write the LCP array. Searching does not use it;
+    /// listing LCP values does, and query-time max query lengths shorter
+    /// than the build-time value are faster with it.
+    pub write_lcp: bool,
 }
 
 // --------------------------------------------------
@@ -618,6 +623,9 @@ pub struct SufrMetadata {
 
     /// Sort type
     pub sort_type: SuffixSortType,
+
+    /// Whether or not the file has an on-disk LCP array
+    pub has_lcp: bool,
 }
 
 #[cfg(test)]

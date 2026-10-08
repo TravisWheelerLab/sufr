@@ -23,6 +23,8 @@
 
 mod file_access;
 mod lcp;
+#[cfg(test)]
+mod subsample_tests;
 pub mod suffix_array;
 pub mod sufr_builder;
 pub mod sufr_file;
@@ -62,6 +64,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 2,
             seed_mask: None,
+            write_lcp: true,
         };
         let res = SufrBuilder::<u32>::new(args);
         assert!(res.is_ok());
@@ -110,6 +113,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 2,
             seed_mask: None,
+            write_lcp: true,
         };
 
         let res = SufrBuilder::<u64>::new(args);
@@ -157,6 +161,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 2,
             seed_mask: None,
+            write_lcp: true,
         };
         let res = SufrBuilder::<u32>::new(builder_args);
         assert!(res.is_ok());
@@ -235,6 +240,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 1,
             seed_mask: Some("101".to_string()),
+            write_lcp: true,
         };
 
         // 7 $
@@ -279,6 +285,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 1,
             seed_mask: Some("11011".to_string()),
+            write_lcp: true,
         };
 
         //  0 16 $
@@ -336,6 +343,7 @@ mod tests {
             sequence_names: seq_data.sequence_names,
             num_partitions: 1,
             seed_mask: Some("11000111".to_string()),
+            write_lcp: true,
         };
 
         let res = SufrBuilder::<u32>::new(builder_args);

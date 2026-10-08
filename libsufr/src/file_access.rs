@@ -123,8 +123,8 @@ pub struct FileAccessIter<'a, T: Int> {
 }
 
 impl<'a, T: Int> FileAccessIter<'a, T> {
-    /// The maximum size in bytes of the buffer (currently 2^30)
-    const BUFFER_SIZE: usize = 2usize.pow(30);
+    /// The maximum size in bytes of the buffer (currently 2^24, 16 MiB)
+    const BUFFER_SIZE: usize = 2usize.pow(24);
 }
 
 impl<T: Int> Iterator for FileAccessIter<'_, T> {
@@ -141,22 +141,22 @@ impl<T: Int> Iterator for FileAccessIter<'_, T> {
                     return None;
                 }
 
+                // Read whole elements, at most BUFFER_SIZE bytes, straight
+                // into the reused typed buffer
                 let bytes_wanted = min(
                     Self::BUFFER_SIZE,
                     (self.file_access.end_position - self.current_position) as usize,
                 );
                 let num_vals = bytes_wanted / mem::size_of::<T>();
-                let mut buffer: Vec<T> = vec![T::from_usize(0); num_vals];
+                self.buffer.resize(num_vals, T::from_usize(0));
                 read_exact_at(
                     &self.file_access.file,
-                    slice_int_to_slice_u8(&mut buffer),
+                    slice_int_to_slice_u8(&mut self.buffer),
                     self.current_position,
                 )
                 .unwrap();
 
                 self.current_position += (num_vals * mem::size_of::<T>()) as u64;
-
-                self.buffer = buffer;
                 self.buffer_pos = 0;
             }
 
@@ -168,7 +168,26 @@ impl<T: Int> Iterator for FileAccessIter<'_, T> {
     }
 }
 
-// Position-independent reads for both Unix and Windows
+// Position-independent reads and writes for both Unix and Windows
+
+/// Write from `buf` at an absolute `offset` without using the file cursor,
+/// so several threads may write disjoint regions of one file at once.
+/// Returns the number of bytes written, which may be fewer than requested.
+#[cfg(unix)]
+pub(crate) fn write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+
+    file.write_at(buf, offset)
+}
+
+// Windows version of `write_at`; `seek_write` also takes an absolute
+// offset per call, so concurrent calls place their data correctly.
+#[cfg(windows)]
+pub(crate) fn write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+
+    file.seek_write(buf, offset)
+}
 
 #[cfg(unix)]
 fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {

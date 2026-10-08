@@ -118,6 +118,11 @@ pub struct CreateArgs {
     /// Spaced seeds mask
     #[arg(short, long, value_name = "MASK")]
     pub seed_mask: Option<String>,
+
+    /// Also write the LCP array (needed by "list --show-lcp"; speeds up
+    /// query-time max query lengths shorter than the build-time value)
+    #[arg(long)]
+    pub write_lcp: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -347,6 +352,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         sequence_names: seq_data.sequence_names,
         num_partitions: args.num_partitions,
         seed_mask: args.seed_mask.clone(),
+        write_lcp: args.write_lcp,
     };
 
     let now = Instant::now();
@@ -603,6 +609,10 @@ pub fn summarize(args: &SummarizeArgs) -> Result<()> {
     rows.push(vec![
         "Len Suffixes".to_string(),
         num_fmt.format(",.0", meta.len_suffixes as f64),
+    ]);
+    rows.push(vec![
+        "LCP array".to_string(),
+        if meta.has_lcp { "yes" } else { "no" }.to_string(),
     ]);
 
     match meta.sort_type {
