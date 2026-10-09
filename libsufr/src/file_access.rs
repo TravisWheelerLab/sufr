@@ -189,8 +189,10 @@ pub(crate) fn write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<usize
     file.seek_write(buf, offset)
 }
 
+/// Fill `buf` from an absolute `offset` without using the file cursor,
+/// so several threads may read disjoint regions of one file at once.
 #[cfg(unix)]
-fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+pub(crate) fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
     use std::os::unix::fs::FileExt;
 
     file.read_exact_at(buf, offset)
@@ -198,7 +200,7 @@ fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
 
 // Essentially the same as the Unix read_exact_at implementation, but using seek_read
 #[cfg(windows)]
-fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
+pub(crate) fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
     use std::os::windows::fs::FileExt;
 
     while !buf.is_empty() {
