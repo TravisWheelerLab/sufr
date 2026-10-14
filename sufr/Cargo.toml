@@ -25,7 +25,7 @@ num_cpus = "1.16.0"
 pretty_assertions = "1.4.0"
 rayon = "1.10.0"
 regex = "1.10.6"
-tabled = "0.18.0"
+tabled = "0.22.0"
 textwrap = "0.16.1"
 
 [dev-dependencies]
