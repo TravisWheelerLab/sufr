@@ -164,11 +164,12 @@ impl SuffixArray {
 }
 
 // --------------------------------------------------
-/// The suffixes matching one query, as a range of ranks
-/// in the suffix array they came from
+/// The suffixes matching one query
 #[derive(Clone)]
 pub struct Hits<'a> {
     suffix_array: &'a SuffixArray,
+
+    /// The indexes of the matching suffixes in the sorted suffix array
     ranks: Range<usize>,
 }
 
@@ -190,7 +191,8 @@ impl<'a> Hits<'a> {
         self.ranks.is_empty()
     }
 
-    /// The ranks of the matching suffixes
+    /// The ranks of the matching suffixes: their indexes in the sorted
+    /// suffix array
     pub fn ranks(&self) -> Range<usize> {
         self.ranks.clone()
     }
