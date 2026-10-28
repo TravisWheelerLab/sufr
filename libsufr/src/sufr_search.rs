@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use std::{
+    borrow::Cow,
     cmp::{min, Ordering},
     ops::Range,
 };
@@ -228,8 +229,8 @@ impl<'a, T: Int> SufrSearch<'a, T> {
                     query
                         .iter()
                         .skip(skip)
-                        .zip(self.get_text_range(text_start..text_end).unwrap())
-                        .map_while(|(a, b)| (a == &b).then_some(a))
+                        .zip(self.get_text_range(text_start..text_end).unwrap().iter())
+                        .map_while(|(a, b)| (a == b).then_some(a))
                         .count()
                         + skip
                 };
@@ -307,12 +308,11 @@ impl<'a, T: Int> SufrSearch<'a, T> {
     }
 
     // --------------------------------------------------
-    fn get_text_range(&self, pos: Range<usize>) -> Result<Vec<u8>> {
-        // this is too expensive, copies loooooong stretches of text into vec
+    fn get_text_range(&self, pos: Range<usize>) -> Result<Cow<'a, [u8]>> {
         if self.text.is_empty() {
-            self.text_file.get_range(pos.clone())
+            Ok(Cow::Owned(self.text_file.get_range(pos)?))
         } else {
-            Ok(self.text.get(pos.clone()).expect("text").to_vec())
+            Ok(Cow::Borrowed(&self.text[pos]))
         }
     }
 
