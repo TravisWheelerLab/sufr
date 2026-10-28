@@ -1,0 +1,28 @@
+{
+  "id": "sufr-09e733",
+  "title": "Disk read errors during a low-memory search panic or read as no match",
+  "body": "In low-memory mode `SufrSearch` reads suffixes and text through `FileAccess` in `libsufr/src/file_access.rs`. `FileAccess::get` returns `Option<T>`:\n\n```rust\nlet _ = self.file.seek(SeekFrom::Start(seek));\n...\nlet bytes_read = self.file.read(&mut buffer).unwrap();\n(bytes_read == mem::size_of::<T>()).then(|| ...)\n```\n\n`get` discards a seek error and panics on a read error. A short read returns `None`. `SufrSearch::get_suffix` and `get_text` pass that `None` up, and the binary search's `?` turns it into \"no match\". `SufrSearch::compare` calls `get_text_range(..).unwrap()`, which panics on any error from `FileAccess::get_range`.\n\nA failing disk therefore surfaces as a panic in some paths and as a query with zero hits in others. In neither case does the caller get an `Err`. The function carries a comment saying the same: `TODO: Ignoring lots of Results to return Option`.\n\nFound by reading the code. Not reproduced.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-10-28T02:10:00.817618296Z",
+  "updated_at": "2026-10-28T02:10:00.817618296Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b4a924a",
+      "branch": "search-api"
+    },
+    "closed": null
+  }
+}
