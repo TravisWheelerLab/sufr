@@ -254,12 +254,16 @@ impl SuffixArray {
     }
 
     // --------------------------------------------------
-    /// The end of a sequence in the text
-    fn sequence_end(&self, index: usize) -> usize {
-        self.sequence_starts
+    /// The length of a sequence, not counting the byte that follows it
+    fn sequence_len(&self, index: usize) -> usize {
+        // the byte after each sequence is the sequence delimiter,
+        // or the sentinel after the last sequence
+        let next = self
+            .sequence_starts
             .get(index + 1)
             .copied()
-            .unwrap_or(self.text_len)
+            .unwrap_or(self.text_len);
+        next - 1 - self.sequence_starts[index]
     }
 
     // --------------------------------------------------
@@ -422,10 +426,10 @@ impl<'a> Hits<'a> {
             .into_iter()
             .map(|location| {
                 let i = sa.sequence_index(location.suffix);
-                let sequence_end = sa.sequence_end(i);
+                let sequence_len = sa.sequence_len(i);
                 let start = location.sequence_position.saturating_sub(context.before);
-                let end = context.after.map_or(sequence_end, |after| {
-                    min(location.sequence_position + after, sequence_end)
+                let end = context.after.map_or(sequence_len, |after| {
+                    min(location.sequence_position + after, sequence_len)
                 });
                 Extraction {
                     suffix_offset: location.sequence_position - start,
@@ -500,7 +504,7 @@ mod test {
                         sequence_start: 0,
                         sequence_position: 8,
                     },
-                    sequence_range: 7..11,
+                    sequence_range: 7..10,
                     suffix_offset: 1,
                 },
                 Extraction {
