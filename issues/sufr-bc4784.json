@@ -1,0 +1,28 @@
+{
+  "id": "sufr-bc4784",
+  "title": "The locate cache reads a byte buffer back as T without regard to alignment or byte order",
+  "body": "`SufrFile::set_suffix_array_mem` in `libsufr/src/sufr_file.rs` reads the rank section of the cache file into a `Vec<u8>` and turns it into ranks with:\n\n```rust\nstd::slice::from_raw_parts(buffer.as_ptr() as *const _, suffix_array_len).to_vec()\n```\n\nA `Vec<u8>` only guarantees an alignment of 1. Building a `&[T]` from that pointer is undefined behaviour when `T` is `u32` or `u64` and the allocation is not aligned for it. Common allocators happen to return aligned blocks, so this probably works in practice.\n\nThe cache stores every value in native byte order, through `u64::from_ne_bytes` and the raw slice casts. A cache written on one architecture and read on another of the other endianness yields wrong values. That matters only if a cache directory is shared between machines.\n\nFound by reading the code. Not reproduced.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-10-28T02:10:00.789271833Z",
+  "updated_at": "2026-10-28T02:10:00.789271833Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b4a924a",
+      "branch": "search-api"
+    },
+    "closed": null
+  }
+}
