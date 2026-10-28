@@ -1,0 +1,7 @@
+{
+  "prefix": "sufr",
+  "schema_version": 3,
+  "created_at": "2026-10-28T01:52:47.913296432Z",
+  "lease_minutes": 15,
+  "stale_after": 50
+}
