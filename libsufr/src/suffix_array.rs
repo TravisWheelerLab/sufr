@@ -55,46 +55,6 @@ impl SuffixArray {
     // --------------------------------------------------
     /// Create a new suffix array and return an in-memory struct.
     /// This is a combination of `write` and `open`.
-    ///     
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{
-    ///     types::SufrBuilderArgs,
-    ///     suffix_array::SuffixArray,
-    ///     util::read_sequence_file,
-    /// };
-    /// use std::{fs, path::Path};
-    ///
-    /// fn main() -> Result<()> {
-    ///     let sequence_delimiter = b'%';
-    ///     let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), sequence_delimiter)?;
-    ///     let outfile = "3.sufr";
-    ///     let builder_args = SufrBuilderArgs {
-    ///         text: seq_data.seq,
-    ///         path: Some(outfile.to_string()),
-    ///         low_memory: true,
-    ///         max_query_len: None,
-    ///         is_dna: true,
-    ///         allow_ambiguity: false,
-    ///         ignore_softmask: true,
-    ///         sequence_starts: seq_data.start_positions.into_iter().collect(),
-    ///         sequence_names: seq_data.sequence_names,
-    ///         num_partitions: 16,
-    ///         seed_mask: None,
-    ///         write_lcp: true,
-    ///     };
-    ///
-    ///     let suffix_array = SuffixArray::new(builder_args)?;
-    ///     let meta = suffix_array.metadata()?;
-    ///     assert_eq!(meta.text_len, 113);
-    ///     assert_eq!(meta.len_suffixes, 101);
-    ///
-    ///     fs::remove_file(&outfile)?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
     pub fn new(args: SufrBuilderArgs) -> Result<SuffixArray> {
         let path = Self::write(args)?;
         Self::open(&path)
@@ -103,38 +63,12 @@ impl SuffixArray {
     // --------------------------------------------------
     /// Open a _.sufr_ file with the text and suffix array on disk
     /// and the maximum query length it was built with
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::suffix_array::SuffixArray;
-    ///
-    /// fn main() -> Result<()> {
-    ///     let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn open(filename: &str) -> Result<SuffixArray> {
         Self::open_with(filename, &OpenOptions::default())
     }
 
     // --------------------------------------------------
     /// Open a _.sufr_ file
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{suffix_array::SuffixArray, types::{Load, OpenOptions}};
-    ///
-    /// fn main() -> Result<()> {
-    ///     let opts = OpenOptions {
-    ///         text: Load::Memory,
-    ///         suffix_array: Load::Memory,
-    ///         max_query_len: Some(2),
-    ///     };
-    ///     let suffix_array = SuffixArray::open_with("../data/inputs/1.sufr", &opts)?;
-    ///     assert_eq!(suffix_array.search(b"ACX")?.count(), 2);
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn open_with(filename: &str, opts: &OpenOptions) -> Result<SuffixArray> {
         let text_len = crate::util::read_text_length(filename)? as u64;
         let inner: Box<dyn SuffixArrayTrait> = if text_len < u32::MAX as u64 {
@@ -153,23 +87,6 @@ impl SuffixArray {
 
     // --------------------------------------------------
     /// Find the suffixes matching a query
-    ///
-    /// Given the text "ACGTNNACGT":
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::suffix_array::SuffixArray;
-    ///
-    /// fn main() -> Result<()> {
-    ///     let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-    ///     let hits = suffix_array.search(b"ACG")?;
-    ///     assert_eq!(hits.count(), 2);
-    ///     assert_eq!(hits.ranks(), 1..3);
-    ///     assert_eq!(hits.suffixes()?, vec![6, 0]);
-    ///     assert!(suffix_array.search(b"GGC")?.is_empty());
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn search(&self, query: &[u8]) -> Result<Hits<'_>> {
         Ok(Hits {
             suffix_array: self,
@@ -201,18 +118,6 @@ impl SuffixArray {
 
     // --------------------------------------------------
     /// The text in a range of positions, clipped to the end of the text
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::suffix_array::SuffixArray;
-    ///
-    /// fn main() -> Result<()> {
-    ///     let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-    ///     assert_eq!(suffix_array.text(0..100)?, b"ACGTNNACGT$");
-    ///     assert_eq!(suffix_array.text(6..9)?, b"ACG");
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn text(&self, range: Range<usize>) -> Result<Vec<u8>> {
         let end = min(range.end, self.text_len);
         self.inner.text(min(range.start, end)..end)
@@ -220,29 +125,6 @@ impl SuffixArray {
 
     // --------------------------------------------------
     /// Read metadata from a _.sufr_ file
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{suffix_array::SuffixArray, types::SuffixSortType};
-    ///
-    /// fn main() -> Result<()> {
-    ///     let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-    ///     let meta = suffix_array.metadata()?;
-    ///     assert_eq!(meta.filename, "../data/inputs/1.sufr".to_string());
-    ///     assert_eq!(meta.file_size, 172);
-    ///     assert_eq!(meta.file_version, 6);
-    ///     assert_eq!(meta.is_dna, true);
-    ///     assert_eq!(meta.allow_ambiguity, false);
-    ///     assert_eq!(meta.ignore_softmask, false);
-    ///     assert_eq!(meta.text_len, 11);
-    ///     assert_eq!(meta.len_suffixes, 9);
-    ///     assert_eq!(meta.num_sequences, 1);
-    ///     assert_eq!(meta.sequence_starts, vec![0]);
-    ///     assert_eq!(meta.sequence_names, vec!["1".to_string()]);
-    ///     assert_eq!(meta.sort_type, SuffixSortType::MaxQueryLen(0));
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn metadata(&self) -> Result<SufrMetadata> {
         self.inner.metadata()
     }
@@ -268,41 +150,6 @@ impl SuffixArray {
 
     // --------------------------------------------------
     /// Create a new suffix array and write to disk
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{
-    ///     types::SufrBuilderArgs,
-    ///     suffix_array::SuffixArray,
-    ///     util::read_sequence_file,
-    /// };
-    /// use std::{fs, path::Path};
-    ///
-    /// fn main() -> Result<()> {
-    ///     let sequence_delimiter = b'%';
-    ///     let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), sequence_delimiter)?;
-    ///     let outfile = "3.sufr";
-    ///     let builder_args = SufrBuilderArgs {
-    ///         text: seq_data.seq,
-    ///         path: Some(outfile.to_string()),
-    ///         low_memory: true,
-    ///         max_query_len: None,
-    ///         is_dna: true,
-    ///         allow_ambiguity: false,
-    ///         ignore_softmask: false,
-    ///         sequence_starts: seq_data.start_positions.into_iter().collect(),
-    ///         sequence_names: seq_data.sequence_names,
-    ///         num_partitions: 16,
-    ///         seed_mask: None,
-    ///         write_lcp: true,
-    ///     };
-    ///
-    ///     let outpath = SuffixArray::write(builder_args)?;
-    ///     fs::remove_file(&outfile)?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
     pub fn write(args: SufrBuilderArgs) -> Result<String> {
         let path = if (args.text.len() as u64) < u32::MAX as u64 {
             let builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
@@ -359,24 +206,6 @@ impl<'a> Hits<'a> {
 
     // --------------------------------------------------
     /// The matching suffixes in the context of their sequences, in rank order
-    ///
-    /// Given the text "ACGTNNACGT":
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::suffix_array::SuffixArray;
-    ///
-    /// fn main() -> Result<()> {
-    ///     let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-    ///     let locs = suffix_array.search(b"ACG")?.locate()?;
-    ///     let found: Vec<_> = locs
-    ///         .iter()
-    ///         .map(|loc| (loc.sequence_name, loc.sequence_position))
-    ///         .collect();
-    ///     assert_eq!(found, vec![("1", 6), ("1", 0)]);
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn locate(&self) -> Result<Vec<Location<'a>>> {
         let sa = self.suffix_array;
         Ok(self
@@ -399,26 +228,6 @@ impl<'a> Hits<'a> {
 
     // --------------------------------------------------
     /// The matching suffixes with a window of their sequences, in rank order
-    ///
-    /// Given the text "ACGTNNACGT":
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{suffix_array::SuffixArray, types::Context};
-    ///
-    /// fn main() -> Result<()> {
-    ///     let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-    ///     let context = Context { before: 1, after: Some(3) };
-    ///     let found: Vec<_> = suffix_array
-    ///         .search(b"ACG")?
-    ///         .extract(context)?
-    ///         .into_iter()
-    ///         .map(|ex| (ex.sequence_range, ex.suffix_offset))
-    ///         .collect();
-    ///     assert_eq!(found, vec![(5..9, 1), (0..3, 0)]);
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn extract(&self, context: Context) -> Result<Vec<Extraction<'a>>> {
         let sa = self.suffix_array;
         Ok(self
@@ -445,8 +254,128 @@ impl<'a> Hits<'a> {
 #[cfg(test)]
 mod test {
     use super::SuffixArray;
-    use crate::types::{Context, Extraction, Load, Location, OpenOptions};
+    use crate::{
+        types::{
+            Context, Extraction, Load, Location, OpenOptions, SuffixSortType,
+            SufrBuilderArgs,
+        },
+        util::read_sequence_file,
+    };
     use anyhow::Result;
+    use std::path::Path;
+    use tempfile::NamedTempFile;
+
+    // text "ACGTNNACGT$", one sequence named "1"
+    const SUFR1: &str = "../data/inputs/1.sufr";
+
+    // --------------------------------------------------
+    fn builder_args_3(path: &str, ignore_softmask: bool) -> Result<SufrBuilderArgs> {
+        let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), b'%')?;
+        Ok(SufrBuilderArgs {
+            text: seq_data.seq,
+            path: Some(path.to_string()),
+            low_memory: true,
+            max_query_len: None,
+            is_dna: true,
+            allow_ambiguity: false,
+            ignore_softmask,
+            sequence_starts: seq_data.start_positions.into_iter().collect(),
+            sequence_names: seq_data.sequence_names,
+            num_partitions: 16,
+            seed_mask: None,
+            write_lcp: true,
+        })
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_new() -> Result<()> {
+        let outfile = NamedTempFile::new()?;
+        let path = outfile.path().to_string_lossy().to_string();
+        let suffix_array = SuffixArray::new(builder_args_3(&path, true)?)?;
+        let meta = suffix_array.metadata()?;
+        assert_eq!(meta.text_len, 113);
+        assert_eq!(meta.len_suffixes, 101);
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_write() -> Result<()> {
+        let outfile = NamedTempFile::new()?;
+        let path = outfile.path().to_string_lossy().to_string();
+        assert_eq!(SuffixArray::write(builder_args_3(&path, false)?)?, path);
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_metadata() -> Result<()> {
+        let meta = SuffixArray::open(SUFR1)?.metadata()?;
+        assert_eq!(meta.filename, SUFR1.to_string());
+        assert_eq!(meta.file_size, 172);
+        assert_eq!(meta.file_version, 6);
+        assert_eq!(meta.is_dna, true);
+        assert_eq!(meta.allow_ambiguity, false);
+        assert_eq!(meta.ignore_softmask, false);
+        assert_eq!(meta.text_len, 11);
+        assert_eq!(meta.len_suffixes, 9);
+        assert_eq!(meta.num_sequences, 1);
+        assert_eq!(meta.sequence_starts, vec![0]);
+        assert_eq!(meta.sequence_names, vec!["1".to_string()]);
+        assert_eq!(meta.sort_type, SuffixSortType::MaxQueryLen(0));
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_search() -> Result<()> {
+        let suffix_array = SuffixArray::open(SUFR1)?;
+        let hits = suffix_array.search(b"ACG")?;
+        assert_eq!(hits.count(), 2);
+        assert_eq!(hits.ranks(), 1..3);
+        assert_eq!(hits.suffixes()?, vec![6, 0]);
+        assert!(suffix_array.search(b"GGC")?.is_empty());
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_search_max_query_len() -> Result<()> {
+        let opts = OpenOptions {
+            text: Load::Memory,
+            suffix_array: Load::Memory,
+            max_query_len: Some(2),
+        };
+        let suffix_array = SuffixArray::open_with(SUFR1, &opts)?;
+
+        // only "AC" is compared, so the X never counts against a hit
+        assert_eq!(suffix_array.search(b"ACX")?.count(), 2);
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_text() -> Result<()> {
+        let suffix_array = SuffixArray::open(SUFR1)?;
+        assert_eq!(suffix_array.text(0..100)?, b"ACGTNNACGT$");
+        assert_eq!(suffix_array.text(6..9)?, b"ACG");
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_locate_sequence_position() -> Result<()> {
+        let suffix_array = SuffixArray::open(SUFR1)?;
+        let found: Vec<_> = suffix_array
+            .search(b"ACG")?
+            .locate()?
+            .iter()
+            .map(|loc| (loc.sequence_name, loc.sequence_position))
+            .collect();
+        assert_eq!(found, vec![("1", 6), ("1", 0)]);
+        Ok(())
+    }
 
     // --------------------------------------------------
     #[test]

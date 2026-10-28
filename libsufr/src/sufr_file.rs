@@ -750,20 +750,6 @@ impl<T: Int> SufrFile<T> {
     // --------------------------------------------------
     /// Find the ranks of the suffixes matching a query,
     /// an empty range when none match
-    ///
-    /// Given the text "ACGTNNACGT":
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{sufr_file::SufrFile, types::OpenOptions};
-    ///
-    /// fn main() -> Result<()> {
-    ///     let sufr = SufrFile::<u32>::open("../data/inputs/1.sufr", &OpenOptions::default())?;
-    ///     assert_eq!(sufr.search(b"ACG")?, 1..3);
-    ///     assert!(sufr.search(b"GGC")?.is_empty());
-    ///     Ok(())
-    /// }
-    /// ```
     pub fn search(&self, query: &[u8]) -> Result<Range<usize>> {
         let search = SufrSearch::new(SufrSearchArgs {
             text: &self.text,
@@ -816,6 +802,17 @@ mod test {
         types::{Load, OpenOptions},
     };
     use anyhow::Result;
+
+    // --------------------------------------------------
+    #[test]
+    fn test_search() -> Result<()> {
+        // text "ACGTNNACGT$"
+        let sufr: SufrFile<u32> =
+            SufrFile::open("../data/inputs/1.sufr", &OpenOptions::default())?;
+        assert_eq!(sufr.search(b"ACG")?, 1..3);
+        assert!(sufr.search(b"GGC")?.is_empty());
+        Ok(())
+    }
 
     // --------------------------------------------------
     #[test]
