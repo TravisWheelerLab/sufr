@@ -1,0 +1,28 @@
+{
+  "id": "sufr-626e7f",
+  "title": "A query that sorts before the first suffix underflows mid - 1",
+  "body": "`SufrSearch::suffix_search_first` and `suffix_search_last` in `libsufr/src/sufr_search.rs` recurse on `low..=mid - 1` when the query compares less than the suffix at `mid`. When `mid` is 0 that subtraction underflows.\n\n`mid` reaches 0 with a `Less` comparison when the query sorts before the suffix at rank 0. That suffix is normally the sentinel `$`, so any query starting with a byte below `$`, such as a space, `!` or `#`, should reach it. Debug builds panic. In release builds `high` becomes `usize::MAX`, the next `get_suffix` returns `None`, and the `?` turns that into \"not found\". The release result is correct by accident.\n\nFound by reading the code. Not reproduced.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-10-28T02:10:00.803372811Z",
+  "updated_at": "2026-10-28T02:10:00.803372811Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b4a924a",
+      "branch": "search-api"
+    },
+    "closed": null
+  }
+}
