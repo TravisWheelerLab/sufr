@@ -2,7 +2,7 @@
 
 use crate::{
     file_access::FileAccess,
-    types::{Comparison, Int, SearchResult, SearchResultLocations, SuffixSortType},
+    types::{Comparison, Int, SuffixSortType},
     util::find_lcp_full_offset,
 };
 use anyhow::Result;
@@ -14,7 +14,7 @@ use std::{
 // --------------------------------------------------
 /// Arguments to create a search
 #[derive(Debug)]
-pub struct SufrSearchArgs<'a, T: Int> {
+pub(crate) struct SufrSearchArgs<'a, T: Int> {
     /// The text being searched (which may be empty in the case of very
     /// low memory)
     pub text: &'a [u8],
@@ -23,10 +23,10 @@ pub struct SufrSearchArgs<'a, T: Int> {
     pub text_len: usize,
 
     /// A `FileAccess` to the text
-    pub text_file: FileAccess<u8>,
+    pub text_file: &'a FileAccess<u8>,
 
-    /// File?
-    pub file: FileAccess<T>,
+    /// A `FileAccess` to the suffix array
+    pub file: &'a FileAccess<T>,
 
     /// In-memory suffix array
     pub suffix_array: &'a [T],
@@ -46,11 +46,11 @@ pub struct SufrSearchArgs<'a, T: Int> {
 
 // --------------------------------------------------
 #[derive(Debug)]
-pub struct SufrSearch<'a, T: Int> {
+pub(crate) struct SufrSearch<'a, T: Int> {
     text: &'a [u8],
     text_len: usize,
-    text_file: FileAccess<u8>,
-    suffix_array_file: FileAccess<T>,
+    text_file: &'a FileAccess<u8>,
+    suffix_array_file: &'a FileAccess<T>,
     suffix_array_mem: &'a [T],
     suffix_array_rank_mem: &'a [T],
     len_suffixes: usize,
@@ -83,77 +83,36 @@ impl<'a, T: Int> SufrSearch<'a, T> {
     }
 
     // --------------------------------------------------
-    /// Find a query string in a suffix array.
-    /// Returns a `SearchResult`
-    ///
-    /// Args:
-    /// * `query_num`: ordinal number of the query
-    /// * `query`: a string to search for
-    /// * `find_suffixes`: whether or not to return the suffixes locations
-    pub fn search(
-        &self,
-        query_num: usize,
-        query: &str,
-        find_suffixes: bool,
-    ) -> Result<SearchResult<T>> {
-        let qry = query.as_bytes();
+    /// Find the ranks of the suffixes matching a query,
+    /// an empty range when none match
+    pub fn search(&self, qry: &[u8]) -> Range<usize> {
         let n = self.len_suffixes;
-        if let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {
-            let end = self
-                .suffix_search_last(qry, start, n - 1, n, 0, 0)
-                .unwrap_or(start);
+        let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) else {
+            return 0..0;
+        };
+        let end = self
+            .suffix_search_last(qry, start, n - 1, n, 0, 0)
+            .unwrap_or(start);
 
-            // Rank is empty when we have the full SA in memory
-            // AND when doing low-memory searches
-            let ranks = if self.suffix_array_rank_mem.is_empty() {
-                start..end + 1
-            } else {
-                // This is the case for the compressed/in-memory SA
-                let start_rank = self.suffix_array_rank_mem[start];
-                let end_rank = if start == end {
-                    if start == self.suffix_array_rank_mem.len() - 1 {
-                        // We're on the last rank, so go to end
-                        self.len_suffixes
-                    } else {
-                        // Use the next LCP rank
-                        self.suffix_array_rank_mem[start + 1].to_usize()
-                    }
+        // Rank is empty when we have the full SA in memory
+        // AND when doing low-memory searches
+        if self.suffix_array_rank_mem.is_empty() {
+            start..end + 1
+        } else {
+            // This is the case for the compressed/in-memory SA
+            let start_rank = self.suffix_array_rank_mem[start];
+            let end_rank = if start == end {
+                if start == self.suffix_array_rank_mem.len() - 1 {
+                    // We're on the last rank, so go to end
+                    self.len_suffixes
                 } else {
-                    self.suffix_array_rank_mem[end].to_usize() + 1
-                };
-                start_rank.to_usize()..end_rank
-            };
-
-            // Getting suffixes may require going to disk
-            // but "count" doesn't need them so this is an option
-            let suffixes = if find_suffixes {
-                // First condition is that there is no in-memory SA
-                if self.suffix_array_mem.is_empty()
-                    // Second condition is there is an in-memory SA
-                    // BUT the ranks are also there meaning the SA
-                    // is compressed, forcing us to go to disk
-                    || !self.suffix_array_rank_mem.is_empty()
-                {
-                    self.suffix_array_file.get_range(ranks.clone())?
-                } else {
-                    // Otherwise, get from memory
-                    self.suffix_array_mem[ranks.clone()].to_vec()
+                    // Use the next LCP rank
+                    self.suffix_array_rank_mem[start + 1].to_usize()
                 }
             } else {
-                vec![]
+                self.suffix_array_rank_mem[end].to_usize() + 1
             };
-
-            Ok(SearchResult {
-                query_num,
-                query: query.to_string(),
-                locations: Some(SearchResultLocations { suffixes, ranks }),
-            })
-        } else {
-            Ok(SearchResult {
-                query_num,
-                query: query.to_string(),
-                locations: None,
-            })
+            start_rank.to_usize()..end_rank
         }
     }
 
@@ -348,7 +307,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
     }
 
     // --------------------------------------------------
-    pub fn get_text_range(&self, pos: Range<usize>) -> Result<Vec<u8>> {
+    fn get_text_range(&self, pos: Range<usize>) -> Result<Vec<u8>> {
         // this is too expensive, copies loooooong stretches of text into vec
         if self.text.is_empty() {
             self.text_file.get_range(pos.clone())

@@ -3,15 +3,13 @@ use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
     suffix_array::SuffixArray,
-    types::{
-        CountOptions, ExtractOptions, ListOptions, LocateOptions, SuffixSortType,
-        SufrBuilderArgs,
-    },
+    types::{Context, Load, OpenOptions, SuffixSortType, SufrBuilderArgs},
     util::read_sequence_file,
 };
 use log::info;
 use regex::Regex;
 use std::{
+    cmp::min,
     ffi::OsStr,
     fmt::Debug,
     fs::{self, File},
@@ -24,6 +22,8 @@ use tabled::Table;
 
 // --------------------------------------------------
 type PositionList = Vec<Range<usize>>;
+
+const LIST_CHUNK: usize = 4096;
 
 // --------------------------------------------------
 #[derive(Parser, Debug)]
@@ -291,33 +291,24 @@ impl ValueEnum for LogLevel {
 
 // --------------------------------------------------
 pub fn count(args: &CountArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::open_with(
+        &args.file,
+        &open_options(args.low_memory, args.very_low_memory, args.max_query_len),
+    )?;
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
     };
 
     let queries = parse_locate_queries(&args.query)?;
-    let num_queries = queries.len();
     let now = Instant::now();
-    let count_args = CountOptions {
-        queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
-    };
-
-    for res in suffix_array.count(count_args)? {
-        writeln!(output, "{} {}", res.query, res.count)?;
+    for (query, hits) in queries.iter().zip(suffix_array.search_many(&queries)) {
+        writeln!(output, "{query} {}", hits?.count())?;
     }
 
-    info!("Count of {} finished in {:?}", num_queries, now.elapsed());
+    info!("Count of {} finished in {:?}", queries.len(), now.elapsed());
     Ok(())
 }
-
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
     // Read sequence input
@@ -373,54 +364,69 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
 // --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::open_with(
+        &args.file,
+        &open_options(args.low_memory, args.very_low_memory, args.max_query_len),
+    )?;
     let queries = parse_locate_queries(&args.query)?;
-    let now = Instant::now();
-    let extract_args = ExtractOptions {
-        queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
-        prefix_len: args.prefix_len,
-        suffix_len: args.suffix_len,
+    let context = Context {
+        before: args.prefix_len.unwrap_or(0),
+        after: args.suffix_len,
     };
+    let now = Instant::now();
 
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
     };
-    for res in suffix_array.extract(extract_args)? {
-        if res.sequences.is_empty() {
-            eprintln!("{} not found", res.query);
-        } else {
-            for seq in res.sequences {
-                writeln!(
-                    output,
-                    ">{}:{}-{} {} {}\n{}",
-                    seq.sequence_name,
-                    seq.sequence_range.start,
-                    seq.sequence_range.end,
-                    res.query,
-                    seq.suffix_offset,
-                    suffix_array.string_at(
-                        seq.sequence_start + seq.sequence_range.start,
-                        Some(seq.sequence_range.end - seq.sequence_range.start),
-                    )?
-                )?;
-            }
+    for (query, hits) in queries.iter().zip(suffix_array.search_many(&queries)) {
+        let hits = hits?;
+        if hits.is_empty() {
+            eprintln!("{query} not found");
+            continue;
+        }
+        for ex in hits.extract(context)? {
+            let start = ex.location.sequence_start;
+            let text = suffix_array.text(
+                start + ex.sequence_range.start..start + ex.sequence_range.end,
+            )?;
+            writeln!(
+                output,
+                ">{}:{}-{} {} {}\n{}",
+                ex.location.sequence_name,
+                ex.sequence_range.start,
+                ex.sequence_range.end,
+                query,
+                ex.suffix_offset,
+                String::from_utf8(text)?,
+            )?;
         }
     }
     info!("Extract finished in {:?}", now.elapsed());
 
     Ok(())
 }
-
 // --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::open_with(
+        &args.file,
+        &open_options(true, args.very_low_memory, None),
+    )?;
+    let meta = suffix_array.metadata()?;
+    if args.show_lcp && !meta.has_lcp {
+        bail!(
+            "{} has no LCP array; rebuild with --write-lcp to show LCP values",
+            args.file
+        );
+    }
+    let lcps = |ranks: Range<usize>| -> Result<Vec<usize>> {
+        if args.show_lcp {
+            suffix_array.lcps(ranks)
+        } else {
+            Ok(vec![0; ranks.len()])
+        }
+    };
+
     let mut ranks: Vec<usize> = vec![];
     for val in &args.ranks {
         let mut parsed: Vec<_> = parse_pos(val)?
@@ -430,21 +436,68 @@ pub fn list(args: &ListArgs) -> Result<()> {
         ranks.append(&mut parsed);
     }
 
-    let list_opts = ListOptions {
-        ranks,
-        show_rank: args.show_rank,
-        show_suffix: args.show_suffix,
-        show_lcp: args.show_lcp,
-        len: args.len,
-        number: args.number,
-        // defaults to stdout
-        output: None,
+    let width = meta.text_len.to_string().len();
+    let suffix_len = args.len.unwrap_or(meta.text_len);
+    let mut output = io::stdout();
+    let mut print = |rank: usize, suffix: usize, lcp: usize| -> Result<()> {
+        let mut line = String::new();
+        if args.show_rank {
+            line += &format!("{rank:width$} ");
+        }
+        if args.show_suffix {
+            line += &format!("{suffix:width$} ");
+        }
+        if args.show_lcp {
+            line += &format!("{lcp:width$} ");
+        }
+        let text = suffix_array.text(suffix..suffix + suffix_len)?;
+        writeln!(output, "{line}{}", String::from_utf8(text)?)?;
+        Ok(())
     };
-    suffix_array.list(list_opts)?;
+
+    if ranks.is_empty() {
+        let last = match args.number {
+            Some(n) if n > 0 => min(n, meta.len_suffixes),
+            _ => meta.len_suffixes,
+        };
+        let mut start = 0;
+        while start < last {
+            let end = min(start + LIST_CHUNK, last);
+            let suffixes = suffix_array.suffixes(start..end)?;
+            let lcps = lcps(start..end)?;
+            for (i, (suffix, lcp)) in suffixes.into_iter().zip(lcps).enumerate() {
+                print(start + i, suffix, lcp)?;
+            }
+            start = end;
+        }
+    } else {
+        for rank in ranks {
+            if rank < meta.len_suffixes {
+                let suffix = suffix_array.suffixes(rank..rank + 1)?[0];
+                let lcp = lcps(rank..rank + 1)?[0];
+                print(rank, suffix, lcp)?;
+            } else {
+                eprintln!("Invalid rank: {rank}");
+            }
+        }
+    }
 
     Ok(())
 }
 
+// --------------------------------------------------
+fn open_options(
+    low_memory: bool,
+    very_low_memory: bool,
+    max_query_len: Option<usize>,
+) -> OpenOptions {
+    let load = |on_disk: bool| if on_disk { Load::Disk } else { Load::Memory };
+    OpenOptions {
+        text: load(very_low_memory),
+        suffix_array: load(low_memory || very_low_memory),
+        max_query_len,
+    }
+}
 // --------------------------------------------------
 fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
     let whitespace = Regex::new(r"\s+").unwrap();
@@ -468,7 +521,10 @@ fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
 
 // --------------------------------------------------
 pub fn locate(args: &LocateArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::open_with(
+        &args.file,
+        &open_options(args.low_memory, args.very_low_memory, args.max_query_len),
+    )?;
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
@@ -477,28 +533,19 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
-    let loc_args = LocateOptions {
-        queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
-    };
 
-    for mut res in suffix_array.locate(loc_args)? {
-        if res.positions.is_empty() {
-            eprintln!("{} not found", res.query);
+    for (query, hits) in queries.iter().zip(suffix_array.search_many(&queries)) {
+        let mut positions = hits?.locate()?;
+        if positions.is_empty() {
+            eprintln!("{query} not found");
             continue;
         }
 
         if args.abs {
             writeln!(
                 output,
-                "{} {}",
-                res.query,
-                res.positions
+                "{query} {}",
+                positions
                     .into_iter()
                     .map(|p| p.suffix.to_string())
                     .collect::<Vec<_>>()
@@ -506,16 +553,16 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
             )?;
         } else {
             // Sort by name then position
-            res.positions.sort_by(|a, b| {
+            positions.sort_by(|a, b| {
                 a.sequence_name
                     .cmp(&b.sequence_name)
                     .then(a.sequence_position.cmp(&b.sequence_position))
             });
 
-            writeln!(output, "{}", res.query)?;
-            let mut prev_seq = "".to_string();
+            writeln!(output, "{query}")?;
+            let mut prev_seq = "";
             let mut buffer = vec![];
-            for pos in res.positions {
+            for pos in positions {
                 if pos.sequence_name != prev_seq {
                     if !buffer.is_empty() {
                         writeln!(output, "{prev_seq} {}", buffer.join(","))?;
@@ -577,7 +624,7 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 
 // --------------------------------------------------
 pub fn summarize(args: &SummarizeArgs) -> Result<()> {
-    let suffix_array = SuffixArray::read(&args.file, true)?;
+    let suffix_array = SuffixArray::open(&args.file)?;
     let meta = suffix_array.metadata()?;
     let num_fmt = NumberFormat::new();
     let mut rows = vec![vec!["Filename".to_string(), meta.filename.clone()]];

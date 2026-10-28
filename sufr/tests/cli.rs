@@ -2,7 +2,7 @@ use anyhow::Result;
 use assert_cmd::Command;
 use libsufr::{
     sufr_file::SufrFile,
-    types::{SeedMask, OUTFILE_VERSION},
+    types::{Load, OpenOptions, SeedMask, OUTFILE_VERSION},
 };
 use pretty_assertions::assert_eq;
 use regex::Regex;
@@ -89,8 +89,9 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
     assert!(output.status.success());
     assert!(outfile.path().exists());
 
-    let actual: SufrFile<u32> = SufrFile::read(outpath, false)?;
-    let expected: SufrFile<u32> = SufrFile::read(expected_file, false)?;
+    let opts = OpenOptions { text: Load::Memory, ..Default::default() };
+    let actual: SufrFile<u32> = SufrFile::open(outpath, &opts)?;
+    let expected: SufrFile<u32> = SufrFile::open(expected_file, &opts)?;
 
     let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
     let expected_sa: Vec<_> = expected.suffix_array_file.iter().collect();

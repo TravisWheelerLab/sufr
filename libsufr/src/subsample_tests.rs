@@ -1,7 +1,11 @@
 //! Tests that subsampling a suffix array for a shorter max query length
 //! gives the same result with and without an LCP array on disk.
 
-use crate::{sufr_builder::SufrBuilder, sufr_file::SufrFile, types::SufrBuilderArgs};
+use crate::{
+    sufr_builder::SufrBuilder,
+    sufr_file::SufrFile,
+    types::{Load, OpenOptions, SufrBuilderArgs},
+};
 use anyhow::Result;
 use pretty_assertions::assert_eq;
 use tempfile::NamedTempFile;
@@ -65,7 +69,7 @@ fn build(
         seed_mask: seed_mask.map(String::from),
         write_lcp,
     })?;
-    let sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
+    let sufr_file: SufrFile<u32> = SufrFile::open(&outpath, &OpenOptions { text: Load::Memory, ..Default::default() })?;
     Ok((outfile, sufr_file))
 }
 
