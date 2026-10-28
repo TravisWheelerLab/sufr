@@ -3,26 +3,29 @@
   "title": "Searches take only a query, and storage and match length are fixed at open",
   "body": "Today a caller searches through `SuffixArray`, which wraps `SufrFile<u32>` or `SufrFile<u64>`. Each operation takes its own options struct, and each struct carries the query list plus `low_memory` and `max_query_len`:\n\n```rust\nlet mut sa = SuffixArray::read(\"x.sufr\", true)?;\nlet res = sa.count(CountOptions { queries, max_query_len: None, low_memory: true })?;\n```\n\n`count`, `locate` and `extract` each rerun the search. The per-call `low_memory` and `max_query_len` decide which suffix array gets loaded into memory, and the first search loads it lazily.\n\n## Proposal\n\nStorage and the match length are fixed at open. A search takes only the query and returns a `Hits` value that borrows the array.\n\n```rust\nlet sa = SuffixArray::open_with(\"x.sufr\", OpenOptions {\n    text: Load::Memory,\n    suffix_array: Load::Memory,\n    max_query_len: Some(20),\n})?;\nlet hits = sa.search(b\"ACG\")?;\nhits.count();\nhits.locate()?;\nhits.extract(Context { before: 10, after: Some(50) })?;\nlet all: Vec<Result<Hits>> = sa.search_many(&queries);\n```\n\n`list` leaves the library. The `sufr` CLI prints rows from `SuffixArray::suffixes` and `SuffixArray::lcps`.\n\n## Cost\n\nThe public API breaks. `CountOptions`, `LocateOptions`, `ExtractOptions`, `SearchOptions`, `ListOptions` and their result types go away. `SufrFile::read` becomes `SufrFile::open`, which takes an `OpenOptions`. One open `SuffixArray` answers at a single `max_query_len`. A caller who wants two lengths opens the file twice.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/d01fa771",
-  "lease_expires": "2026-10-28T03:30:02.581183965Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T03:15:02.57425264Z",
-  "updated_at": "2026-10-28T03:15:02.581183965Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-10-28T03:30:36.114913322Z",
+  "closed_at": "2026-10-28T03:30:36.114913322Z",
+  "close_reason": "Landed in b3e738a on search-api. 98057b3 fixes the extract window clipping on top of it.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "b4a924a",
       "branch": "search-api"
     },
-    "closed": null
+    "closed": {
+      "commit": "98057b3",
+      "branch": "search-api"
+    }
   }
 }
