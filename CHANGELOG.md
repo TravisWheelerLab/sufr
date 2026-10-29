@@ -10,15 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Start `CHANGELOG.md` for changes made after `0.7.12`
-- (potentially breaking) `SufrBuilder` is parameterized with a new type
-  bound `B: ScratchBuffer`, with implementations `DiskScratchBuffer`
-  (default) and `MemoryScratchBuffer`. This makes it
-  possible to use memory instead of disk for `SufrBuilder::new`.
+- Add `libsufr::SuffixArrayBuilder`, a builder-style API for creating a
+  suffix array from a sequence file (`from_sequence_file`) or from in-memory
+  text (`from_data`)
+- Add `SuffixArrayBuilder::with_memory_scratch` to keep the partitions in
+  memory during construction instead of in temporary files
+- Re-export `SuffixArray` at the crate root as `libsufr::SuffixArray`
 - Implement vectorized LCP calculation (AVX2 on x86-64), significantly
   improving build time on some inputs
 - Implement an LCP cache, significantly improving build time on some inputs with very long
   duplications or tandem repeats
-- Add `SufrBuilderArgs::write_lcp` and `sufr create --write-lcp`. The LCP
+- Add `SuffixArrayBuilder::with_write_lcp` and `sufr create --write-lcp`. The LCP
   array is now optional and off by default. `search`, `count`, `locate`,
   and `extract` do not read it; `list --show-lcp` fails on a file without
   one. The header's LCP offset is 0 when there is no LCP array, and
@@ -33,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - (breaking) Make `Int` unable to implement from other crates, due to guarantees required by sufr's `unsafe` code
 - (breaking) Change the partitioning strategy to be based on a prefix of each suffix,
   instead of using random sampling
+- Change the default for `sufr create --num-partitions` from 16 to 1024,
+  which should reduce memory usage on most machines with minimal change to build time
 - Reduce some unnecessary internal allocations
 - During build, the merge sort makes better use of the available threads
   with work-stealing via `rayon::join`
@@ -45,7 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Remove `SufrBuilderArgs::random_seed` aka `sufr create -r,--random-seed`,
+- (breaking) Remove the `sufr_builder` module, `SufrBuilder`,
+  `SufrBuilderArgs`, `SuffixArray::new`, and `SuffixArray::write`. Use
+  `libsufr::SuffixArrayBuilder` instead.
+- Remove `sufr create -r,--random-seed`,
   which is not used for the prefix-based partitioning
 - Remove and make private the `unsafe` byte-reading utilities
   `slice_u8_to_vec`, `usize_to_bytes`, `vec_to_slice_u8`.

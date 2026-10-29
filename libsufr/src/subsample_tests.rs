@@ -1,7 +1,7 @@
 //! Tests that subsampling a suffix array for a shorter max query length
 //! gives the same result with and without an LCP array on disk.
 
-use crate::{sufr_builder::SufrBuilder, sufr_file::SufrFile, types::SufrBuilderArgs};
+use crate::{sufr_file::SufrFile, types::SeedMask, SuffixArrayBuilder};
 use anyhow::Result;
 use pretty_assertions::assert_eq;
 use tempfile::NamedTempFile;
@@ -51,20 +51,18 @@ fn build(
 ) -> Result<(NamedTempFile, SufrFile<u32>)> {
     let outfile = NamedTempFile::new()?;
     let outpath = outfile.path().to_string_lossy().to_string();
-    SufrBuilder::<u32>::new(SufrBuilderArgs {
-        text: text.to_vec(),
-        path: Some(outpath.clone()),
-        low_memory: false,
-        max_query_len,
-        is_dna: true,
-        allow_ambiguity: false,
-        ignore_softmask: false,
-        sequence_starts: vec![0],
-        sequence_names: vec!["s".to_string()],
-        num_partitions: 3,
-        seed_mask: seed_mask.map(String::from),
-        write_lcp,
-    })?;
+    let mut builder =
+        SuffixArrayBuilder::from_data(text.to_vec(), vec![(0, "s".to_string())])
+            .with_dna_options(true, false, false)
+            .with_num_partitions(3)
+            .with_write_lcp(write_lcp);
+    if let Some(n) = max_query_len {
+        builder = builder.with_max_query_len(n);
+    }
+    if let Some(mask) = seed_mask {
+        builder = builder.with_seed_mask(SeedMask::new(mask)?);
+    }
+    builder.build_to_file(&outpath, false)?;
     let sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
     Ok((outfile, sufr_file))
 }

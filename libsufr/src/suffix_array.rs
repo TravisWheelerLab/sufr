@@ -1,10 +1,9 @@
 //! Create and query suffix arrays
 use crate::{
-    sufr_builder::SufrBuilder,
     sufr_file::SufrFile,
     types::{
         CountOptions, CountResult, ExtractOptions, ExtractResult, ListOptions,
-        LocateOptions, LocateResult, SufrBuilderArgs, SufrMetadata,
+        LocateOptions, LocateResult, SufrMetadata,
     },
 };
 use anyhow::Result;
@@ -89,54 +88,6 @@ pub struct SuffixArray {
 
 // --------------------------------------------------
 impl SuffixArray {
-    /// Create a new suffix array and return an in-memory struct.
-    /// This is a combination of `write` and `read`.
-    ///     
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{
-    ///     types::SufrBuilderArgs,
-    ///     suffix_array::SuffixArray,
-    ///     util::read_sequence_file,
-    /// };
-    /// use std::{fs, path::Path};
-    ///
-    /// fn main() -> Result<()> {
-    ///     let sequence_delimiter = b'%';
-    ///     let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), sequence_delimiter)?;
-    ///     let outfile = "3.sufr";
-    ///     let builder_args = SufrBuilderArgs {
-    ///         text: seq_data.seq,
-    ///         path: Some(outfile.to_string()),
-    ///         low_memory: true,
-    ///         max_query_len: None,
-    ///         is_dna: true,
-    ///         allow_ambiguity: false,
-    ///         ignore_softmask: true,
-    ///         sequence_starts: seq_data.start_positions.into_iter().collect(),
-    ///         sequence_names: seq_data.sequence_names,
-    ///         num_partitions: 16,
-    ///         seed_mask: None,
-    ///         write_lcp: true,
-    ///     };
-    ///
-    ///     let suffix_array = SuffixArray::new(builder_args)?;
-    ///     let meta = suffix_array.metadata()?;
-    ///     assert_eq!(meta.text_len, 113);
-    ///     assert_eq!(meta.len_suffixes, 101);
-    ///
-    ///     fs::remove_file(&outfile)?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    pub fn new(args: SufrBuilderArgs) -> Result<SuffixArray> {
-        let low_memory = args.low_memory;
-        let path = Self::write(args)?;
-        Self::read(&path, low_memory)
-    }
-
     // --------------------------------------------------
     /// Count instances of queries
     ///
@@ -418,54 +369,5 @@ impl SuffixArray {
     ///
     pub fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
-    }
-
-    // --------------------------------------------------
-    /// Create a new suffix array and write to disk
-    /// ```
-    /// use anyhow::Result;
-    /// use libsufr::{
-    ///     types::SufrBuilderArgs,
-    ///     suffix_array::SuffixArray,
-    ///     util::read_sequence_file,
-    /// };
-    /// use std::{fs, path::Path};
-    ///
-    /// fn main() -> Result<()> {
-    ///     let sequence_delimiter = b'%';
-    ///     let seq_data = read_sequence_file(Path::new("../data/inputs/3.fa"), sequence_delimiter)?;
-    ///     let outfile = "3.sufr";
-    ///     let builder_args = SufrBuilderArgs {
-    ///         text: seq_data.seq,
-    ///         path: Some(outfile.to_string()),
-    ///         low_memory: true,
-    ///         max_query_len: None,
-    ///         is_dna: true,
-    ///         allow_ambiguity: false,
-    ///         ignore_softmask: false,
-    ///         sequence_starts: seq_data.start_positions.into_iter().collect(),
-    ///         sequence_names: seq_data.sequence_names,
-    ///         num_partitions: 16,
-    ///         seed_mask: None,
-    ///         write_lcp: true,
-    ///     };
-    ///
-    ///     let outpath = SuffixArray::write(builder_args)?;
-    ///     fs::remove_file(&outfile)?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    pub fn write(args: SufrBuilderArgs) -> Result<String> {
-        let path = if (args.text.len() as u64) < u32::MAX as u64 {
-            let builder: SufrBuilder<u32> = SufrBuilder::new(args)?;
-            builder.path
-        } else {
-            let builder: SufrBuilder<u64> = SufrBuilder::new(args)?;
-            builder.path
-        };
-
-        Ok(path)
     }
 }

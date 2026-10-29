@@ -1,21 +1,9 @@
-//! Create on-disk suffix/LCP arrays
-//!
-//! Sufr builds the suffix and LCP (longest common prefix) arrays on disk.
-//! The suffixes are partitioned into temporary files, and these are sorted
-//! in parallel.
-//! Call the `write` method to serialized the data structures to
-//! a file (preferably with the _.sufr_ extension) that can be read
-//! by `sufr_file`.
-//!
-
 use crate::{
     file_access::write_at,
     lcp::{lcp, LcpCache},
-    types::{
-        Int, SeedMask, SuffixSortType, SufrBuilderArgs, OUTFILE_VERSION,
-        SENTINEL_CHARACTER,
-    },
-    util::{find_lcp_full_offset, slice_int_to_slice_u8, vec_to_slice_u8},
+    suffix_array::SuffixArray,
+    types::{Int, SeedMask, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER},
+    util::{self, find_lcp_full_offset, slice_int_to_slice_u8, vec_to_slice_u8},
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -28,252 +16,223 @@ use std::{
     io::{Read, Write},
     mem,
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Mutex,
     time::Instant,
 };
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
 
-// --------------------------------------------------
-/// A struct for partitioning, sorting, and writing suffixes to disk
-#[derive(Debug)]
-pub struct SufrBuilder<T: Int, B: ScratchBuffer = DiskScratchBuffer<T>> {
-    /// The serialization version.
-    pub version: u8,
+/// Configuration and construction of [`SuffixArray`]s.
+///
+/// Suffix Arrays can be constructed from a sequence file with [`SuffixArrayBuilder::from_sequence_file`],
+/// or from in-memory sequence data with [`SuffixArrayBuilder::from_data`].
+///
+/// The input, processing, and output options can be configured with the various
+/// `with_*` methods on this structure.
+///
+/// After configuration, call [`SuffixArrayBuilder::build_to_file`] to construct the suffix array
+/// and write it out to a file.
+///
+/// # Examples
+///
+/// ```
+/// use anyhow::Result;
+/// use libsufr::SuffixArrayBuilder;
+///
+/// fn main() -> Result<()> {
+///     let outfile = "3.sufr";
+///     let suffix_array = SuffixArrayBuilder::from_sequence_file("../data/inputs/3.fa", b'%')?
+///         .with_dna_options(true, false, true)
+///         .build_to_file(outfile, false)?;
+///
+///     let meta = suffix_array.metadata()?;
+///     assert_eq!(meta.text_len, 113);
+///     assert_eq!(meta.len_suffixes, 101);
+///
+///     std::fs::remove_file(&outfile)?;
+///     Ok(())
+/// }
+/// ```
+///
+pub struct SuffixArrayBuilder {
+    // INPUT
+    text: Vec<u8>,
+    sequences: Vec<(usize, String)>,
 
-    /// Whether or not the sequence is nucleotide.
-    pub is_dna: bool,
+    // INPUT OPTIONS
+    is_dna: bool,
+    allow_ambiguity: bool,
+    ignore_softmask: bool,
 
-    /// Whether or not the nucleotide sequence allows characters
-    /// other than A, C, G, or T.
-    pub allow_ambiguity: bool,
+    // PROCESSING OPTIONS
+    sort_type: SuffixSortType,
+    num_partitions: usize,
+    memory_scratch: bool,
 
-    /// Whether or not the nucleotide sequence ignores
-    /// softmasked/lowercase bases.
-    pub ignore_softmask: bool,
+    // OUTPUT OPTIONS
+    force_64bit: bool,
+    write_lcp: bool,
 
-    /// The length of the given text.
-    pub text_len: T,
-
-    /// The number of suffixes that were indexed from the text, which
-    /// could be less than `text_len` when ambiguity/softmasked values
-    /// are ignored.
-    pub num_suffixes: T,
-
-    /// The number of sequences represented in the text.
-    pub num_sequences: T,
-
-    /// The positions in the text where each sequence starts.
-    pub sequence_starts: Vec<T>,
-
-    /// The names of the sequences in the text. Should be the same length
-    /// as `sequence_starts`.
-    pub sequence_names: Vec<String>,
-
-    /// The text that was indexed.
-    pub text: Vec<u8>,
-
-    /// Whether the text is sorted fully, using a maximum query length,
-    /// or a seed mask.
-    pub sort_type: SuffixSortType,
-
-    /// The number of partitions to use when building.
-    partitions: Vec<Partition<B>>,
-
-    /// The locations of long runs of Ns in nucleotide text.
-    pub n_ranges: Vec<Range<usize>>,
-
-    /// The name of the output file
-    pub path: String,
-
-    /// Whether to write the LCP array
-    pub write_lcp: bool,
+    // BUILD STATE
+    n_ranges: Vec<Range<usize>>,
 }
 
-// --------------------------------------------------
-/// The output file after the header and text have been written.
-/// The suffix and LCP arrays are written into it at known offsets,
-/// possibly from several threads.
-struct Output {
-    file: File,
+impl SuffixArrayBuilder {
+    /// Creates a new `SuffixArrayBuilder` from the contents of a sequence file.
+    /// `sequence_delimiter` must be within the alphabet or sort below all characters -
+    /// `%` is suggested for biological sequence.
+    // TODO: "must be" - should either be nonconfigurable or should support other values.
+    pub fn from_sequence_file(
+        path: impl AsRef<Path>,
+        sequence_delimiter: u8,
+    ) -> Result<Self> {
+        let now = Instant::now();
+        let data = util::read_sequence_file(path.as_ref(), sequence_delimiter)?;
+        info!(
+            "Read input of len {} in {:?}",
+            data.seq.len(),
+            now.elapsed()
+        );
+        let sequences = data
+            .start_positions
+            .into_iter()
+            .zip(data.sequence_names)
+            .collect();
+        Ok(Self::from_data(data.seq, sequences))
+    }
 
-    /// Where the header records the text/SA/LCP positions
-    locs_pos: u64,
+    /// Creates a new `SuffixArrayBuilder` from in-memory `text`. `sequences`
+    /// describes the start positions and names for subsequences of `text`,
+    /// which should have a `%` inserted between them.
+    pub fn from_data(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
+        // TODO: validate text and sequences?
+        // - sequences should be sorted, first starting at 0, length < text.len(), no duplicates. If empty, default?
+        Self {
+            text,
+            sequences,
+            is_dna: false,
+            allow_ambiguity: false,
+            ignore_softmask: false,
+            sort_type: SuffixSortType::MaxQueryLen(0),
+            num_partitions: 1024,
+            memory_scratch: false,
+            force_64bit: false,
+            write_lcp: false,
+            n_ranges: vec![],
+        }
+    }
 
-    /// Byte position of the text
-    text_pos: usize,
+    /// Sets whether the sequence text `is_dna` (default: `false`),
+    /// and if so whether to index `N`s (`allow_ambiguity`, default: `false`).
+    /// Additionally sets whether softmasked characters should be treated as `N`
+    /// (default: `false`, treat soft-masked as unmasked by converting back to uppercase).
+    pub fn with_dna_options(
+        mut self,
+        is_dna: bool,
+        allow_ambiguity: bool,
+        ignore_softmask: bool,
+    ) -> Self {
+        self.is_dna = is_dna;
+        self.allow_ambiguity = allow_ambiguity;
+        self.ignore_softmask = ignore_softmask;
+        self
+    }
 
-    /// Byte position of the suffix array
-    sa_pos: usize,
+    /// Sets the `sort_type` of this builder.
+    pub fn with_sort_type(mut self, sort_type: SuffixSortType) -> Self {
+        self.sort_type = sort_type;
+        self
+    }
+    /// Sets the `max_query_len` of this builder.
+    pub fn with_max_query_len(self, max_query_len: usize) -> Self {
+        self.with_sort_type(SuffixSortType::MaxQueryLen(max_query_len))
+    }
+    /// Sets the `seed_mask` of this builder.
+    pub fn with_seed_mask(self, mask: SeedMask) -> Self {
+        self.with_sort_type(SuffixSortType::Mask(mask))
+    }
+    /// Sets the number of partitions to be used during the construction (default: `1024`).
+    pub fn with_num_partitions(mut self, num_partitions: usize) -> Self {
+        self.num_partitions = num_partitions;
+        self
+    }
+    /// Sets whether to keep the partitions in memory during construction
+    /// instead of in temporary files (default: `false`).
+    pub fn with_memory_scratch(mut self, memory_scratch: bool) -> Self {
+        self.memory_scratch = memory_scratch;
+        self
+    }
 
-    /// Byte position of the LCP array, or 0 when none is written
-    lcp_pos: usize,
+    // Sets whether or not to force 64-bit output even for small sequences (default: `false`).
+    // Files must be read via SufrFile::<u64> directly so this is intended for testing only.
+    #[cfg(test)]
+    pub(crate) fn with_force_64bit(mut self, force_64bit: bool) -> Self {
+        self.force_64bit = force_64bit;
+        self
+    }
+    /// Sets whether or not to write the LCP array after construction (default: `false`).
+    pub fn with_write_lcp(mut self, write_lcp: bool) -> Self {
+        self.write_lcp = write_lcp;
+        self
+    }
 
-    /// Byte position after the arrays, where the sequence names go
-    end_pos: usize,
-}
+    /// Builds the suffix array, writing it to `path` and loading it into memory.
+    pub fn build_to_file(
+        mut self,
+        path: impl AsRef<Path>,
+        low_memory: bool,
+    ) -> Result<SuffixArray> {
+        let path = path.as_ref();
+        let occupancy = self.normalize_text();
+        if self.allow_ambiguity {
+            self.n_ranges = find_n_ranges(&self.text);
+        }
 
-/// Write all of `buf` at `offset`, in parallel 64 MB chunks.
-fn write_all_at(file: &File, buf: &[u8], offset: u64) -> Result<()> {
-    let chunk_len = 1 << 26;
-    buf.par_chunks(chunk_len)
-        .enumerate()
-        .try_for_each(|(i, mut chunk)| -> Result<()> {
-            let mut pos = offset + (i * chunk_len) as u64;
-            while !chunk.is_empty() {
-                let n = write_at(file, chunk, pos)?;
-                if n == 0 {
-                    bail!("Failed to write to output file");
-                }
-                chunk = &chunk[n..];
-                pos += n as u64;
+        let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
+        match (fits_u32, self.memory_scratch) {
+            (true, false) => {
+                self.build::<u32, DiskScratchBuffer<u32>>(path, occupancy)?
             }
-            Ok(())
-        })
-}
+            (true, true) => {
+                self.build::<u32, MemoryScratchBuffer<u32>>(path, occupancy)?
+            }
+            (false, false) => {
+                self.build::<u64, DiskScratchBuffer<u64>>(path, occupancy)?
+            }
+            (false, true) => {
+                self.build::<u64, MemoryScratchBuffer<u64>>(path, occupancy)?
+            }
+        }
+        SuffixArray::read(&path.to_string_lossy(), low_memory)
+    }
 
-// --------------------------------------------------
-impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
-    /// Create a new suffix/LCP array.
-    /// The results will live in temporary files on-disk.
-    /// The integer values representing the positions of each suffix will
-    /// be `u32` when the length of the text is less than 2^32 and `u64`,
-    /// otherwise.
-    ///
-    /// ```
-    /// use anyhow::Result;
-    /// use std::{fs, path::Path};
-    /// use libsufr::{
-    ///     sufr_builder::SufrBuilder,
-    ///     types::SufrBuilderArgs,
-    ///     util::read_sequence_file,
-    /// };
-    ///
-    /// fn main() -> Result<()> {
-    ///     let path = Path::new("../data/inputs/1.fa");
-    ///     let sequence_delimiter = b'%';
-    ///     let seq_data = read_sequence_file(path, sequence_delimiter)?;
-    ///     let text_len = seq_data.seq.len() as u64;
-    ///     let outfile = "1.sufr";
-    ///     let builder_args = SufrBuilderArgs {
-    ///         text: seq_data.seq,
-    ///         low_memory: false,
-    ///         path: Some(outfile.to_string()),
-    ///         max_query_len: None,
-    ///         is_dna: true,
-    ///         allow_ambiguity: false,
-    ///         ignore_softmask: true,
-    ///         sequence_starts: seq_data.start_positions.into_iter().collect(),
-    ///         sequence_names: seq_data.sequence_names,
-    ///         num_partitions: 1024,
-    ///         seed_mask: None,
-    ///         write_lcp: true,
-    ///     };
-    ///
-    ///     if text_len < u32::MAX as u64 {
-    ///         let sufr_builder: SufrBuilder<u32> = SufrBuilder::new(builder_args)?;
-    ///     } else {
-    ///         let sufr_builder: SufrBuilder<u64> = SufrBuilder::new(builder_args)?;
-    ///     }
-    ///
-    ///     fs::remove_file(&outfile)?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn new(args: SufrBuilderArgs) -> Result<SufrBuilder<T, B>> {
-        let mut text = args.text;
-
-        // Count the byte occurrences so that the best alphabet can be selected for partitioning...
+    /// Upper-case soft-masked characters (or replace them with `N` when
+    /// `ignore_softmask` is set) and return which bytes occur in the text.
+    fn normalize_text(&mut self) -> [u8; 256] {
         let mut occupancy = [0u8; 256];
-        text.iter_mut().for_each(|b| {
-            // Check for lowercase
-            if (97..=122).contains(b) {
-                if args.ignore_softmask {
+        for b in self.text.iter_mut() {
+            if b.is_ascii_lowercase() {
+                if self.ignore_softmask {
                     *b = b'N'
                 } else {
-                    // only shift lowercase ASCII
-                    *b &= 0b1011111
+                    *b = b.to_ascii_uppercase()
                 }
             }
             occupancy[*b as usize] |= 1;
-        });
-        let text_len = T::from_usize(text.len());
-
-        if args.seed_mask.is_some() && args.max_query_len.is_some() {
-            bail!("Cannot use max_query_len and seed_mask together");
         }
-
-        let sort_type = if let Some(mask) = args.seed_mask {
-            let seed_mask = SeedMask::new(&mask)?;
-            SuffixSortType::Mask(seed_mask)
-        } else {
-            SuffixSortType::MaxQueryLen(args.max_query_len.unwrap_or(0))
-        };
-
-        // Check for long runs of Ns when ambiguous bases are allowed.
-        let mut n_ranges: Vec<Range<usize>> = vec![];
-        if args.allow_ambiguity {
-            let mut n_start: Option<usize> = None;
-            let min_n = 1000;
-            let now = Instant::now();
-            for (i, &byte) in text.iter().enumerate() {
-                if byte == b'N' {
-                    if n_start.is_none() {
-                        n_start = Some(i);
-                    }
-                } else {
-                    if let Some(prev) = n_start {
-                        if i - prev >= min_n {
-                            n_ranges.push(prev..i);
-                        }
-                    }
-                    n_start = None;
-                }
-            }
-            info!("Scanned for runs of Ns in {:?}", now.elapsed());
-        }
-
-        let mut sa = SufrBuilder {
-            version: OUTFILE_VERSION,
-            is_dna: args.is_dna,
-            allow_ambiguity: args.allow_ambiguity,
-            ignore_softmask: args.ignore_softmask,
-            sort_type,
-            text_len,
-            num_suffixes: T::default(),
-            text,
-            num_sequences: T::from_usize(args.sequence_starts.len()),
-            sequence_starts: args
-                .sequence_starts
-                .into_iter()
-                .map(T::from_usize)
-                .collect::<Vec<_>>(),
-            sequence_names: args.sequence_names,
-            partitions: vec![],
-            n_ranges,
-            path: args.path.unwrap_or("out.sufr".to_string()),
-            write_lcp: args.write_lcp,
-        };
-        sa.sort(args.num_partitions, occupancy)?;
-        sa.write()?;
-        Ok(sa)
+        occupancy
     }
 
-    // --------------------------------------------------
-    // TODO: Remove? Only useful during debugging
-    // Return the string at a given suffix position
-    // Warning: Assumes pos is always found.
-    //
-    // Args:
-    // * `pos`: the suffix position
-    //pub(crate) fn string_at(&self, pos: usize) -> String {
-    //    self.text
-    //        .get(pos..)
-    //        .map(|v| String::from_utf8(v.to_vec()).unwrap())
-    //        .unwrap()
-    //}
+    fn build<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
+        &self,
+        path: &Path,
+        occupancy: [u8; 256],
+    ) -> Result<()> {
+        let partitions = self.sort::<T, B>(occupancy)?;
+        self.write::<T, B>(path, partitions)?;
+        Ok(())
+    }
 
     // --------------------------------------------------
     /// If a suffix is in a long run of Ns, return the position of the final N
@@ -308,7 +267,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     ///   that two suffixes share the `skip` number in common already.
     /// * `lcp_cache`: optional LcpCache to store/retrieve from, for optimization
     #[inline(always)]
-    fn find_lcp(
+    fn find_lcp<T: Int>(
         &self,
         start1: usize,
         start2: usize,
@@ -327,14 +286,14 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                     .iter()
                     .skip(skip)
                     .map(|&offset| start1 + offset)
-                    .filter(|&v| v < self.text_len.to_usize());
+                    .filter(|&v| v < self.text.len());
 
                 let b_vals = mask
                     .positions
                     .iter()
                     .skip(skip)
                     .map(|&offset| start2 + offset)
-                    .filter(|&v| v < self.text_len.to_usize());
+                    .filter(|&v| v < self.text.len());
 
                 unsafe {
                     T::from_usize(
@@ -356,7 +315,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                         T::from_usize(min(end1 - start1, end2 - start2))
                     }
                     _ => {
-                        let text_len = self.text_len.to_usize();
+                        let text_len = self.text.len();
                         let len = if max_query_len > &0 {
                             *max_query_len
                         } else {
@@ -385,78 +344,13 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     }
 
     // --------------------------------------------------
-    /// Determine whether or not the first suffix position is lexicographically
-    /// less than the second.
-    /// This function is used to place suffixes into the highest partition
-    /// for sorting.
-    ///
-    /// Args:
-    /// * `start1`: the position of the first suffix
-    /// * `start2`: the position of the second suffix
-    #[cfg(test)]
-    #[inline(always)]
-    fn is_less(&self, start1: T, start2: T) -> bool {
-        if start1 == start2 {
-            false
-        } else {
-            let max_query_len = match &self.sort_type {
-                SuffixSortType::Mask(seed_mask) => T::from_usize(seed_mask.weight),
-                SuffixSortType::MaxQueryLen(max_query_len) => {
-                    if max_query_len > &0 {
-                        T::from_usize(*max_query_len)
-                    } else {
-                        self.text_len
-                    }
-                }
-            };
-
-            let len_lcp = find_lcp_full_offset(
-                self.find_lcp(
-                    start1.to_usize(),
-                    start2.to_usize(),
-                    max_query_len,
-                    0,
-                    None,
-                )
-                .to_usize(),
-                &self.sort_type,
-            );
-
-            if len_lcp >= max_query_len.to_usize() {
-                // The strings are equal(ish)
-                false
-            } else {
-                // Look at the next character
-                match (
-                    self.text.get(start1.to_usize() + len_lcp),
-                    self.text.get(start2.to_usize() + len_lcp),
-                ) {
-                    (Some(a), Some(b)) => a < b,
-                    (None, Some(_)) => true,
-                    _ => false,
-                }
-            }
-        }
-    }
-
-    // --------------------------------------------------
-    /// Find the highest partition to place a suffix for sorting.
-    ///
-    /// Args:
-    /// * `suffix`: a suffix position
-    /// * `pivots`: randomly selected suffix positions sorted lexicographically
-    #[cfg(test)]
-    #[inline(always)]
-    fn upper_bound(&self, suffix: T, pivots: &[T]) -> usize {
-        // Returns 0 when pivots is empty
-        pivots.partition_point(|&p| self.is_less(p, suffix))
-    }
-
-    // --------------------------------------------------
     /// Write the suffixes into temporary files for sorting
-    fn partition<A: PartitioningAlphabet + Send + Sync>(
-        &mut self,
-    ) -> Result<PartitionBuildResult<B>> {
+    fn partition<T, B, A>(&self) -> Result<PartitionBuildResult<B>>
+    where
+        T: Int,
+        B: ScratchBuffer<Item = T> + Send + Sync,
+        A: PartitioningAlphabet + Send + Sync,
+    {
         let alphabet = A::init();
         let mut buffers: Vec<_> = vec![];
         for _ in 0..A::NUM_PARTITIONS {
@@ -577,7 +471,11 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// Args:
     /// * `num_partitions`: the number of partitions to used
     /// * `occupancy`: occurrences of bytes, used to select partitioning strategy
-    fn sort(&mut self, num_partitions: usize, mut occupancy: [u8; 256]) -> Result<()> {
+    fn sort<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
+        &self,
+        mut occupancy: [u8; 256],
+    ) -> Result<Vec<Partition<B>>> {
+        let num_partitions = self.num_partitions;
         // ... and if there are none outside of the nucleic alphabet then use it.
         for &c in NucleicAcidAlphabet::ALPHABET.iter() {
             occupancy[c as usize] = 0;
@@ -586,7 +484,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             == 0
         {
             info!("Detected Nucleic Acid alphabet: using 5-character prefix for partitioning");
-            self.partition::<NucleicAcidAlphabet>()?
+            self.partition::<T, B, NucleicAcidAlphabet>()?
         } else {
             // Otherwise check the same for the amino acid alphabet
             for &c in AminoAcidAlphabet::ALPHABET.iter() {
@@ -594,10 +492,10 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             }
             if occupancy.iter().map(|&b| b as usize).sum::<usize>() == 0 {
                 info!("Detected Amino Acid alphabet: using 3-character prefix for partitioning");
-                self.partition::<AminoAcidAlphabet>()?
+                self.partition::<T, B, AminoAcidAlphabet>()?
             } else {
                 info!("Detected non-Nucleic/non-Amino Acid: using 2-byte prefix for partitioning");
-                self.partition::<BytesAlphabet>()?
+                self.partition::<T, B, BytesAlphabet>()?
             }
         };
 
@@ -705,14 +603,11 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             total_size / num_partitions,
             total_sort_time.elapsed()
         );
-        self.num_suffixes = T::from_usize(sizes.iter().sum());
-        self.partitions = partitions;
-
-        Ok(())
+        Ok(partitions)
     }
 
     // --------------------------------------------------
-    fn merge_sort(
+    fn merge_sort<T: Int>(
         &self,
         x: &mut [T],
         y: &mut [T],
@@ -753,7 +648,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     }
 
     // --------------------------------------------------
-    fn merge(
+    fn merge<T: Int>(
         &self,
         suffix_array: &mut [T],
         mid: usize,
@@ -786,7 +681,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                 }
                 Ordering::Equal => {
                     let shorter_suffix = max(x[idx_x], y[idx_y]);
-                    let max_n = self.text_len - shorter_suffix;
+                    let max_n = T::from_usize(self.text.len()) - shorter_suffix;
 
                     let context = match &self.sort_type {
                         SuffixSortType::Mask(seed_mask) => T::from_usize(
@@ -897,25 +792,29 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// parallel at its precomputed offset, then the header is patched
     /// with the array positions.
     /// Returns the number of bytes written to disk.
-    fn write(&mut self) -> Result<usize> {
+    fn write<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
+        &self,
+        path: &Path,
+        partitions: Vec<Partition<B>>,
+    ) -> Result<usize> {
         let now = Instant::now();
-        let out = self.open_output(self.num_suffixes.to_usize())?;
+        let num_suffixes = partitions.iter().map(|p| p.len).sum();
+        let out = self.open_output::<T>(path, num_suffixes)?;
         let int_size = mem::size_of::<T>();
 
         // Offset (in elements) of each partition in the arrays, and the
         // last suffix of the preceding partition for fixing the LCP boundary
-        let mut offsets = Vec::with_capacity(self.partitions.len());
+        let mut offsets = Vec::with_capacity(partitions.len());
         let mut total = 0;
         let mut prev_last_suffix = None;
-        for partition in &self.partitions {
+        for partition in &partitions {
             offsets.push((total, prev_last_suffix));
             total += partition.len;
             prev_last_suffix = Some(partition.last_suffix);
         }
 
-        // NB: Taking the partitions and consuming their buffers frees
+        // NB: Consuming the partitions' buffers frees
         // memory/disk space along the way
-        let partitions = mem::take(&mut self.partitions);
         partitions.into_par_iter().zip(offsets).try_for_each(
             |(partition, (offset, prev_last_suffix))| -> Result<()> {
                 let sa = partition.sa_buffer.consume()?;
@@ -934,7 +833,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
                             *val = self.find_lcp(
                                 prev_last_suffix,
                                 partition.first_suffix,
-                                self.text_len,
+                                T::from_usize(self.text.len()),
                                 0, // start at beginning
                                 None,
                             );
@@ -953,7 +852,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         let bytes_out = self.finish_output(&out)?;
         info!(
             "Wrote suffix array to '{}' in {:?}",
-            self.path,
+            path.display(),
             now.elapsed()
         );
         Ok(bytes_out)
@@ -963,10 +862,10 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// Create the output file and write the header and text. The suffix
     /// (and optional LCP) arrays are written afterwards at the positions
     /// recorded in the returned `Output`.
-    fn open_output(&self, num_suffixes: usize) -> Result<Output> {
+    fn open_output<T: Int>(&self, path: &Path, num_suffixes: usize) -> Result<Output> {
         let now = Instant::now();
-        let filename = &self.path;
-        let file = File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+        let file =
+            File::create(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
 
         // Various metadata
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
@@ -976,7 +875,7 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
             vec![OUTFILE_VERSION, is_dna, allow_ambiguity, ignore_softmask];
 
         // Text length
-        header.extend(self.text_len.to_usize().to_le_bytes());
+        header.extend(self.text.len().to_le_bytes());
 
         // Locations of text, suffix array, and LCP; filled in by finish_output
         let locs_pos = header.len() as u64;
@@ -996,10 +895,15 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
         header.extend(max_query_len.to_le_bytes());
 
         // Number of sequences
-        header.extend(self.sequence_starts.len().to_le_bytes());
+        header.extend(self.sequences.len().to_le_bytes());
 
         // Sequence starts
-        header.extend_from_slice(vec_to_slice_u8(&self.sequence_starts));
+        let sequence_starts: Vec<T> = self
+            .sequences
+            .iter()
+            .map(|&(start, _)| T::from_usize(start))
+            .collect();
+        header.extend_from_slice(vec_to_slice_u8(&sequence_starts));
 
         // Seed mask
         match &self.sort_type {
@@ -1042,7 +946,12 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
     /// the file.
     fn finish_output(&self, out: &Output) -> Result<usize> {
         // Sequence names are variable in length so they are at the end
-        let names = bincode::serialize(&self.sequence_names)?;
+        let names: Vec<&str> = self
+            .sequences
+            .iter()
+            .map(|(_, name)| name.as_str())
+            .collect();
+        let names = bincode::serialize(&names)?;
         write_all_at(&out.file, &names, out.end_pos as u64)?;
 
         // Go back to header and record the locations
@@ -1053,6 +962,72 @@ impl<T: Int, B: ScratchBuffer<Item = T> + Send + Sync> SufrBuilder<T, B> {
 
         Ok(out.end_pos + names.len())
     }
+}
+
+// --------------------------------------------------
+/// The output file after the header and text have been written.
+/// The suffix and LCP arrays are written into it at known offsets,
+/// possibly from several threads.
+struct Output {
+    file: File,
+
+    /// Where the header records the text/SA/LCP positions
+    locs_pos: u64,
+
+    /// Byte position of the text
+    text_pos: usize,
+
+    /// Byte position of the suffix array
+    sa_pos: usize,
+
+    /// Byte position of the LCP array, or 0 when none is written
+    lcp_pos: usize,
+
+    /// Byte position after the arrays, where the sequence names go
+    end_pos: usize,
+}
+
+/// Write all of `buf` at `offset`, in parallel 64 MB chunks.
+fn write_all_at(file: &File, buf: &[u8], offset: u64) -> Result<()> {
+    let chunk_len = 1 << 26;
+    buf.par_chunks(chunk_len)
+        .enumerate()
+        .try_for_each(|(i, mut chunk)| -> Result<()> {
+            let mut pos = offset + (i * chunk_len) as u64;
+            while !chunk.is_empty() {
+                let n = write_at(file, chunk, pos)?;
+                if n == 0 {
+                    bail!("Failed to write to output file");
+                }
+                chunk = &chunk[n..];
+                pos += n as u64;
+            }
+            Ok(())
+        })
+}
+
+/// Find the runs of at least 1000 `N`s in `text`.
+fn find_n_ranges(text: &[u8]) -> Vec<Range<usize>> {
+    let mut n_ranges: Vec<Range<usize>> = vec![];
+    let mut n_start: Option<usize> = None;
+    let min_n = 1000;
+    let now = Instant::now();
+    for (i, &byte) in text.iter().enumerate() {
+        if byte == b'N' {
+            if n_start.is_none() {
+                n_start = Some(i);
+            }
+        } else {
+            if let Some(prev) = n_start {
+                if i - prev >= min_n {
+                    n_ranges.push(prev..i);
+                }
+            }
+            n_start = None;
+        }
+    }
+    info!("Scanned for runs of Ns in {:?}", now.elapsed());
+    n_ranges
 }
 
 /// Alphabet for partitioning by a prefix key,
@@ -1176,12 +1151,9 @@ struct PartitionBuildResult<B: ScratchBuffer<Item: Int>> {
 }
 
 /// Trait representing scratch buffers that may be backed by disk or memory.
-pub trait ScratchBuffer: Default {
+trait ScratchBuffer: Default {
     /// The type of items in the buffer
     type Item: Int;
-
-    /// Append `val` to `self`.
-    fn push(&mut self, val: Self::Item) -> Result<()>;
 
     /// Append a slice of `vals` to `self`.
     fn extend_from_slice(&mut self, vals: &[Self::Item]) -> Result<()>;
@@ -1201,7 +1173,7 @@ pub trait ScratchBuffer: Default {
 
 /// Implements a scratch buffer that writes its items to disk, then reads them back from disk later
 #[derive(Debug)]
-pub struct DiskScratchBuffer<T: Int> {
+struct DiskScratchBuffer<T: Int> {
     buf: Vec<T>,
     count: usize,
     path: Option<PathBuf>,
@@ -1235,15 +1207,6 @@ impl<T: Int> Default for DiskScratchBuffer<T> {
 
 impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
     type Item = T;
-    fn push(&mut self, val: T) -> Result<()> {
-        self.buf.push(val);
-        if self.buf.len() >= Self::FLUSH_AT {
-            self.flush()?;
-        }
-
-        Ok(())
-    }
-
     fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
         self.buf.extend_from_slice(vals);
         if self.buf.len() >= Self::FLUSH_AT {
@@ -1308,7 +1271,7 @@ impl<T: Int> Drop for DiskScratchBuffer<T> {
 
 /// Implements a scratch buffer that always keeps all items in memory
 #[derive(Debug)]
-pub struct MemoryScratchBuffer<T: Int> {
+struct MemoryScratchBuffer<T: Int> {
     data: Vec<T>,
 }
 
@@ -1320,11 +1283,6 @@ impl<T: Int> Default for MemoryScratchBuffer<T> {
 
 impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
     type Item = T;
-
-    fn push(&mut self, val: T) -> Result<()> {
-        self.data.push(val);
-        Ok(())
-    }
 
     fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
         self.data.extend_from_slice(vals);
@@ -1351,189 +1309,40 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
 // --------------------------------------------------
 #[cfg(test)]
 mod test {
-    use super::{SufrBuilder, SufrBuilderArgs};
+    use super::SuffixArrayBuilder;
+    use crate::types::SeedMask;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_is_less() -> Result<()> {
-        //           012345
-        let text = b"TTTAGC".to_vec();
-        let outfile = NamedTempFile::new()?;
-        let args = SufrBuilderArgs {
-            text,
-            low_memory: true,
-            path: Some(outfile.path().to_string_lossy().to_string()),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            sequence_names: vec!["1".to_string()],
-            num_partitions: 2,
-            seed_mask: None,
-            write_lcp: true,
-        };
-        let sufr = SufrBuilder::<u32>::new(args)?;
-
-        // 1: TTAGC
-        // 0: TTTAGC
-        assert!(sufr.is_less(1, 0));
-
-        // 0: TTTAGC
-        // 1: TTAGC
-        assert!(!sufr.is_less(0, 1));
-
-        // 2: TAGC
-        // 3: AGC
-        assert!(!sufr.is_less(2, 3));
-
-        // 3: AGC
-        // 0: TTTAGC
-        assert!(sufr.is_less(3, 0));
-
-        fs::remove_file(outfile)?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_is_less_max_query_len() -> Result<()> {
-        //           012345
-        let text = b"TTTAGC".to_vec();
-        let outfile = NamedTempFile::new()?;
-        let args = SufrBuilderArgs {
-            text,
-            low_memory: true,
-            path: Some(outfile.path().to_string_lossy().to_string()),
-            max_query_len: Some(2),
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            sequence_names: vec!["1".to_string()],
-            num_partitions: 2,
-            seed_mask: None,
-            write_lcp: true,
-        };
-        let sufr = SufrBuilder::<u32>::new(args)?;
-
-        // 1: TTAGC
-        // 0: TTTAGC
-        // This is true w/o MQL 2 but here they are equal
-        // ("TT" == "TT")
-        assert!(!sufr.is_less(1, 0));
-
-        // 0: TTTAGC
-        // 1: TTAGC
-        // ("TT" == "TT")
-        assert!(!sufr.is_less(0, 1));
-
-        // 2: TAGC
-        // 3: AGC
-        assert!(!sufr.is_less(2, 3));
-
-        // 3: AGC
-        // 0: TTTAGC
-        assert!(sufr.is_less(3, 0));
-
-        fs::remove_file(outfile)?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_is_less_seed_mask() -> Result<()> {
-        //           012345
-        let text = b"TTTTAT".to_vec();
-        let outfile = NamedTempFile::new()?;
-        let args = SufrBuilderArgs {
-            text,
-            low_memory: true,
-            path: Some(outfile.path().to_string_lossy().to_string()),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            sequence_names: vec!["1".to_string()],
-            num_partitions: 2,
-            seed_mask: Some("101".to_string()),
-            write_lcp: true,
-        };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
-
-        // 0: TTTTAT
-        // 1: TTTAT
-        // "T-T" vs "T-T"
-        assert!(!sufr.is_less(0, 1));
-
-        // 1: TTTAT
-        // 0: TTTTAT
-        // "T-T" vs "T-T"
-        assert!(!sufr.is_less(1, 0));
-
-        // 0: TTTTAT
-        // 3: TAT
-        // "T-T" vs "T-T"
-        assert!(!sufr.is_less(0, 3));
-
-        // 3: TAT
-        // 0: TTTTAT
-        // "T-T" vs "T-T"
-        assert!(!sufr.is_less(3, 0));
-
-        fs::remove_file(outfile)?;
-
-        Ok(())
-    }
-
-    #[test]
     fn test_find_lcp_no_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTAGC".to_vec();
-        let outfile = NamedTempFile::new()?;
-        let args = SufrBuilderArgs {
-            text,
-            low_memory: true,
-            path: Some(outfile.path().to_string_lossy().to_string()),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            sequence_names: vec!["1".to_string()],
-            num_partitions: 2,
-            seed_mask: None,
-            write_lcp: true,
-        };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+        let sufr = SuffixArrayBuilder::from_data(text, vec![(0, "1".to_string())]);
 
         // 0: TTTAGC
         // 1:  TTAGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 1, 6, 0, None), 2);
+        assert_eq!(sufr.find_lcp::<u32>(0, 1, 6, 0, None), 2);
 
         // 0: TTTAGC
         // 2:   TAGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 2, 6, 0, None), 1);
+        assert_eq!(sufr.find_lcp::<u32>(0, 2, 6, 0, None), 1);
 
         // 0: TTTAGC
         // 1:  TTAGC
         // 1: max query len = 1
-        assert_eq!(sufr.find_lcp(0, 1, 1, 0, None), 1);
+        assert_eq!(sufr.find_lcp::<u32>(0, 1, 1, 0, None), 1);
 
         // 0: TTTAGC
         // 3:    AGC
         // 6: len of text
-        assert_eq!(sufr.find_lcp(0, 3, 6, 0, None), 0);
+        assert_eq!(sufr.find_lcp::<u32>(0, 3, 6, 0, None), 0);
 
         // TODO: Add a test with skip
-
-        fs::remove_file(outfile)?;
 
         Ok(())
     }
@@ -1542,184 +1351,35 @@ mod test {
     fn test_find_lcp_with_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTTTA".to_vec();
-        let outfile = NamedTempFile::new()?;
-        let args = SufrBuilderArgs {
-            text,
-            low_memory: true,
-            path: Some(outfile.path().to_string_lossy().to_string()),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            sequence_names: vec!["1".to_string()],
-            num_partitions: 2,
-            seed_mask: Some("1101".to_string()),
-            write_lcp: true,
-        };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
+        let sufr = SuffixArrayBuilder::from_data(text, vec![(0, "1".to_string())])
+            .with_seed_mask(SeedMask::new("1101")?);
 
         // 0: TTTTTA
         // 1:  TTTTA
-        assert_eq!(sufr.find_lcp(0, 1, 3, 0, None), 3);
+        assert_eq!(sufr.find_lcp::<u32>(0, 1, 3, 0, None), 3);
 
         // 0: TTTTTA
         // 2:   TTTA
-        assert_eq!(sufr.find_lcp(0, 2, 3, 0, None), 2);
+        assert_eq!(sufr.find_lcp::<u32>(0, 2, 3, 0, None), 2);
 
         // 0: TTTTTA
         // 5:      A
-        assert_eq!(sufr.find_lcp(0, 5, 3, 0, None), 0);
-
-        fs::remove_file(outfile)?;
+        assert_eq!(sufr.find_lcp::<u32>(0, 5, 3, 0, None), 0);
 
         Ok(())
     }
 
     #[test]
-    fn test_upper_bound_1() -> Result<()> {
-        //          012345
-        let text = b"TTTAGC".to_vec();
-        let outfile = NamedTempFile::new()?;
-        let args = SufrBuilderArgs {
-            text,
-            low_memory: true,
-            path: Some(outfile.path().to_string_lossy().to_string()),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            sequence_names: vec!["1".to_string()],
-            num_partitions: 2,
-            seed_mask: None,
-            write_lcp: true,
+    fn test_memory_scratch_matches_disk() -> Result<()> {
+        let build = |memory_scratch| -> Result<Vec<u8>> {
+            let outfile = NamedTempFile::new()?;
+            SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
+                .with_memory_scratch(memory_scratch)
+                .with_write_lcp(true)
+                .build_to_file(outfile.path(), false)?;
+            Ok(fs::read(outfile.path())?)
         };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
-
-        // The suffix "AGC$" is found before "GC$" and "C$
-        assert_eq!(sufr.upper_bound(3, &[5, 4]), 0);
-
-        // The suffix "TAGC$" is beyond all the values
-        assert_eq!(sufr.upper_bound(2, &[3, 4, 5]), 3);
-
-        // The "C$" is the last value
-        assert_eq!(sufr.upper_bound(5, &[3, 4, 5]), 1);
-
-        fs::remove_file(outfile)?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_upper_bound_2() -> Result<()> {
-        //           0123456789
-        let text = b"ACGTNNACGT".to_vec();
-        let outfile = NamedTempFile::new()?;
-        let args = SufrBuilderArgs {
-            text,
-            low_memory: true,
-            path: Some(outfile.path().to_string_lossy().to_string()),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            sequence_names: vec!["1".to_string()],
-            num_partitions: 2,
-            seed_mask: None,
-            write_lcp: true,
-        };
-
-        let sufr: SufrBuilder<u64> = SufrBuilder::new(args)?;
-
-        // ACGTNNACGT$ == ACGTNNACGT$
-        assert_eq!(sufr.upper_bound(0, &[0]), 0);
-
-        // ACGTNNACGT$ (0) > ACGT$ (6)
-        assert_eq!(sufr.upper_bound(0, &[6]), 1);
-
-        // ACGT$ < ACGTNNACGT$
-        assert_eq!(sufr.upper_bound(6, &[0]), 0);
-
-        // ACGT$ == ACGT$
-        assert_eq!(sufr.upper_bound(6, &[6]), 0);
-
-        // Pivots = [CGT$, GT$]
-        // ACGTNNACGT$ < CGT$ => p0
-        assert_eq!(sufr.upper_bound(0, &[7, 8]), 0);
-
-        // CGTNNACGT$ > CGT$  => p1
-        assert_eq!(sufr.upper_bound(1, &[7, 8]), 1);
-
-        // GT$ == GT$  => p1
-        assert_eq!(sufr.upper_bound(1, &[7, 8]), 1);
-
-        // T$ > GT$  => p2
-        assert_eq!(sufr.upper_bound(9, &[7, 8]), 2);
-
-        // T$ < TNNACGT$ => p0
-        assert_eq!(sufr.upper_bound(9, &[3]), 0);
-
-        fs::remove_file(outfile)?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_upper_bound_seed_mask() -> Result<()> {
-        //           0123456789
-        let text = b"ACGTNNACGT".to_vec();
-        let outfile = NamedTempFile::new()?;
-        let args = SufrBuilderArgs {
-            text,
-            low_memory: true,
-            path: Some(outfile.path().to_string_lossy().to_string()),
-            max_query_len: None,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: vec![0],
-            sequence_names: vec!["1".to_string()],
-            num_partitions: 2,
-            seed_mask: Some("101".to_string()),
-            write_lcp: true,
-        };
-        let sufr: SufrBuilder<u32> = SufrBuilder::new(args)?;
-
-        // ACGTNNACGT$ == ACGTNNACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(0, &[0]), 0);
-
-        // ACGTNNACGT$ == ACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(0, &[6]), 0);
-
-        // ACGT$ == ACGTNNACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(6, &[0]), 0);
-
-        // ACGT$ == ACGT$ (A-G)
-        assert_eq!(sufr.upper_bound(6, &[6]), 0);
-
-        // Pivots = [CGT$, GT$]
-        // ACGTNNACGT$ < CGT$
-        assert_eq!(sufr.upper_bound(0, &[7, 8]), 0);
-
-        // Pivots = [CGT$, GT$]
-        // CGTNNACGT$ == CGT$ (C-T)
-        assert_eq!(sufr.upper_bound(1, &[7, 8]), 0);
-
-        // Pivots = [CGT$, GT$]
-        // GT$ == GT$
-        assert_eq!(sufr.upper_bound(8, &[7, 8]), 1);
-
-        // Pivots = [CGT$, GT$]
-        // T$ > GT$  => p2
-        assert_eq!(sufr.upper_bound(9, &[7, 8]), 2);
-
-        // T$ == TNNACGT$ (only compare T)
-        assert_eq!(sufr.upper_bound(9, &[3]), 0);
-
-        fs::remove_file(outfile)?;
-
+        assert_eq!(build(true)?, build(false)?);
         Ok(())
     }
 

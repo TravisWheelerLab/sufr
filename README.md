@@ -76,7 +76,7 @@ Arguments:
   <INPUT>  Input file
 
 Options:
-  -n, --num-partitions <NUM_PARTS>  Subproblem count [default: 16]
+  -n, --num-partitions <NUM_PARTS>  Subproblem count [default: 1024]
   -m, --max-query-len <CONTEXT>     Max context
   -o, --output <OUTPUT>             Output file
   -d, --dna                         Input is DNA

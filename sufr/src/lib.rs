@@ -4,10 +4,10 @@ use format_num::NumberFormat;
 use libsufr::{
     suffix_array::SuffixArray,
     types::{
-        CountOptions, ExtractOptions, ListOptions, LocateOptions, SuffixSortType,
-        SufrBuilderArgs,
+        CountOptions, ExtractOptions, ListOptions, LocateOptions, SeedMask,
+        SuffixSortType,
     },
-    util::read_sequence_file,
+    SuffixArrayBuilder,
 };
 use log::info;
 use regex::Regex;
@@ -88,7 +88,7 @@ pub struct CreateArgs {
     pub input: String,
 
     /// Subproblem count
-    #[arg(short, long, value_name = "NUM_PARTS", default_value = "16")]
+    #[arg(short, long, value_name = "NUM_PARTS", default_value = "1024")]
     pub num_partitions: usize,
 
     /// Max context
@@ -320,18 +320,6 @@ pub fn count(args: &CountArgs) -> Result<()> {
 
 // --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
-    // Read sequence input
-    let now = Instant::now();
-    let sequence_delimiter = args.sequence_delimiter as u8;
-    let seq_data = read_sequence_file(Path::new(&args.input), sequence_delimiter)?;
-    let text_len = seq_data.seq.len();
-    let num_fmt = NumberFormat::new();
-    info!(
-        "Read input of len {} in {:?}",
-        num_fmt.format(",.0", text_len as f64),
-        now.elapsed()
-    );
-
     let outfile = &args.output.clone().unwrap_or(format!(
         "{}.sufr",
         PathBuf::from(&args.input)
@@ -340,24 +328,26 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             .to_string_lossy()
     ));
 
-    let builder_args = SufrBuilderArgs {
-        text: seq_data.seq,
-        path: Some(outfile.to_string()),
-        low_memory: true,
-        max_query_len: args.max_query_len,
-        is_dna: args.is_dna,
-        allow_ambiguity: args.allow_ambiguity,
-        ignore_softmask: args.ignore_softmask,
-        sequence_starts: seq_data.start_positions.into_iter().collect(),
-        sequence_names: seq_data.sequence_names,
-        num_partitions: args.num_partitions,
-        seed_mask: args.seed_mask.clone(),
-        write_lcp: args.write_lcp,
-    };
+    let mut builder = SuffixArrayBuilder::from_sequence_file(
+        &args.input,
+        args.sequence_delimiter as u8,
+    )?
+    .with_dna_options(args.is_dna, args.allow_ambiguity, args.ignore_softmask)
+    .with_num_partitions(args.num_partitions);
+
+    match (args.max_query_len, &args.seed_mask) {
+        (Some(_), Some(_)) => bail!("Cannot use max_query_len and seed_mask together"),
+        (Some(n), None) => builder = builder.with_max_query_len(n),
+        (None, Some(mask)) => builder = builder.with_seed_mask(SeedMask::new(mask)?),
+        (None, None) => (),
+    }
+
+    builder = builder.with_write_lcp(args.write_lcp);
 
     let now = Instant::now();
-    let path = SuffixArray::write(builder_args)?;
-    let meta = fs::metadata(&path)?;
+    builder.build_to_file(outfile, true)?;
+
+    let meta = fs::metadata(outfile)?;
     let bytes_written = meta.len();
 
     let num_fmt = NumberFormat::new();
