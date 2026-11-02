@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.208729147Z",
-  "updated_at": "2026-11-02T17:48:29.208729147Z",
+  "updated_at": "2026-11-02T19:59:04.497409773Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "f8d0a7c6",
+      "at": "2026-11-02T19:59:04.497409353Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the test (`cli.rs:103-109`) passes `../data/expected/empty.sa`, which does not exist. Running `create data/inputs/empty.fa` exits 1 with \"Failed to read the first two bytes. Is the file empty?\". So the CLI handles an empty input, and the test never reaches that code.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e8655c9",
