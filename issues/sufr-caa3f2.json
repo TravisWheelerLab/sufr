@@ -1,0 +1,30 @@
+{
+  "id": "sufr-caa3f2",
+  "title": "One LCP routine family serves the builder, the search and the file",
+  "body": "Five pieces of code compute a longest common prefix, with three different contracts.\n\n- `lcp::lcp` (`libsufr/src/lcp.rs:79`) takes two byte slices and an optional `LcpCache`, has an AVX2 path, and is called only by the builder. `lcp_scalar` (`:134`) is its tail.\n- `SuffixArrayBuilder::find_lcp` (`sufr_builder.rs:270`) takes `len` as the maximum length and handles the seed mask and max query length.\n- `SufrFile::find_lcp` (`sufr_file.rs:362`) takes `len` as the absolute end of the text. It is scalar and ignores the mask.\n- `SufrSearch::compare` (`sufr_search.rs:244`) compares a query with a suffix, handles mask and max query length, and has its own scalar loop (272-276).\n- `util::find_lcp_full_offset` is the seed-mask helper that the builder (713) and `compare` (321) share.\n\nThe `SuffixSortType` `match` on `Mask` versus `MaxQueryLen` appears at `sufr_builder.rs` 280, 383, 686 and 890/909, and at `sufr_file.rs` 487-510. A builder TODO at 278 notes it.\n\n## Proposal\n\nOne LCP routine family in `lcp.rs`. It takes a mask and max query length where they apply, keeps the AVX2 path, and has one contract for what `len` means. The builder, the search and `SufrFile` call it, and the other four are deleted. The sort-type decision is made once and passed in.\n\nBuilds and searches must give identical results. The AVX2 path must not get slower, which needs a benchmark on a large input before and after.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "sufr-dbce71",
+  "blocked_by": [
+    "sufr-b9d61c"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:47:57.69848663Z",
+  "updated_at": "2026-11-02T17:47:57.69848663Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
