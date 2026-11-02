@@ -1,0 +1,28 @@
+{
+  "id": "sufr-c0a984",
+  "title": "extract and locate underflow when the first sequence start is not 0 or there are no sequences",
+  "body": "`extract` (`libsufr/src/sufr_file.rs:990`) and `locate` (`:1234`) find the sequence of a suffix with `seq_starts.partition_point(|&val| val <= suffix) - 1`. If the first start is greater than 0, or `seq_starts` is empty, `partition_point` returns 0 for an early suffix and the subtraction underflows `usize`. That panics in a debug build and wraps in a release build. Both sites also clone `sequence_starts` and `sequence_names` first.\n\nSeen by reading the code in the survey. No input that triggers it was found or run.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:48:29.224170297Z",
+  "updated_at": "2026-11-02T17:48:29.224170297Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
