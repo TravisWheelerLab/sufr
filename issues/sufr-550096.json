@@ -1,0 +1,28 @@
+{
+  "id": "sufr-550096",
+  "title": "Doc comments in libsufr name a module that does not exist and describe the wrong method",
+  "body": "Two stale doc texts.\n\n- The comment on `SequenceFileData` (`libsufr/src/types.rs:266`) links `libsufr::utils::read_sequence_file`. The module is `util`.\n- The doc comment on `SuffixArray::list` (`libsufr/src/suffix_array.rs`, ending at line 238) is a copy of the `extract` doc.\n\nSeen by reading the code in the survey.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:48:29.239627466Z",
+  "updated_at": "2026-11-02T17:48:29.239627466Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
