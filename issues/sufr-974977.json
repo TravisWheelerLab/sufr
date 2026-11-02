@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.192848681Z",
-  "updated_at": "2026-11-02T17:48:29.192848681Z",
+  "updated_at": "2026-11-02T19:59:04.481306899Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "ceb52cc0",
+      "at": "2026-11-02T19:59:04.481306459Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 `list` is at `sufr/src/lib.rs:405`. Its writer is `io::stdout()` at :422, with a TODO at :421.\n\nThe four `*_is_sorted` tests (`file_is_sorted` at `cli.rs:1166`) still read a file that `list -o` never writes. The pinned test `list_output_flag_is_ignored` records the current behaviour.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e8655c9",
