@@ -7,13 +7,15 @@
   "priority": 2,
   "labels": [],
   "parent": "sufr-dbce71",
-  "blocked_by": [],
+  "blocked_by": [
+    "sufr-28ca67"
+  ],
   "related": [],
   "assignee": null,
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:05.592725128Z",
-  "updated_at": "2026-11-02T17:48:11.627502116Z",
+  "updated_at": "2026-11-02T17:48:11.63419645Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
