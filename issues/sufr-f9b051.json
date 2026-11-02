@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.200900723Z",
-  "updated_at": "2026-11-02T17:48:29.200900723Z",
+  "updated_at": "2026-11-02T19:59:04.489287402Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "d6910adc",
+      "at": "2026-11-02T19:59:04.489286942Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the test still has the problem. `cli.rs:1135` is the `if let Some(caps)` and `cli.rs:1155` expects \"Num Suffixes\", while the CLI prints \"Len Suffixes\". `cargo test summarize` passes.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e8655c9",
