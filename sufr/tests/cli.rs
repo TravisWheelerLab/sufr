@@ -10,7 +10,7 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 
 const PRG: &str = "sufr";
 const SEQ1: &str = "../data/inputs/1.fa";
@@ -1245,4 +1245,249 @@ fn uniprot_is_sorted() -> Result<()> {
 #[test]
 fn masked_uniprot_is_sorted() -> Result<()> {
     file_is_sorted(UNIPROT, Some("10111011"))
+}
+
+// --------------------------------------------------
+fn run_stdout(args: &[&str]) -> Result<(String, String)> {
+    let output = Command::cargo_bin(PRG)?.args(args).output().expect("fail");
+    assert!(output.status.success());
+    Ok((
+        String::from_utf8(output.stdout).expect("invalid UTF-8"),
+        String::from_utf8(output.stderr).expect("invalid UTF-8"),
+    ))
+}
+
+// --------------------------------------------------
+#[test]
+fn create_bytes_match_fixtures() -> Result<()> {
+    let cases: Vec<(&str, &[&str], &str)> = vec![
+        ("1", &["--dna"], SEQ1),
+        ("2", &["--dna"], SEQ2),
+        ("3", &["--dna"], SEQ3),
+        ("2d", &["--dna", "--sequence-delimiter", "N"], SEQ2),
+        ("abba", &[], "../data/inputs/abba.fa"),
+        ("1n", &["--dna", "--allow-ambiguity"], SEQ1),
+        ("2n", &["--dna", "--allow-ambiguity"], SEQ2),
+        ("2s", &["--dna", "--ignore-softmask"], SEQ2),
+        (
+            "2ns",
+            &["--dna", "--allow-ambiguity", "--ignore-softmask"],
+            SEQ2,
+        ),
+        ("long_dna_sequence", &["--dna"], LONG),
+        (
+            "long_dna_sequence_allow_ambiguity",
+            &["--dna", "--allow-ambiguity"],
+            LONG,
+        ),
+        ("uniprot", &[], UNIPROT),
+        ("uniprot-masked", &["-s", "10111011"], UNIPROT),
+    ];
+
+    for (name, flags, input) in cases {
+        let outfile = NamedTempFile::new()?;
+        let outpath = outfile.path().to_string_lossy().to_string();
+        let mut args = vec!["create", "--write-lcp", "-o", &outpath, input];
+        args.extend(flags);
+        run_stdout(&args)?;
+
+        let actual = fs::read(&outpath)?;
+        let expected = fs::read(format!("../data/expected/{name}.sufr"))?;
+        assert!(actual == expected, "bytes differ from fixture {name}");
+    }
+
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn create_num_partitions_same_bytes() -> Result<()> {
+    let mut outputs = vec![];
+    for parts in ["3", "1024"] {
+        let outfile = NamedTempFile::new()?;
+        let outpath = outfile.path().to_string_lossy().to_string();
+        run_stdout(&[
+            "create",
+            "--dna",
+            "--write-lcp",
+            "-n",
+            parts,
+            "-o",
+            &outpath,
+            SEQ1,
+        ])?;
+        outputs.push(fs::read(&outpath)?);
+    }
+    assert!(outputs[0] == outputs[1]);
+    assert!(outputs[0] == fs::read(SUFR1)?);
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn create_max_query_len() -> Result<()> {
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    run_stdout(&["create", "--dna", "-m", "3", "-o", &outpath, SEQ1])?;
+
+    let actual: SufrFile<u32> = SufrFile::read(&outpath, false)?;
+    let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
+    assert_eq!(actual_sa, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn create_default_output_name() -> Result<()> {
+    let dir = TempDir::new()?;
+    let input = fs::canonicalize(SEQ1)?;
+    let output = Command::cargo_bin(PRG)?
+        .current_dir(dir.path())
+        .args(["create", "--dna", "--write-lcp"])
+        .arg(&input)
+        .output()
+        .expect("fail");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+
+    let names: Vec<_> = fs::read_dir(dir.path())?
+        .map(|e| e.map(|e| e.file_name().to_string_lossy().to_string()))
+        .collect::<std::io::Result<_>>()?;
+    assert_eq!(names, ["1.sufr"]);
+    assert!(fs::read(dir.path().join("1.sufr"))? == fs::read(SUFR1)?);
+    Ok(())
+}
+
+// --------------------------------------------------
+fn check_output_file(subcommand: &str, filename: &str, queries: &[&str]) -> Result<()> {
+    let mut args = vec![subcommand, filename];
+    args.extend(queries);
+    let (expected, _) = run_stdout(&args)?;
+    assert!(!expected.is_empty());
+
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    let mut args = vec![subcommand, "-o", &outpath, filename];
+    args.extend(queries);
+    let (stdout, _) = run_stdout(&args)?;
+
+    assert_eq!(stdout, "");
+    assert_eq!(fs::read_to_string(&outpath)?, expected);
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn count_output_file() -> Result<()> {
+    check_output_file("count", SUFR1, &["AC", "X", "GT"])
+}
+
+// --------------------------------------------------
+#[test]
+fn extract_output_file() -> Result<()> {
+    check_output_file("extract", SUFR1, &["AC", "GT"])
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_output_file() -> Result<()> {
+    check_output_file("locate", SUFR2, &["AC", "GT"])
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_not_found_goes_to_stderr() -> Result<()> {
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    let (stdout, stderr) =
+        run_stdout(&["locate", "-o", &outpath, SUFR1, "AC", "X"])?;
+    assert_eq!(stdout, "");
+    assert_eq!(stderr, "X not found\n");
+    assert_eq!(fs::read_to_string(&outpath)?, "AC\n1 0,6\n//\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_ranks() -> Result<()> {
+    let (stdout, _) = run_stdout(&["list", SUFR1, "0", "2-3"])?;
+    assert_eq!(stdout, "$\nACGTNNACGT$\nCGT$\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_ranks_comma_with_columns() -> Result<()> {
+    let (stdout, stderr) =
+        run_stdout(&["list", "-r", "-s", "-p", SUFR1, "5-6,9"])?;
+    assert_eq!(stdout, " 5  8  0 GT$\n 6  2  2 GTNNACGT$\n");
+    assert_eq!(stderr, "Invalid rank: 9\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_ranks_len() -> Result<()> {
+    let (stdout, _) = run_stdout(&["list", "--len", "3", SUFR1, "0", "2-3"])?;
+    assert_eq!(stdout, "$\nACG\nCGT\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_short_l_is_rejected() -> Result<()> {
+    Command::cargo_bin(PRG)?
+        .args(["list", "-l", SUFR1, "0"])
+        .assert()
+        .failure();
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_out_of_range_rank_warns_and_succeeds() -> Result<()> {
+    let (stdout, stderr) = run_stdout(&["list", SUFR1, "99"])?;
+    assert_eq!(stdout, "");
+    assert_eq!(stderr, "Invalid rank: 99\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_output_flag_is_ignored() -> Result<()> {
+    let (expected, _) = run_stdout(&["list", SUFR1, "0", "1"])?;
+
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    let (stdout, _) = run_stdout(&["list", "-o", &outpath, SUFR1, "0", "1"])?;
+
+    assert_eq!(stdout, expected);
+    assert_eq!(fs::read_to_string(&outpath)?, "");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn count_query_file() -> Result<()> {
+    let queries = NamedTempFile::new()?;
+    fs::write(queries.path(), "AC GT\nX\n")?;
+    let path = queries.path().to_string_lossy().to_string();
+    let (stdout, _) = run_stdout(&["count", SUFR1, &path])?;
+    assert_eq!(stdout, "AC 2\nGT 2\nX 0\n");
+
+    let (stdout, _) = run_stdout(&["count", SUFR1, "GT", &path])?;
+    assert_eq!(stdout, "GT 2\nAC 2\nGT 2\nX 0\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_query_file() -> Result<()> {
+    let queries = NamedTempFile::new()?;
+    fs::write(queries.path(), "AC GT\nX\n")?;
+    let path = queries.path().to_string_lossy().to_string();
+    let (stdout, stderr) = run_stdout(&["locate", SUFR1, &path])?;
+    assert_eq!(stdout, "AC\n1 0,6\n//\nGT\n1 2,8\n//\n");
+    assert_eq!(stderr, "X not found\n");
+    Ok(())
 }
