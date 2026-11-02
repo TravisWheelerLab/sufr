@@ -190,10 +190,16 @@ impl<T> SharedPtr<T> {
     }
 }
 
+/// The minimum number of items per chunk in parallel passes.
+//
+// small under miri so the tests can reach the
+// multi-chunk scatter with about a thousand items
+const MIN_CHUNK_LEN: usize = if cfg!(miri) { 1 << 6 } else { 1 << 16 };
+
 /// Number of chunks to split `n` items into for parallel passes.
 fn num_chunks(n: usize) -> usize {
     let threads = rayon::current_num_threads();
-    (n / (1 << 16)).clamp(1, threads * 4)
+    (n / MIN_CHUNK_LEN).clamp(1, threads * 4)
 }
 
 /// Stable LSD radix sort of `items` by `key`, considering only the low
@@ -284,6 +290,12 @@ where
     }
 }
 
+// note: to check the unsafe code under miri, run
+//         MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
+//           cargo +nightly miri test -p libsufr --lib radix::tests
+//       stacked borrows reports undefined behavior in
+//       crossbeam-epoch as the rayon pool starts, and the
+//       pool's threads outlive the test
 #[cfg(test)]
 mod tests {
     use super::{lsd_radix_sort, Item, KeyEncoder};
@@ -367,7 +379,7 @@ mod tests {
             .num_threads(4)
             .build()
             .unwrap();
-        let n = 300_000u32;
+        let n = if cfg!(miri) { 1_000u32 } else { 300_000u32 };
         let mut items: Vec<Item<u32>> = (0..n)
             .map(|i| Item {
                 key: (u64::from(i).wrapping_mul(0x9E3779B97F4A7C15) >> 40) % 5000,
