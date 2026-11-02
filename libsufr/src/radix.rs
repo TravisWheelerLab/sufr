@@ -159,15 +159,34 @@ impl KeyEncoder {
     }
 }
 
-/// A raw pointer that may be shared across threads. Callers must write
-/// disjoint indices.
-struct SharedPtr<T>(*mut T);
-unsafe impl<T> Send for SharedPtr<T> {}
-unsafe impl<T> Sync for SharedPtr<T> {}
+/// A raw pointer to a slice that may be shared across threads.
+struct SharedPtr<T> {
+    ptr: *mut T,
+    len: usize,
+}
+
+// SAFETY: the pointer is only used to move `T` values
+//         into the slice, possibly from other threads
+unsafe impl<T: Send> Send for SharedPtr<T> {}
+unsafe impl<T: Send> Sync for SharedPtr<T> {}
 impl<T> SharedPtr<T> {
+    fn new(slice: &mut [T]) -> Self {
+        Self {
+            ptr: slice.as_mut_ptr(),
+            len: slice.len(),
+        }
+    }
+
+    /// Writes `value` at `index`.
+    ///
+    /// # Safety
+    ///
+    /// `index < len`, and no other thread accesses `index` while the slice
+    /// is shared.
     #[inline(always)]
     unsafe fn write(&self, index: usize, value: T) {
-        self.0.add(index).write(value)
+        debug_assert!(index < self.len);
+        self.ptr.add(index).write(value)
     }
 }
 
@@ -235,6 +254,7 @@ where
             starts[b] = base;
             base += t;
         }
+        debug_assert_eq!(base, n);
         for hist in counts.iter_mut() {
             for (b, c) in hist.iter_mut().enumerate() {
                 let count = *c;
@@ -244,15 +264,17 @@ where
         }
 
         // Scatter
-        let dst = SharedPtr(scratch.as_mut_ptr());
+        let dst = SharedPtr::new(&mut scratch);
         items
             .par_chunks(chunk_len)
             .zip(counts.into_par_iter())
             .for_each(|(chunk, mut offsets)| {
                 for item in chunk {
                     let b = digit(item);
-                    // Safety: offsets partition 0..n disjointly across
-                    // (chunk, bucket) pairs by construction above.
+                    // SAFETY: the histogram used the same `chunk_len`
+                    //         and `digit`, so chunk c writes counts[c][b]
+                    //         items into bucket b from its offset, and
+                    //         these ranges are disjoint and cover 0..n
                     unsafe { dst.write(offsets[b], *item) };
                     offsets[b] += 1;
                 }
@@ -334,6 +356,30 @@ mod tests {
         let mut expected = items.clone();
         expected.sort_by(|a, b| a.key.cmp(&b.key).then(a.pos.cmp(&b.pos)));
         lsd_radix_sort(&mut items, 44);
+        assert_eq!(items, expected);
+    }
+
+    #[test]
+    fn test_lsd_radix_sort_multiple_chunks() {
+        // enough items for several chunks, with keys
+        // repeated across chunks to check stability
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
+        let n = 300_000u32;
+        let mut items: Vec<Item<u32>> = (0..n)
+            .map(|i| Item {
+                key: (u64::from(i).wrapping_mul(0x9E3779B97F4A7C15) >> 40) % 5000,
+                pos: i,
+            })
+            .collect();
+        let mut expected = items.clone();
+        expected.sort_by(|a, b| a.key.cmp(&b.key).then(a.pos.cmp(&b.pos)));
+        pool.install(|| {
+            assert!(super::num_chunks(items.len()) > 1);
+            lsd_radix_sort(&mut items, 24);
+        });
         assert_eq!(items, expected);
     }
 }
