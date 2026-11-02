@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T18:59:02.062830787Z",
-  "updated_at": "2026-11-02T18:59:02.062830787Z",
+  "updated_at": "2026-11-02T19:59:04.522016375Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "b84ee49c",
+      "at": "2026-11-02T19:59:04.522015755Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "Reproduced at cff9fb6. `create --dna -m 3 --write-lcp data/inputs/long_dna_sequence.fa` followed by `list -p` shows 20001 LCP values. Of these, 3 are 4 and 10 are 5. The rest are 50 at 2 and 19919 at 3.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "dc7dd45",
