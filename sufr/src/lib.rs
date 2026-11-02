@@ -118,7 +118,7 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "MASK")]
     pub seed_mask: Option<String>,
 
-    /// Sort strategy (radix strategies need a seed mask or max query length)
+    /// Sort strategy ("radix" needs a seed mask or max query length)
     #[arg(long, value_name = "STRATEGY", default_value = "merge")]
     pub sort_strategy: SortStrategyArg,
 
@@ -138,19 +138,15 @@ pub enum SortStrategyArg {
     /// Partition on prefixes, then merge sort with LCP (default)
     Merge,
 
-    /// Radix sort of packed keys, whole text in memory (ignores --num-partitions)
-    RadixMem,
-
     /// Radix sort of packed keys, one partition at a time
-    RadixDisk,
+    Radix,
 }
 
 impl From<SortStrategyArg> for SortStrategy {
     fn from(val: SortStrategyArg) -> Self {
         match val {
             SortStrategyArg::Merge => SortStrategy::Merge,
-            SortStrategyArg::RadixMem => SortStrategy::RadixInMemory,
-            SortStrategyArg::RadixDisk => SortStrategy::RadixPartitioned,
+            SortStrategyArg::Radix => SortStrategy::Radix,
         }
     }
 }

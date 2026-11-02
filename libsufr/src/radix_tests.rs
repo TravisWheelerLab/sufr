@@ -13,8 +13,11 @@ use pretty_assertions::assert_eq;
 use std::path::Path;
 use tempfile::NamedTempFile;
 
-const STRATEGIES: [SortStrategy; 2] =
-    [SortStrategy::RadixInMemory, SortStrategy::RadixPartitioned];
+/// Partition counts that cover both radix paths, in-memory and
+/// partitioned.
+fn radix_partition_counts(num_partitions: usize) -> [usize; 2] {
+    [1, num_partitions.max(2)]
+}
 
 /// Inputs to one build
 #[derive(Clone)]
@@ -95,33 +98,33 @@ fn build_with_scratch(
 
 fn assert_strategies_agree(case: &Case, num_partitions: usize) -> Result<()> {
     let (sa, lcp) = build(case, SortStrategy::Merge, 1)?;
-    for strategy in STRATEGIES {
-        let (sa2, lcp2) = build(case, strategy, num_partitions)?;
+    for parts in radix_partition_counts(num_partitions) {
+        let (sa2, lcp2) = build(case, SortStrategy::Radix, parts)?;
         assert_eq!(
             sa2,
             sa,
-            "SA differs for {strategy:?} on {}",
+            "SA differs for radix with {parts} partitions on {}",
             case.describe()
         );
         assert_eq!(
             lcp2,
             lcp,
-            "LCP differs for {strategy:?} on {}",
+            "LCP differs for radix with {parts} partitions on {}",
             case.describe()
         );
     }
-    let strategy = SortStrategy::RadixPartitioned;
-    let (sa2, lcp2) = build_with_scratch(case, strategy, num_partitions, true)?;
+    let parts = num_partitions.max(2);
+    let (sa2, lcp2) = build_with_scratch(case, SortStrategy::Radix, parts, true)?;
     assert_eq!(
         sa2,
         sa,
-        "SA differs for {strategy:?} (memory scratch) on {}",
+        "SA differs for radix with {parts} partitions (memory scratch) on {}",
         case.describe()
     );
     assert_eq!(
         lcp2,
         lcp,
-        "LCP differs for {strategy:?} (memory scratch) on {}",
+        "LCP differs for radix with {parts} partitions (memory scratch) on {}",
         case.describe()
     );
     Ok(())
@@ -178,16 +181,16 @@ fn expected_lcp(case: &Case, a: usize, b: usize) -> usize {
 
 fn assert_matches_definition(case: &Case, num_partitions: usize) -> Result<()> {
     let expected = expected_order(case);
-    for strategy in STRATEGIES {
-        let (sa, lcp) = build(case, strategy, num_partitions)?;
+    for parts in radix_partition_counts(num_partitions) {
+        let (sa, lcp) = build(case, SortStrategy::Radix, parts)?;
         let sa: Vec<usize> = sa.into_iter().map(|v| v as usize).collect();
-        assert_eq!(sa, expected, "{strategy:?} {}", case.describe());
+        assert_eq!(sa, expected, "radix/{parts} {}", case.describe());
         assert_eq!(lcp[0], 0);
         for k in 1..sa.len() {
             assert_eq!(
                 lcp[k] as usize,
                 expected_lcp(case, sa[k - 1], sa[k]),
-                "LCP at rank {k} for {strategy:?} {}",
+                "LCP at rank {k} for radix/{parts} {}",
                 case.describe()
             );
         }
@@ -353,7 +356,7 @@ fn radix_matches_definition_on_max_query_len() -> Result<()> {
 
             let offsets = key_offsets(&case);
             let (merge_sa, _) = build(&case, SortStrategy::Merge, 1)?;
-            let (radix_sa, _) = build(&case, SortStrategy::RadixPartitioned, 4)?;
+            let (radix_sa, _) = build(&case, SortStrategy::Radix, 4)?;
             let keys = |sa: &[u32]| -> Vec<Vec<Option<u8>>> {
                 sa.iter()
                     .map(|&p| masked(&text, &offsets, p as usize))
@@ -418,7 +421,7 @@ fn radix_rejects_unsupported_modes() -> Result<()> {
         seed_mask: None,
         max_query_len: None,
     };
-    assert!(build(&case, SortStrategy::RadixInMemory, 1).is_err());
+    assert!(build(&case, SortStrategy::Radix, 1).is_err());
 
     // MQL with long N runs and ambiguity allowed has special LCP semantics
     let case = Case {
@@ -426,7 +429,7 @@ fn radix_rejects_unsupported_modes() -> Result<()> {
         allow_ambiguity: true,
         ..case.clone()
     };
-    assert!(build(&case, SortStrategy::RadixPartitioned, 2).is_err());
+    assert!(build(&case, SortStrategy::Radix, 2).is_err());
 
     // Key too wide for 64 bits
     let case = Case {
@@ -434,7 +437,7 @@ fn radix_rejects_unsupported_modes() -> Result<()> {
         allow_ambiguity: false,
         ..case.clone()
     };
-    assert!(build(&case, SortStrategy::RadixInMemory, 1).is_err());
+    assert!(build(&case, SortStrategy::Radix, 1).is_err());
     Ok(())
 }
 
@@ -536,7 +539,7 @@ fn radix_index_searches_like_merge_index() -> Result<()> {
             max_query_len: None,
         };
         let mut results = vec![];
-        for strategy in [SortStrategy::Merge, SortStrategy::RadixPartitioned] {
+        for strategy in [SortStrategy::Merge, SortStrategy::Radix] {
             let outfile = NamedTempFile::new()?;
             let outpath = outfile.path().to_string_lossy().to_string();
             case.builder(3, strategy)?.build_to_file(&outpath, true)?;

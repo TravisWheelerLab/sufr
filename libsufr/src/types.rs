@@ -39,15 +39,10 @@ pub enum SortStrategy {
     #[default]
     Merge,
 
-    /// Pack each suffix's seed-mask (or max-query-length) key into a `u64`
-    /// and radix-sort all positions in memory. Requires a seed mask or a
-    /// max query length whose key fits in 64 bits.
-    RadixInMemory,
-
-    /// Like `RadixInMemory` but first buckets positions into partitions by
-    /// the high bits of their key so that only one partition is sorted in
-    /// memory at a time.
-    RadixPartitioned,
+    /// LSD radix sort of each suffix's key packed into a `u64`, one
+    /// partition at a time (needs a seed mask or max query length whose
+    /// key fits in 64 bits).
+    Radix,
 }
 
 // --------------------------------------------------

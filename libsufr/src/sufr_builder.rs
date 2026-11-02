@@ -161,7 +161,7 @@ impl SuffixArrayBuilder {
         self.with_sort_type(SuffixSortType::Mask(mask))
     }
     /// Sets how suffixes are sorted (default: [`SortStrategy::Merge`]).
-    /// The radix strategies require a seed mask or a nonzero max query
+    /// [`SortStrategy::Radix`] requires a seed mask or a nonzero max query
     /// length whose packed key fits in 64 bits; `build_to_file` fails
     /// otherwise.
     pub fn with_sort_strategy(mut self, sort_strategy: SortStrategy) -> Self {
@@ -283,8 +283,11 @@ impl SuffixArrayBuilder {
                 let partitions = self.sort::<T, B>(occupancy, scratch_dir)?;
                 self.write::<T, B>(path, partitions)?;
             }
-            SortStrategy::RadixInMemory => self.sort_radix_in_memory::<T>(path)?,
-            SortStrategy::RadixPartitioned => {
+            // the same output, without the bucketing passes
+            SortStrategy::Radix if self.num_partitions <= 1 => {
+                self.sort_radix_in_memory::<T>(path)?
+            }
+            SortStrategy::Radix => {
                 self.sort_radix_partitioned::<T, B>(path, scratch_dir)?
             }
         }
