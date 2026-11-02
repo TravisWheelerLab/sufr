@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.803372811Z",
-  "updated_at": "2026-10-28T02:10:00.803372811Z",
+  "updated_at": "2026-11-02T19:59:04.449015053Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "daeb77c2",
+      "at": "2026-11-02T19:59:04.449014283Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the sites are `first_match` (`search.rs:194`) and `last_match` (`search.rs:227`). `sufr locate data/inputs/1.sufr ' '` panics with \"attempt to subtract with overflow\" at `search.rs:194:44` in a debug build.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "b4a924a",
