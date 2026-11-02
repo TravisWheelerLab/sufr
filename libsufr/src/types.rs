@@ -2,12 +2,12 @@
 
 use anyhow::{bail, Result};
 use chrono::{DateTime, Local};
+use format_num::NumberFormat;
 use regex::Regex;
 use std::{
     cmp::Ordering,
     fmt::{self, Debug, Display},
     hash::Hash,
-    ops::Range,
     ops::{Add, AddAssign, Sub},
 };
 
@@ -206,42 +206,6 @@ impl Display for SeedMask {
 }
 
 // --------------------------------------------------
-/// A struct for use in searching the suffix array
-#[derive(Debug, Clone)]
-pub struct SearchOptions {
-    /// A vector of query strings
-    pub queries: Vec<String>,
-
-    /// Whether or not to return location information or to simply count
-    pub find_suffixes: bool,
-}
-
-// --------------------------------------------------
-/// A struct representing the result of a suffix array search
-#[derive(Debug, PartialEq)]
-pub struct SearchResult<T: Int> {
-    /// The ordinal position of the query
-    pub query_num: usize,
-
-    /// The query string
-    pub query: String,
-
-    /// A optional summary of the places where the query was found
-    pub locations: Option<SearchResultLocations<T>>,
-}
-
-// --------------------------------------------------
-/// The suffix locations matching a given query.
-#[derive(Debug, PartialEq)]
-pub struct SearchResultLocations<T> {
-    /// The range of suffix ranks
-    pub ranks: Range<usize>,
-
-    /// A vector of the suffix locations
-    pub suffixes: Vec<T>,
-}
-
-// --------------------------------------------------
 /// A struct describing how a query compares to a suffix
 #[derive(Debug)]
 pub struct Comparison {
@@ -334,160 +298,6 @@ impl Int for u64 {
 }
 
 // --------------------------------------------------
-/// Options for counting the occurrences of suffixes
-#[derive(Debug, Clone)]
-pub struct CountOptions {
-    /// Vector of query strings
-    pub queries: Vec<String>,
-}
-
-// --------------------------------------------------
-/// A struct representing the results of counting the occurrences of suffixes
-#[derive(Debug, PartialEq)]
-pub struct CountResult {
-    /// The ordinal position of the original query
-    pub query_num: usize,
-
-    /// The query string
-    pub query: String,
-
-    /// Number of times a query was found
-    pub count: usize,
-}
-
-// --------------------------------------------------
-/// Options for extracting suffixes from a search
-#[derive(Debug, Clone)]
-pub struct ExtractOptions {
-    /// Vector of query strings
-    pub queries: Vec<String>,
-
-    /// Optional length of prefix to append before found suffixes (context)
-    pub prefix_len: Option<usize>,
-
-    /// Optional limit to the length of the suffix returned
-    pub suffix_len: Option<usize>,
-}
-
-// --------------------------------------------------
-/// The result of querying/extracting suffixes
-#[derive(Debug, PartialEq)]
-pub struct ExtractResult {
-    /// The ordinal position of the original query
-    pub query_num: usize,
-
-    /// The query string
-    pub query: String,
-
-    /// A vector of the sequences containing the queries and locations
-    pub sequences: Vec<ExtractSequence>,
-}
-
-// --------------------------------------------------
-/// A struct describing a found query in the context of a sequence
-/// This struct is used by the `sufr extract` command to print the
-/// results of a search in FASTA format.
-/// Normally, the query will be at the beginning of the result, so the
-/// `sequence_start` will be 0.
-/// When looking for alignment seeds, the user may request some prior context
-/// via a `prefix_len`, in which case the sequence start will be whatever
-/// length of prefix appended before the actual found hit. Note that the user
-/// may request something like 100 characters of prefix but less than that is
-/// appended because the hit was closer than 100 to the start of the sequence.
-#[derive(Debug, PartialEq)]
-pub struct ExtractSequence {
-    /// The position of the suffix in the suffix array
-    pub suffix: usize,
-
-    /// The rank of the suffix in the suffix array
-    pub rank: usize,
-
-    /// The name of the sequence containing a query hit
-    pub sequence_name: String,
-
-    /// The start/offset of the containing sequence in the full `text`
-    pub sequence_start: usize,
-
-    /// The hit's relative start/stop range inside the sequence
-    /// including the prefix/suffix lengths shown
-    pub sequence_range: Range<usize>,
-
-    /// The query hit's start position from the beginning of the shown context
-    /// E.g., if the user requested a prefix of 10, then this value will be
-    /// between 0-10, depending on the location of the hit inside the sequence.
-    pub suffix_offset: usize,
-}
-
-// --------------------------------------------------
-/// Arguments to `Index::list`
-#[derive(Debug, Clone)]
-pub struct ListOptions {
-    /// Ranks of suffixes to show
-    pub ranks: Vec<usize>,
-
-    /// Show rank column
-    pub show_rank: bool,
-
-    /// Show suffix position column
-    pub show_suffix: bool,
-
-    /// Show LCP column
-    pub show_lcp: bool,
-
-    /// Length of suffixes to show
-    pub len: Option<usize>,
-
-    /// Number of suffixes to show
-    pub number: Option<usize>,
-
-    /// Output
-    //pub output: &'a mut Box<dyn Write>,
-    pub output: Option<String>,
-}
-
-// --------------------------------------------------
-/// A struct for use in locating suffixes
-#[derive(Debug, Clone)]
-pub struct LocateOptions {
-    /// A vector of query strings
-    pub queries: Vec<String>,
-}
-
-// --------------------------------------------------
-/// A struct representing the results of a search that includes the
-/// locations of the suffixes in their sequence context.
-#[derive(Debug, PartialEq)]
-pub struct LocateResult {
-    /// The ordinal position of the original query
-    pub query_num: usize,
-
-    /// The query string
-    pub query: String,
-
-    /// A vector of positions where the query was found.
-    /// This will be empty when the query was not present.
-    pub positions: Vec<LocatePosition>,
-}
-
-// --------------------------------------------------
-/// A struct representing the relative location of a query hit
-/// in the context of a sequence.
-#[derive(Debug, PartialEq)]
-pub struct LocatePosition {
-    /// The position of the suffix in the suffix array
-    pub suffix: usize,
-
-    /// The rank of the suffix in the suffix array
-    pub rank: usize,
-
-    /// The name of the sequence containing a query hit
-    pub sequence_name: String,
-
-    /// The start position of the hit in the sequence
-    pub sequence_position: usize,
-}
-
-// --------------------------------------------------
 /// A struct with metadata about the Sufr file
 #[derive(Debug, PartialEq)]
 pub struct SufrMetadata {
@@ -532,6 +342,55 @@ pub struct SufrMetadata {
 
     /// Whether or not the file has an on-disk LCP array
     pub has_lcp: bool,
+}
+
+impl SufrMetadata {
+    /// The labelled rows that `sufr summarize` prints.
+    pub fn summary(&self) -> Vec<(&'static str, String)> {
+        let num_fmt = NumberFormat::new();
+        let number = |n: usize| num_fmt.format(",.0", n as f64);
+        let sort_row = match &self.sort_type {
+            SuffixSortType::Mask(seed_mask) => ("Seed mask", seed_mask.mask.clone()),
+            SuffixSortType::MaxQueryLen(max_query_len) => {
+                ("Max query len", number(*max_query_len))
+            }
+        };
+        let sequence_starts = self
+            .sequence_starts
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sequence_names = self.sequence_names.join(", ");
+        vec![
+            ("Filename", self.filename.clone()),
+            (
+                "Modified",
+                self.modified.format("%Y-%m-%d %H:%M").to_string(),
+            ),
+            ("File Size", format!("{} bytes", number(self.file_size))),
+            ("File Version", self.file_version.to_string()),
+            ("DNA", self.is_dna.to_string()),
+            ("Allow Ambiguity", self.allow_ambiguity.to_string()),
+            ("Ignore Softmask", self.ignore_softmask.to_string()),
+            ("Text Length", number(self.text_len)),
+            ("Len Suffixes", number(self.len_suffixes)),
+            (
+                "LCP array",
+                if self.has_lcp { "yes" } else { "no" }.to_string(),
+            ),
+            sort_row,
+            ("Num sequences", number(self.num_sequences)),
+            (
+                "Sequence starts",
+                textwrap::wrap(&sequence_starts, 40).join("\n"),
+            ),
+            (
+                "Sequence names",
+                textwrap::wrap(&sequence_names, 40).join("\n"),
+            ),
+        ]
+    }
 }
 
 #[cfg(test)]

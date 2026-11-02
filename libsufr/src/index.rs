@@ -3,9 +3,9 @@
 use crate::{
     format::Header,
     io::{slice_int_to_slice_u8, vec_to_slice_u8, FileAccess},
-    types::{Int, ListOptions, SeedMask, SuffixSortType, SufrMetadata},
+    types::{Int, SeedMask, SuffixSortType, SufrMetadata},
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use home::home_dir;
 use log::info;
@@ -14,7 +14,7 @@ use std::{
     borrow::Cow,
     cmp::min,
     fs::{self, File},
-    io::{self, Read, Write},
+    io::{Read, Write},
     mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -22,6 +22,16 @@ use std::{
 };
 
 // --------------------------------------------------
+/// Where [`Index::open`] puts the text or the suffix array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Storage {
+    /// Read into memory when the file is opened.
+    Memory,
+
+    /// Read from the file as each query needs it.
+    Disk,
+}
+
 /// Where the text is read from.
 #[derive(Debug)]
 pub(crate) enum Text {
@@ -72,23 +82,22 @@ pub struct Index<T: Int> {
 }
 
 impl<T: Int> Index<T> {
-    /// Open a _.sufr_ file whose arrays hold `T` values.
-    /// `low_memory` leaves the suffix array on disk, `very_low_memory`
-    /// leaves the text on disk, and `max_query_len` limits how many
-    /// characters of a query are compared.
+    /// Open a _.sufr_ file whose arrays hold `T` values, with its
+    /// `text` and `suffixes` stored as given. `max_query_len` limits how
+    /// many characters of a query are compared, and when it is shorter
+    /// than the sort, suffixes in memory are a subsample.
     pub fn open(
         filename: &str,
-        low_memory: bool,
-        very_low_memory: bool,
+        text: Storage,
+        suffixes: Storage,
         max_query_len: Option<usize>,
     ) -> Result<Index<T>> {
         let header = Header::read(filename, mem::size_of::<T>())?;
         let text_file: FileAccess<u8> =
             FileAccess::new(filename, header.text_pos as u64, header.text_len)?;
-        let text = if very_low_memory {
-            Text::Disk(text_file)
-        } else {
-            Text::Memory(text_file.get_range(0..header.text_len)?)
+        let text = match text {
+            Storage::Disk => Text::Disk(text_file),
+            Storage::Memory => Text::Memory(text_file.get_range(0..header.text_len)?),
         };
         let suffix_array_file = FileAccess::new(
             filename,
@@ -128,7 +137,7 @@ impl<T: Int> Index<T> {
             seed_mask,
             max_query_len: search_max_query_len,
         };
-        if !low_memory {
+        if suffixes == Storage::Memory {
             index.suffixes = index.load_suffixes(max_query_len)?;
         }
         Ok(index)
@@ -475,71 +484,6 @@ impl<T: Int> Index<T> {
             has_lcp: self.lcp_file.is_some(),
         })
     }
-
-    // --------------------------------------------------
-    /// Print suffixes, in rank order or at the given ranks, to a file or
-    /// stdout.
-    pub fn list(&self, args: ListOptions) -> Result<()> {
-        if args.show_lcp && self.lcp_file.is_none() {
-            bail!(
-                "{} has no LCP array; rebuild with --write-lcp to show LCP values",
-                self.filename
-            );
-        }
-
-        let mut output: Box<dyn Write> = match &args.output {
-            Some(filename) => Box::new(
-                File::create(filename).map_err(|e| anyhow!("{filename}: {e}"))?,
-            ),
-            _ => Box::new(io::stdout()),
-        };
-
-        let number = args.number.unwrap_or(0);
-        if args.ranks.is_empty() {
-            for (rank, suffix) in self.suffix_array_file.iter().enumerate() {
-                writeln!(output, "{}", self.list_row(&args, rank, suffix)?)?;
-                if number > 0 && rank == number - 1 {
-                    break;
-                }
-            }
-        } else {
-            for &rank in &args.ranks {
-                match self.suffix_array_file.get(rank) {
-                    Some(suffix) => {
-                        writeln!(output, "{}", self.list_row(&args, rank, suffix)?)?
-                    }
-                    None => eprintln!("Invalid rank: {rank}"),
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// One line of `list` output.
-    fn list_row(&self, args: &ListOptions, rank: usize, suffix: T) -> Result<String> {
-        let width = self.header.text_len.to_string().len();
-        let text_len = self.header.text_len;
-        let suffix = suffix.to_usize();
-        let end = min(suffix + args.len.unwrap_or(text_len), text_len);
-
-        let mut row = String::new();
-        if args.show_rank {
-            row += &format!("{rank:width$} ");
-        }
-        if args.show_suffix {
-            row += &format!("{suffix:width$} ");
-        }
-        if args.show_lcp {
-            let lcp = match &self.lcp_file {
-                Some(lcp_file) => lcp_file.get(rank).unwrap(),
-                None => T::from_usize(0),
-            };
-            row += &format!("{lcp:width$} ");
-        }
-        row += &String::from_utf8(self.text_range(suffix..end)?)?;
-        Ok(row)
-    }
 }
 
 // --------------------------------------------------
@@ -571,14 +515,13 @@ fn write_cache<T: Int>(cache_path: &Path, suffixes: &[T], ranks: &[T]) -> Result
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::{Index, Suffixes, Text};
+    use super::{Index, Storage, Suffixes, Text};
     use crate::{
-        types::{ListOptions, SeedMask},
-        SuffixArrayBuilder,
+        types::{SeedMask, SuffixSortType},
+        Builder,
     };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
-    use std::fs;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -586,8 +529,12 @@ mod tests {
         for very_low_memory in [true, false] {
             let index = Index::<u32>::open(
                 "../data/inputs/1.sufr",
-                true,
-                very_low_memory,
+                if very_low_memory {
+                    Storage::Disk
+                } else {
+                    Storage::Memory
+                },
+                Storage::Disk,
                 None,
             )?;
             assert_eq!(index.text_byte(index.header.text_len - 1), Some(b'$'));
@@ -601,8 +548,12 @@ mod tests {
         for very_low_memory in [true, false] {
             let index = Index::<u32>::open(
                 "../data/inputs/1.sufr",
-                true,
-                very_low_memory,
+                if very_low_memory {
+                    Storage::Disk
+                } else {
+                    Storage::Memory
+                },
+                Storage::Disk,
                 None,
             )?;
             assert_eq!(index.text_range(0..5)?, b"ACGTN");
@@ -612,31 +563,15 @@ mod tests {
 
     #[test]
     fn test_string_at() -> Result<()> {
-        let index = Index::<u32>::open("../data/inputs/1.sufr", true, true, None)?;
+        let index = Index::<u32>::open(
+            "../data/inputs/1.sufr",
+            Storage::Disk,
+            Storage::Disk,
+            None,
+        )?;
         assert_eq!(index.string_at(0, None)?, "ACGTNNACGT$");
         assert_eq!(index.string_at(0, Some(5))?, "ACGTN");
         assert_eq!(index.string_at(8, Some(5))?, "GT$");
-        Ok(())
-    }
-
-    #[test]
-    fn test_list_text_in_memory() -> Result<()> {
-        let index = Index::<u32>::open("../data/inputs/1.sufr", true, false, None)?;
-        let outfile = NamedTempFile::new()?;
-        let list_opts = ListOptions {
-            ranks: vec![2, 4, 99],
-            show_rank: true,
-            show_suffix: true,
-            show_lcp: true,
-            len: Some(3),
-            number: None,
-            output: Some(outfile.path().to_string_lossy().to_string()),
-        };
-        index.list(list_opts)?;
-        assert_eq!(
-            fs::read_to_string(&outfile)?,
-            " 2  0  4 ACG\n 4  1  3 CGT\n"
-        );
         Ok(())
     }
 
@@ -646,20 +581,25 @@ mod tests {
     #[test]
     fn test_open_modes() -> Result<()> {
         let file = "../data/inputs/1.sufr";
-        let index = Index::<u32>::open(file, true, true, Some(2))?;
+        let index = Index::<u32>::open(file, Storage::Disk, Storage::Disk, Some(2))?;
         assert!(matches!(index.text, Text::Disk(_)));
         assert!(matches!(index.suffixes, Suffixes::Disk));
 
-        let index = Index::<u32>::open(file, true, false, Some(2))?;
+        let index = Index::<u32>::open(file, Storage::Memory, Storage::Disk, Some(2))?;
         assert!(matches!(index.text, Text::Memory(_)));
         assert!(matches!(index.suffixes, Suffixes::Disk));
 
         for max_query_len in [None, Some(0), Some(11), Some(20)] {
-            let index = Index::<u32>::open(file, false, false, max_query_len)?;
+            let index = Index::<u32>::open(
+                file,
+                Storage::Memory,
+                Storage::Memory,
+                max_query_len,
+            )?;
             assert!(matches!(index.suffixes, Suffixes::Memory(_)));
         }
 
-        let index = Index::<u32>::open(file, false, true, None)?;
+        let index = Index::<u32>::open(file, Storage::Disk, Storage::Memory, None)?;
         assert!(matches!(index.text, Text::Disk(_)));
         assert!(matches!(index.suffixes, Suffixes::Memory(_)));
         Ok(())
@@ -710,19 +650,20 @@ mod tests {
     ) -> Result<(NamedTempFile, Index<u32>)> {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let mut builder =
-            SuffixArrayBuilder::from_data(text.to_vec(), vec![(0, "s".to_string())])
-                .with_dna_options(true, false, false)
-                .with_num_partitions(3)
-                .with_write_lcp(write_lcp);
+        let mut builder = Builder::from_data(text.to_vec(), vec![(0, "s".to_string())])
+            .with_dna_options(true, false, false)
+            .with_num_partitions(3)
+            .with_write_lcp(write_lcp);
         if let Some(n) = max_query_len {
-            builder = builder.with_max_query_len(n);
+            builder = builder.with_sort_type(SuffixSortType::MaxQueryLen(n));
         }
         if let Some(mask) = seed_mask {
-            builder = builder.with_seed_mask(SeedMask::new(mask)?);
+            builder =
+                builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?));
         }
-        builder.build_to_file(&outpath, false)?;
-        let index: Index<u32> = Index::open(&outpath, true, false, None)?;
+        builder.build_to_file(&outpath)?;
+        let index: Index<u32> =
+            Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         Ok((outfile, index))
     }
 

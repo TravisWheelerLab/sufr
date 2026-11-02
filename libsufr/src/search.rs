@@ -3,101 +3,157 @@
 use crate::{
     index::Index,
     lcp::{lcp, mask_offset, masked_lcp},
-    types::{
-        Comparison, CountOptions, CountResult, ExtractOptions, ExtractResult,
-        ExtractSequence, Int, LocateOptions, LocatePosition, LocateResult,
-        SearchOptions, SearchResult, SearchResultLocations,
-    },
+    types::{Comparison, Int},
+    SuffixArray,
 };
 use anyhow::Result;
-use log::info;
-use rayon::prelude::*;
+use regex::Regex;
 use std::{
     cmp::{min, Ordering},
-    time::Instant,
+    fs,
+    ops::Range,
+    path::Path,
 };
 
-impl<T: Int> Index<T> {
-    /// Count the occurrences of queries in a suffix array
-    pub fn count(&self, args: CountOptions) -> Result<Vec<CountResult>> {
-        let search_args = SearchOptions {
-            queries: args.queries,
-            find_suffixes: false,
+// --------------------------------------------------
+/// The suffixes matching one query, as a range of ranks in the
+/// suffix array.
+#[derive(Debug)]
+pub struct Hits<'a> {
+    suffix_array: &'a SuffixArray,
+    ranks: Range<usize>,
+}
+
+/// Where a hit falls in the sequences of the text.
+#[derive(Debug, PartialEq)]
+pub struct Location<'a> {
+    /// The position of the hit in the text.
+    pub suffix: usize,
+
+    /// The rank of the suffix in the suffix array.
+    pub rank: usize,
+
+    /// The name of the sequence holding the hit.
+    pub sequence_name: &'a str,
+
+    /// The position of the hit in its sequence.
+    pub position: usize,
+}
+
+/// A hit with context around it, taken from its sequence.
+#[derive(Debug, PartialEq)]
+pub struct Extraction<'a> {
+    /// The position of the hit in the text.
+    pub suffix: usize,
+
+    /// The rank of the suffix in the suffix array.
+    pub rank: usize,
+
+    /// The name of the sequence holding the hit.
+    pub sequence_name: &'a str,
+
+    /// The extracted range, relative to the start of the sequence.
+    pub sequence_range: Range<usize>,
+
+    /// The position of the hit in `text`.
+    pub suffix_offset: usize,
+
+    /// The text in `sequence_range`.
+    pub text: Vec<u8>,
+}
+
+impl<'a> Hits<'a> {
+    pub(crate) fn new(suffix_array: &'a SuffixArray, ranks: Range<usize>) -> Self {
+        Hits {
+            suffix_array,
+            ranks,
+        }
+    }
+
+    /// The number of hits.
+    pub fn count(&self) -> usize {
+        self.ranks.len()
+    }
+
+    /// The ranks of the hits in the suffix array, empty when nothing
+    /// matched.
+    pub fn ranks(&self) -> Range<usize> {
+        self.ranks.clone()
+    }
+
+    /// The positions of the hits in the text, in rank order.
+    pub fn suffixes(&self) -> Result<Vec<usize>> {
+        let ranks = self.ranks();
+        let suffixes = match self.suffix_array {
+            SuffixArray::U32(index) => to_usize(index.suffixes_at(ranks)?),
+            SuffixArray::U64(index) => to_usize(index.suffixes_at(ranks)?),
         };
-
-        let counts: Vec<_> = self
-            .suffix_search(&search_args)?
-            .into_iter()
-            .map(|res| CountResult {
-                query_num: res.query_num,
-                query: res.query.clone(),
-                count: res.locations.map_or(0, |loc| loc.ranks.len()),
-            })
-            .collect();
-
-        Ok(counts)
+        Ok(suffixes)
     }
 
-    // --------------------------------------------------
-    /// Search the suffix array.
-    pub fn suffix_search(&self, args: &SearchOptions) -> Result<Vec<SearchResult<T>>> {
-        let now = Instant::now();
-        let mut res: Vec<_> = args
-            .queries
-            .clone()
-            .into_par_iter()
-            .enumerate()
-            .flat_map(|(query_num, query)| -> Result<SearchResult<T>> {
-                self.search(query_num, &query, args.find_suffixes)
-            })
-            .collect();
-        res.sort_by_key(|r| r.query_num);
-
-        info!(
-            "Search of {} queries finished in {:?}",
-            args.queries.len(),
-            now.elapsed()
-        );
-
-        Ok(res)
+    /// The hits within their sequences, sorted by sequence name and then
+    /// by position.
+    pub fn locate(&self) -> Result<Vec<Location<'a>>> {
+        match self.suffix_array {
+            SuffixArray::U32(index) => index.locate(self.ranks()),
+            SuffixArray::U64(index) => index.locate(self.ranks()),
+        }
     }
 
-    // --------------------------------------------------
-    /// Find one query, and its suffixes when `find_suffixes`.
-    fn search(
+    /// The hits in rank order, each with up to `before` characters of its
+    /// sequence before it and `after` characters from its start, or to
+    /// the end of its sequence when `after` is not given.
+    pub fn extract(
         &self,
-        query_num: usize,
-        query: &str,
-        find_suffixes: bool,
-    ) -> Result<SearchResult<T>> {
-        let qry = query.as_bytes();
-        let n = self.num_searched();
-        let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) else {
-            return Ok(SearchResult {
-                query_num,
-                query: query.to_string(),
-                locations: None,
-            });
-        };
+        before: Option<usize>,
+        after: Option<usize>,
+    ) -> Result<Vec<Extraction<'a>>> {
+        match self.suffix_array {
+            SuffixArray::U32(index) => index.extract(self.ranks(), before, after),
+            SuffixArray::U64(index) => index.extract(self.ranks(), before, after),
+        }
+    }
+}
 
-        let end = self
-            .suffix_search_last(qry, start, n - 1, n, 0, 0)
-            .unwrap_or(start);
-        let ranks = self.rank_range(start, end);
+fn to_usize<T: Int>(values: Vec<T>) -> Vec<usize> {
+    values.into_iter().map(|v| v.to_usize()).collect()
+}
 
-        // Getting suffixes may require going to disk
-        // but "count" doesn't need them so this is an option
-        let suffixes = if find_suffixes {
-            self.suffixes_at(ranks.clone())?
+// --------------------------------------------------
+/// The queries, with each one that names an existing file replaced by
+/// the whitespace-separated queries in that file.
+pub fn read_queries(queries: &[String]) -> Result<Vec<String>> {
+    let whitespace = Regex::new(r"\s+").unwrap();
+    let mut ret = vec![];
+    for query in queries {
+        if Path::new(&query).exists() {
+            let contents = fs::read_to_string(query)?;
+            let mut vals: Vec<String> = whitespace
+                .split(&contents)
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string())
+                .collect();
+            ret.append(&mut vals);
         } else {
-            vec![]
-        };
+            ret.push(query.to_string());
+        }
+    }
 
-        Ok(SearchResult {
-            query_num,
-            query: query.to_string(),
-            locations: Some(SearchResultLocations { suffixes, ranks }),
-        })
+    Ok(ret)
+}
+
+// --------------------------------------------------
+impl<T: Int> Index<T> {
+    /// The ranks of the suffixes matching `query`, empty when none match.
+    pub(crate) fn search(&self, query: &[u8]) -> Range<usize> {
+        let n = self.num_searched();
+        let Some(start) = self.suffix_search_first(query, 0, n - 1, 0, 0) else {
+            return 0..0;
+        };
+        let end = self
+            .suffix_search_last(query, start, n - 1, n, 0, 0)
+            .unwrap_or(start);
+        self.rank_range(start, end)
     }
 
     // --------------------------------------------------
@@ -251,305 +307,194 @@ impl<T: Int> Index<T> {
     }
 
     // --------------------------------------------------
-    /// Extract the suffixes for a given set of queries
-    pub fn extract(&self, args: ExtractOptions) -> Result<Vec<ExtractResult>> {
-        let search_args = SearchOptions {
-            queries: args.queries,
-            find_suffixes: true,
-        };
-        let search_result = &self.suffix_search(&search_args)?;
-        let now = Instant::now();
-
-        // Augment the search with relative sequence positions
-        let extract_result = search_result
-            .into_par_iter()
-            .map(|res| {
-                let sequences: Vec<ExtractSequence> = match &res.locations {
-                    Some(locs) => locs
-                        .ranks
-                        .clone()
-                        .zip(locs.suffixes.clone())
-                        .map(|(rank, suffix)| {
-                            self.extract_sequence(
-                                rank,
-                                suffix.to_usize(),
-                                args.prefix_len,
-                                args.suffix_len,
-                            )
-                        })
-                        .collect(),
-                    _ => vec![],
-                };
-
-                ExtractResult {
-                    query_num: res.query_num,
-                    query: res.query.clone(),
-                    sequences,
+    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
+        let seq_starts = &self.header.sequence_starts;
+        let suffixes = self.suffixes_at(ranks.clone())?;
+        let mut locations: Vec<Location> = ranks
+            .zip(suffixes)
+            .map(|(rank, suffix)| {
+                let suffix = suffix.to_usize();
+                let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
+                Location {
+                    suffix,
+                    rank,
+                    sequence_name: &self.header.sequence_names[i],
+                    position: suffix - seq_starts[i],
                 }
             })
             .collect();
-
-        info!("Adding locate data finished in {:?}", now.elapsed());
-
-        Ok(extract_result)
+        locations.sort_by(|a, b| {
+            a.sequence_name
+                .cmp(b.sequence_name)
+                .then(a.position.cmp(&b.position))
+        });
+        Ok(locations)
     }
 
-    /// The sequence context of one hit, from `prefix_len` before the
-    /// suffix to `suffix_len` after its start, within its sequence.
-    fn extract_sequence(
+    // --------------------------------------------------
+    fn extract(
+        &self,
+        ranks: Range<usize>,
+        before: Option<usize>,
+        after: Option<usize>,
+    ) -> Result<Vec<Extraction<'_>>> {
+        let suffixes = self.suffixes_at(ranks.clone())?;
+        ranks
+            .zip(suffixes)
+            .map(|(rank, suffix)| {
+                self.extraction(rank, suffix.to_usize(), before, after)
+            })
+            .collect()
+    }
+
+    fn extraction(
         &self,
         rank: usize,
         suffix: usize,
-        prefix_len: Option<usize>,
-        suffix_len: Option<usize>,
-    ) -> ExtractSequence {
+        before: Option<usize>,
+        after: Option<usize>,
+    ) -> Result<Extraction<'_>> {
         let seq_starts = &self.header.sequence_starts;
+        let text_len = self.header.text_len;
         let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
         let sequence_start = seq_starts[i];
+
+        // TODO: seq_end is a position in the text but is compared
+        //       with positions relative to the sequence start, so
+        //       context past the first sequence runs past its end
         let seq_end = if i == seq_starts.len() - 1 {
-            self.header.text_len
+            text_len
         } else {
             seq_starts[i + 1]
         };
         let relative_suffix_start = suffix - sequence_start;
-        let context_start =
-            relative_suffix_start.saturating_sub(prefix_len.unwrap_or(0));
+        let context_start = relative_suffix_start.saturating_sub(before.unwrap_or(0));
         let context_end = min(
-            suffix_len.map_or(seq_end, |len| relative_suffix_start + len),
+            after.map_or(seq_end, |len| relative_suffix_start + len),
             seq_end,
         );
-        ExtractSequence {
-            rank,
+        let text_start = sequence_start + context_start;
+        let text_end = min(text_start + (context_end - context_start), text_len);
+        Ok(Extraction {
             suffix,
-            sequence_name: self.header.sequence_names[i].clone(),
-            sequence_start,
-            sequence_range: (context_start..context_end),
+            rank,
+            sequence_name: &self.header.sequence_names[i],
+            sequence_range: context_start..context_end,
             suffix_offset: relative_suffix_start - context_start,
-        }
-    }
-
-    // --------------------------------------------------
-    /// Find the positions of queries in a suffix array.
-    pub fn locate(&self, args: LocateOptions) -> Result<Vec<LocateResult>> {
-        let search_opts = SearchOptions {
-            queries: args.queries,
-            find_suffixes: true,
-        };
-        let search_result = &self.suffix_search(&search_opts)?;
-        let seq_starts = &self.header.sequence_starts;
-        let seq_names = &self.header.sequence_names;
-        let mut locate_result: Vec<LocateResult> = vec![];
-        let now = Instant::now();
-
-        // Augment the search with relative sequence positions
-        for res in search_result {
-            let mut positions = vec![];
-            if let Some(locs) = &res.locations {
-                for (rank, suffix) in locs.ranks.clone().zip(locs.suffixes.clone()) {
-                    let suffix = suffix.to_usize();
-                    let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
-                    positions.push(LocatePosition {
-                        rank,
-                        suffix,
-                        sequence_name: seq_names[i].clone(),
-                        sequence_position: suffix - seq_starts[i],
-                    })
-                }
-            }
-            locate_result.push(LocateResult {
-                query_num: res.query_num,
-                query: res.query.clone(),
-                positions,
-            });
-        }
-
-        info!("Adding locate data finished in {:?}", now.elapsed());
-
-        Ok(locate_result)
+            text: self.text_range(text_start..text_end)?,
+        })
     }
 }
 
 // --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use crate::{
-        index::Index,
-        types::{
-            CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence,
-            LocateOptions, LocatePosition, LocateResult, SearchOptions, SearchResult,
-            SearchResultLocations,
-        },
-    };
+    use super::{read_queries, Extraction, Location};
+    use crate::{Storage, SuffixArray};
     use anyhow::Result;
+    use pretty_assertions::assert_eq;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn open(file: &str, text: Storage, suffixes: Storage) -> Result<SuffixArray> {
+        SuffixArray::open_with(file, text, suffixes, None)
+    }
+
+    fn extraction(
+        suffix: usize,
+        rank: usize,
+        sequence_range: std::ops::Range<usize>,
+        suffix_offset: usize,
+        text: &[u8],
+    ) -> Extraction<'static> {
+        Extraction {
+            suffix,
+            rank,
+            sequence_name: "1",
+            sequence_range,
+            suffix_offset,
+            text: text.to_vec(),
+        }
+    }
 
     #[test]
     fn test_count() -> Result<()> {
-        let sufr = Index::<u32>::open("../data/inputs/1.sufr", true, false, None)?;
-        let opts = CountOptions {
-            queries: vec!["AC".to_string(), "AG".to_string(), "GT".to_string()],
-        };
-        let expected = vec![
-            CountResult {
-                query_num: 0,
-                query: "AC".to_string(),
-                count: 2,
-            },
-            CountResult {
-                query_num: 1,
-                query: "AG".to_string(),
-                count: 0,
-            },
-            CountResult {
-                query_num: 2,
-                query: "GT".to_string(),
-                count: 2,
-            },
-        ];
-        assert_eq!(sufr.count(opts)?, expected);
+        let sa = open("../data/inputs/1.sufr", Storage::Memory, Storage::Disk)?;
+        let counts: Vec<_> = sa
+            .search_all(&["AC", "AG", "GT"])
+            .iter()
+            .map(|hits| hits.count())
+            .collect();
+        assert_eq!(counts, [2, 0, 2]);
         Ok(())
     }
 
     #[test]
-    fn test_suffix_search() -> Result<()> {
+    fn test_search() -> Result<()> {
         // the text is ACGTNNACGT$
-        let sufr = Index::<u32>::open("../data/inputs/1.sufr", true, false, None)?;
-        let opts = SearchOptions {
-            queries: vec!["ACG".to_string(), "GGC".to_string()],
-            find_suffixes: true,
-        };
-        let expected: Vec<SearchResult<u32>> = vec![
-            SearchResult {
-                query_num: 0,
-                query: "ACG".to_string(),
-                locations: Some(SearchResultLocations {
-                    ranks: 1..3,
-                    suffixes: vec![6, 0],
-                }),
-            },
-            SearchResult {
-                query_num: 1,
-                query: "GGC".to_string(),
-                locations: None,
-            },
-        ];
-        assert_eq!(sufr.suffix_search(&opts)?, expected);
+        let sa = open("../data/inputs/1.sufr", Storage::Memory, Storage::Disk)?;
+        let hits = sa.search(b"ACG");
+        assert_eq!(hits.ranks(), 1..3);
+        assert_eq!(hits.suffixes()?, [6, 0]);
+
+        let hits = sa.search(b"GGC");
+        assert_eq!(hits.ranks(), 0..0);
+        assert_eq!(hits.suffixes()?, []);
         Ok(())
     }
 
     #[test]
     fn test_extract_text_on_disk() -> Result<()> {
-        let sufr = Index::<u32>::open("../data/inputs/1.sufr", true, true, None)?;
-        let extract_opts = ExtractOptions {
-            queries: vec!["ACG".to_string(), "GTC".to_string()],
-            prefix_len: Some(1),
-            suffix_len: Some(3),
-        };
-        let expected = vec![
-            ExtractResult {
-                query_num: 0,
-                query: "ACG".to_string(),
-                sequences: vec![
-                    ExtractSequence {
-                        suffix: 6,
-                        rank: 1,
-                        sequence_name: "1".to_string(),
-                        sequence_start: 0,
-                        sequence_range: 5..9,
-                        suffix_offset: 1,
-                    },
-                    ExtractSequence {
-                        suffix: 0,
-                        rank: 2,
-                        sequence_name: "1".to_string(),
-                        sequence_start: 0,
-                        sequence_range: 0..3,
-                        suffix_offset: 0,
-                    },
-                ],
-            },
-            ExtractResult {
-                query_num: 1,
-                query: "GTC".to_string(),
-                sequences: vec![],
-            },
-        ];
-        assert_eq!(sufr.extract(extract_opts)?, expected);
+        let sa = open("../data/inputs/1.sufr", Storage::Disk, Storage::Disk)?;
+        assert_eq!(
+            sa.search(b"ACG").extract(Some(1), Some(3))?,
+            [
+                extraction(6, 1, 5..9, 1, b"NACG"),
+                extraction(0, 2, 0..3, 0, b"ACG"),
+            ]
+        );
+        assert_eq!(sa.search(b"GTC").extract(Some(1), Some(3))?, []);
         Ok(())
     }
 
-    // --------------------------------------------------
     #[test]
     fn test_extract() -> Result<()> {
-        // cargo run -- ex data/expected/1.sufr AC GT XX
-        let sufr_file: Index<u32> =
-            Index::open("../data/expected/1.sufr", true, false, None)?;
-
-        let opts = ExtractOptions {
-            queries: vec!["AC".to_string(), "GT".to_string(), "XX".to_string()],
-            prefix_len: Some(1),
-            suffix_len: Some(3),
-        };
-
-        let expected = [
-            ExtractResult {
-                query_num: 0,
-                query: "AC".to_string(),
-                sequences: vec![
-                    ExtractSequence {
-                        suffix: 6,
-                        rank: 1,
-                        sequence_name: "1".to_string(),
-                        sequence_start: 0,
-                        sequence_range: 5..9,
-                        suffix_offset: 1,
-                    },
-                    ExtractSequence {
-                        suffix: 0,
-                        rank: 2,
-                        sequence_name: "1".to_string(),
-                        sequence_start: 0,
-                        sequence_range: 0..3,
-                        suffix_offset: 0,
-                    },
+        let sa = open("../data/expected/1.sufr", Storage::Memory, Storage::Disk)?;
+        let extractions = sa
+            .search_all(&["AC", "GT", "XX"])
+            .iter()
+            .map(|hits| hits.extract(Some(1), Some(3)))
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(
+            extractions,
+            [
+                vec![
+                    extraction(6, 1, 5..9, 1, b"NACG"),
+                    extraction(0, 2, 0..3, 0, b"ACG"),
                 ],
-            },
-            ExtractResult {
-                query_num: 1,
-                query: "GT".to_string(),
-                sequences: vec![
-                    ExtractSequence {
-                        suffix: 8,
-                        rank: 5,
-                        sequence_name: "1".to_string(),
-                        sequence_start: 0,
-                        sequence_range: 7..11,
-                        suffix_offset: 1,
-                    },
-                    ExtractSequence {
-                        suffix: 2,
-                        rank: 6,
-                        sequence_name: "1".to_string(),
-                        sequence_start: 0,
-                        sequence_range: 1..5,
-                        suffix_offset: 1,
-                    },
+                vec![
+                    extraction(8, 5, 7..11, 1, b"CGT$"),
+                    extraction(2, 6, 1..5, 1, b"CGTN"),
                 ],
-            },
-            ExtractResult {
-                query_num: 2,
-                query: "XX".to_string(),
-                sequences: vec![],
-            },
-        ];
-
-        let res = sufr_file.extract(opts);
-        assert!(res.is_ok());
-        assert_eq!(res.unwrap(), expected);
-
+                vec![],
+            ]
+        );
         Ok(())
     }
 
-    // --------------------------------------------------
+    #[test]
+    fn test_extract_without_after() -> Result<()> {
+        let sa = open("../data/inputs/1.sufr", Storage::Memory, Storage::Memory)?;
+        assert_eq!(
+            sa.search(b"CGT").extract(Some(1), None)?,
+            [
+                extraction(7, 3, 6..11, 1, b"ACGT$"),
+                extraction(1, 4, 0..11, 1, b"ACGTNNACGT$"),
+            ]
+        );
+        Ok(())
+    }
+
     #[test]
     fn test_locate() -> Result<()> {
         //  0  14: #
@@ -568,225 +513,56 @@ mod tests {
         // 13   6: BABBABAB#
         // 14   8: BBABAB#
 
-        for low_memory in [true, false] {
-            let sufr_file: Index<u32> =
-                Index::open("../data/expected/abba.sufr", low_memory, false, None)?;
-            let args = LocateOptions {
-                queries: vec!["A".to_string()],
-            };
-            let res = sufr_file.locate(args);
-            assert!(res.is_ok());
-            let res = res.unwrap();
-            assert_eq!(res.len(), 1);
-
-            assert_eq!(
-                res,
-                vec![LocateResult {
-                    query_num: 0,
-                    query: "A".to_string(),
-                    positions: vec![
-                        LocatePosition {
-                            rank: 1,
-                            suffix: 0,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 0,
-                        },
-                        LocatePosition {
-                            rank: 2,
-                            suffix: 12,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 12,
-                        },
-                        LocatePosition {
-                            rank: 3,
-                            suffix: 10,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 10,
-                        },
-                        LocatePosition {
-                            rank: 4,
-                            suffix: 1,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 1,
-                        },
-                        LocatePosition {
-                            rank: 5,
-                            suffix: 3,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 3,
-                        },
-                        LocatePosition {
-                            rank: 6,
-                            suffix: 5,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 5,
-                        },
-                        LocatePosition {
-                            rank: 7,
-                            suffix: 7,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 7,
-                        },
-                    ]
-                }]
-            );
+        // (query, [(rank, suffix)] sorted by position)
+        let expected: [(&str, &[(usize, usize)]); 5] = [
+            (
+                "A",
+                &[(1, 0), (4, 1), (5, 3), (6, 5), (7, 7), (3, 10), (2, 12)],
+            ),
+            (
+                "B",
+                &[
+                    (11, 2),
+                    (12, 4),
+                    (13, 6),
+                    (14, 8),
+                    (10, 9),
+                    (9, 11),
+                    (8, 13),
+                ],
+            ),
+            ("ABAB", &[(4, 1), (5, 3), (6, 5), (3, 10)]),
+            ("ABABB", &[(6, 5)]),
+            ("BBBB", &[]),
+        ];
+        for suffixes in [Storage::Disk, Storage::Memory] {
+            let sa = open("../data/expected/abba.sufr", Storage::Memory, suffixes)?;
+            for (query, hits) in expected {
+                let expected: Vec<_> = hits
+                    .iter()
+                    .map(|&(rank, suffix)| Location {
+                        suffix,
+                        rank,
+                        sequence_name: "1",
+                        position: suffix,
+                    })
+                    .collect();
+                assert_eq!(sa.search(query.as_bytes()).locate()?, expected, "{query}");
+            }
         }
+        Ok(())
+    }
 
-        for low_memory in [true, false] {
-            let sufr_file: Index<u32> =
-                Index::open("../data/expected/abba.sufr", low_memory, false, None)?;
-            let args = LocateOptions {
-                queries: vec!["B".to_string()],
-            };
-            let res = sufr_file.locate(args);
-            assert!(res.is_ok());
-            let res = res.unwrap();
-            assert_eq!(res.len(), 1);
-
-            assert_eq!(
-                res,
-                vec![LocateResult {
-                    query_num: 0,
-                    query: "B".to_string(),
-                    positions: vec![
-                        LocatePosition {
-                            rank: 8,
-                            suffix: 13,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 13,
-                        },
-                        LocatePosition {
-                            rank: 9,
-                            suffix: 11,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 11,
-                        },
-                        LocatePosition {
-                            rank: 10,
-                            suffix: 9,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 9,
-                        },
-                        LocatePosition {
-                            rank: 11,
-                            suffix: 2,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 2,
-                        },
-                        LocatePosition {
-                            rank: 12,
-                            suffix: 4,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 4,
-                        },
-                        LocatePosition {
-                            rank: 13,
-                            suffix: 6,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 6,
-                        },
-                        LocatePosition {
-                            rank: 14,
-                            suffix: 8,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 8,
-                        },
-                    ]
-                }]
-            );
-        }
-
-        for low_memory in [true, false] {
-            let sufr_file: Index<u32> =
-                Index::open("../data/expected/abba.sufr", low_memory, false, None)?;
-            let args = LocateOptions {
-                queries: vec!["ABAB".to_string()],
-            };
-            let res = sufr_file.locate(args);
-            assert!(res.is_ok());
-            let res = res.unwrap();
-            assert_eq!(res.len(), 1);
-
-            assert_eq!(
-                res,
-                vec![LocateResult {
-                    query_num: 0,
-                    query: "ABAB".to_string(),
-                    positions: vec![
-                        LocatePosition {
-                            rank: 3,
-                            suffix: 10,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 10,
-                        },
-                        LocatePosition {
-                            rank: 4,
-                            suffix: 1,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 1,
-                        },
-                        LocatePosition {
-                            rank: 5,
-                            suffix: 3,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 3,
-                        },
-                        LocatePosition {
-                            rank: 6,
-                            suffix: 5,
-                            sequence_name: "1".to_string(),
-                            sequence_position: 5,
-                        },
-                    ]
-                }]
-            );
-        }
-
-        for low_memory in [true, false] {
-            let sufr_file: Index<u32> =
-                Index::open("../data/expected/abba.sufr", low_memory, false, None)?;
-            let args = LocateOptions {
-                queries: vec!["ABABB".to_string()],
-            };
-            let res = sufr_file.locate(args);
-            assert!(res.is_ok());
-            let res = res.unwrap();
-            assert_eq!(res.len(), 1);
-            assert_eq!(
-                res,
-                vec![LocateResult {
-                    query_num: 0,
-                    query: "ABABB".to_string(),
-                    positions: vec![LocatePosition {
-                        rank: 6,
-                        suffix: 5,
-                        sequence_name: "1".to_string(),
-                        sequence_position: 5,
-                    },]
-                }]
-            );
-        }
-
-        for low_memory in [true, false] {
-            let sufr_file: Index<u32> =
-                Index::open("../data/expected/abba.sufr", low_memory, false, None)?;
-            let args = LocateOptions {
-                queries: vec!["BBBB".to_string()],
-            };
-            let res = sufr_file.locate(args);
-            assert!(res.is_ok());
-            let res = res.unwrap();
-            assert_eq!(res.len(), 1);
-            assert_eq!(
-                res,
-                vec![LocateResult {
-                    query_num: 0,
-                    query: "BBBB".to_string(),
-                    positions: vec![],
-                }]
-            );
-        }
-
+    #[test]
+    fn test_read_queries() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        write!(file, "AC GT\n  ACG\tXX\n\nT\n")?;
+        let path = file.path().to_string_lossy().to_string();
+        let queries = ["A".to_string(), path, "C".to_string()];
+        assert_eq!(
+            read_queries(&queries)?,
+            ["A", "AC", "GT", "ACG", "XX", "T", "C"]
+        );
         Ok(())
     }
 }

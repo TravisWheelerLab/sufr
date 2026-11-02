@@ -6,7 +6,6 @@ use crate::{
         Int, SeedMask, SequenceFileData, SuffixSortType, OUTFILE_VERSION,
         SENTINEL_CHARACTER,
     },
-    SuffixArray,
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -27,39 +26,12 @@ use std::{
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
 
-/// Configuration and construction of [`SuffixArray`]s.
+/// Configuration and construction of a _.sufr_ file.
 ///
-/// Suffix Arrays can be constructed from a sequence file with [`SuffixArrayBuilder::from_sequence_file`],
-/// or from in-memory sequence data with [`SuffixArrayBuilder::from_data`].
-///
-/// The input, processing, and output options can be configured with the various
-/// `with_*` methods on this structure.
-///
-/// After configuration, call [`SuffixArrayBuilder::build_to_file`] to construct the suffix array
-/// and write it out to a file.
-///
-/// # Examples
-///
-/// ```
-/// use anyhow::Result;
-/// use libsufr::SuffixArrayBuilder;
-///
-/// fn main() -> Result<()> {
-///     let outfile = "3.sufr";
-///     let suffix_array = SuffixArrayBuilder::from_sequence_file("../data/inputs/3.fa", b'%')?
-///         .with_dna_options(true, false, true)
-///         .build_to_file(outfile, false)?;
-///
-///     let meta = suffix_array.metadata()?;
-///     assert_eq!(meta.text_len, 113);
-///     assert_eq!(meta.len_suffixes, 101);
-///
-///     std::fs::remove_file(&outfile)?;
-///     Ok(())
-/// }
-/// ```
-///
-pub struct SuffixArrayBuilder {
+/// Start from a sequence file with [`Builder::from_sequence_file`] or
+/// from text in memory with [`Builder::from_data`], set options with the
+/// `with_*` methods, then write the file with [`Builder::build_to_file`].
+pub struct Builder {
     // INPUT
     text: Vec<u8>,
     sequences: Vec<(usize, String)>,
@@ -86,8 +58,8 @@ pub struct SuffixArrayBuilder {
     n_ranges: Vec<Range<usize>>,
 }
 
-impl SuffixArrayBuilder {
-    /// Creates a new `SuffixArrayBuilder` from the contents of a sequence file.
+impl Builder {
+    /// Creates a new `Builder` from the contents of a sequence file.
     /// `sequence_delimiter` must be within the alphabet or sort below all characters -
     /// `%` is suggested for biological sequence.
     // TODO: "must be" - should either be nonconfigurable or should support other values.
@@ -110,7 +82,7 @@ impl SuffixArrayBuilder {
         Ok(Self::from_data(data.seq, sequences))
     }
 
-    /// Creates a new `SuffixArrayBuilder` from in-memory `text`. `sequences`
+    /// Creates a new `Builder` from in-memory `text`. `sequences`
     /// describes the start positions and names for subsequences of `text`,
     /// which should have a `%` inserted between them.
     pub fn from_data(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
@@ -148,21 +120,15 @@ impl SuffixArrayBuilder {
         self
     }
 
-    /// Sets the `sort_type` of this builder.
+    /// Sets how the suffixes are sorted: by their first `n` characters
+    /// (`MaxQueryLen(n)`, where 0 means all of them, the default) or by
+    /// the care positions of a seed mask (`Mask`).
     pub fn with_sort_type(mut self, sort_type: SuffixSortType) -> Self {
         (self.seed_mask, self.max_query_len) = match sort_type {
             SuffixSortType::Mask(seed_mask) => (Some(seed_mask), 0),
             SuffixSortType::MaxQueryLen(max_query_len) => (None, max_query_len),
         };
         self
-    }
-    /// Sets the `max_query_len` of this builder.
-    pub fn with_max_query_len(self, max_query_len: usize) -> Self {
-        self.with_sort_type(SuffixSortType::MaxQueryLen(max_query_len))
-    }
-    /// Sets the `seed_mask` of this builder.
-    pub fn with_seed_mask(self, mask: SeedMask) -> Self {
-        self.with_sort_type(SuffixSortType::Mask(mask))
     }
     /// Sets the number of partitions to be used during the construction (default: `1024`).
     pub fn with_num_partitions(mut self, num_partitions: usize) -> Self {
@@ -189,13 +155,8 @@ impl SuffixArrayBuilder {
         self
     }
 
-    /// Builds the suffix array, writing it to `path` and opening it with
-    /// its suffix array on disk, and its text too when `low_memory`.
-    pub fn build_to_file(
-        mut self,
-        path: impl AsRef<Path>,
-        low_memory: bool,
-    ) -> Result<SuffixArray> {
+    /// Builds the suffix array and writes it to `path`.
+    pub fn build_to_file(mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let occupancy = self.normalize_text();
         if self.allow_ambiguity {
@@ -217,7 +178,7 @@ impl SuffixArrayBuilder {
                 self.build::<u64, MemoryScratchBuffer<u64>>(path, occupancy)?
             }
         }
-        SuffixArray::open(&path.to_string_lossy(), true, low_memory, None)
+        Ok(())
     }
 
     /// Upper-case soft-masked characters (or replace them with `N` when
@@ -1219,8 +1180,11 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
 // --------------------------------------------------
 #[cfg(test)]
 mod test {
-    use super::{read_sequence_file, SuffixArrayBuilder};
-    use crate::types::SeedMask;
+    use super::{read_sequence_file, Builder};
+    use crate::{
+        types::{SeedMask, SuffixSortType},
+        SuffixArray,
+    };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::{fs, path::Path};
@@ -1243,7 +1207,7 @@ mod test {
     fn test_find_lcp_no_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTAGC".to_vec();
-        let sufr = SuffixArrayBuilder::from_data(text, vec![(0, "1".to_string())]);
+        let sufr = Builder::from_data(text, vec![(0, "1".to_string())]);
 
         // 0: TTTAGC
         // 1:  TTAGC
@@ -1274,8 +1238,8 @@ mod test {
     fn test_find_lcp_with_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTTTA".to_vec();
-        let sufr = SuffixArrayBuilder::from_data(text, vec![(0, "1".to_string())])
-            .with_seed_mask(SeedMask::new("1101")?);
+        let sufr = Builder::from_data(text, vec![(0, "1".to_string())])
+            .with_sort_type(SuffixSortType::Mask(SeedMask::new("1101")?));
 
         // 0: TTTTTA
         // 1:  TTTTA
@@ -1296,13 +1260,26 @@ mod test {
     fn test_memory_scratch_matches_disk() -> Result<()> {
         let build = |memory_scratch| -> Result<Vec<u8>> {
             let outfile = NamedTempFile::new()?;
-            SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
+            Builder::from_sequence_file("../data/inputs/2.fa", b'%')?
                 .with_memory_scratch(memory_scratch)
                 .with_write_lcp(true)
-                .build_to_file(outfile.path(), false)?;
+                .build_to_file(outfile.path())?;
             Ok(fs::read(outfile.path())?)
         };
         assert_eq!(build(true)?, build(false)?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_to_file() -> Result<()> {
+        let outfile = NamedTempFile::new()?;
+        Builder::from_sequence_file("../data/inputs/3.fa", b'%')?
+            .with_dna_options(true, false, true)
+            .build_to_file(outfile.path())?;
+        let suffix_array = SuffixArray::open(&outfile.path().to_string_lossy())?;
+        let meta = suffix_array.metadata()?;
+        assert_eq!(meta.text_len, 113);
+        assert_eq!(meta.len_suffixes, 101);
         Ok(())
     }
 

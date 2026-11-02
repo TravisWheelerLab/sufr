@@ -2,7 +2,7 @@ use anyhow::Result;
 use assert_cmd::Command;
 use libsufr::{
     types::{SeedMask, OUTFILE_VERSION},
-    Index,
+    Index, Storage,
 };
 use pretty_assertions::assert_eq;
 use regex::Regex;
@@ -89,8 +89,10 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
     assert!(output.status.success());
     assert!(outfile.path().exists());
 
-    let actual: Index<u32> = Index::open(outpath, true, false, None)?;
-    let expected: Index<u32> = Index::open(expected_file, true, false, None)?;
+    let actual: Index<u32> =
+        Index::open(outpath, Storage::Memory, Storage::Disk, None)?;
+    let expected: Index<u32> =
+        Index::open(expected_file, Storage::Memory, Storage::Disk, None)?;
 
     let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
     let expected_sa: Vec<_> = expected.suffix_array_file.iter().collect();
@@ -1330,7 +1332,8 @@ fn create_max_query_len() -> Result<()> {
     let outpath = outfile.path().to_string_lossy().to_string();
     run_stdout(&["create", "--dna", "-m", "3", "-o", &outpath, SEQ1])?;
 
-    let actual: Index<u32> = Index::open(&outpath, true, false, None)?;
+    let actual: Index<u32> =
+        Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
     let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
     assert_eq!(actual_sa, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
     Ok(())
@@ -1399,8 +1402,7 @@ fn locate_output_file() -> Result<()> {
 fn locate_not_found_goes_to_stderr() -> Result<()> {
     let outfile = NamedTempFile::new()?;
     let outpath = outfile.path().to_string_lossy().to_string();
-    let (stdout, stderr) =
-        run_stdout(&["locate", "-o", &outpath, SUFR1, "AC", "X"])?;
+    let (stdout, stderr) = run_stdout(&["locate", "-o", &outpath, SUFR1, "AC", "X"])?;
     assert_eq!(stdout, "");
     assert_eq!(stderr, "X not found\n");
     assert_eq!(fs::read_to_string(&outpath)?, "AC\n1 0,6\n//\n");
@@ -1418,8 +1420,7 @@ fn list_ranks() -> Result<()> {
 // --------------------------------------------------
 #[test]
 fn list_ranks_comma_with_columns() -> Result<()> {
-    let (stdout, stderr) =
-        run_stdout(&["list", "-r", "-s", "-p", SUFR1, "5-6,9"])?;
+    let (stdout, stderr) = run_stdout(&["list", "-r", "-s", "-p", SUFR1, "5-6,9"])?;
     assert_eq!(stdout, " 5  8  0 GT$\n 6  2  2 GTNNACGT$\n");
     assert_eq!(stderr, "Invalid rank: 9\n");
     Ok(())
