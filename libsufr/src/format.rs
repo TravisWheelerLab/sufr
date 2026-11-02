@@ -51,21 +51,41 @@ const SEQUENCE_STARTS: usize = 60;
 // --------------------------------------------------
 /// The header of a _.sufr_ file.
 #[derive(Debug, PartialEq)]
-pub(crate) struct Header {
+pub struct Header {
+    /// The serialization version.
     pub version: u8,
+
+    /// Whether the text holds nucleotides.
     pub is_dna: bool,
+
+    /// Whether nucleotides other than A, C, G, and T were allowed.
     pub allow_ambiguity: bool,
+
+    /// Whether softmasked (lowercase) nucleotides were ignored.
     pub ignore_softmask: bool,
+
+    /// The length of the text.
     pub text_len: usize,
+
+    /// The number of suffixes in the suffix array.
     pub len_suffixes: usize,
+
+    /// How the suffixes were sorted.
     pub sort_type: SuffixSortType,
+
+    /// The start of each sequence in the text.
     pub sequence_starts: Vec<usize>,
+
+    /// The name of each sequence.
     pub sequence_names: Vec<String>,
 
     /// The bytes per sequence start, suffix, and LCP value: 4 or 8.
     pub int_size: usize,
 
+    /// The byte position of the text.
     pub text_pos: usize,
+
+    /// The byte position of the suffix array.
     pub suffix_array_pos: usize,
 
     /// The byte position of the LCP array, if the file has one.
@@ -75,7 +95,7 @@ pub(crate) struct Header {
 impl Header {
     /// Read the header of `filename`, whose arrays hold `int_size`
     /// bytes per value.
-    pub fn read(filename: &str, int_size: usize) -> Result<Header> {
+    pub(crate) fn read(filename: &str, int_size: usize) -> Result<Header> {
         let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
         let mut fixed = [0u8; SEQUENCE_STARTS];
@@ -136,7 +156,7 @@ impl Header {
 
     /// Set the text, suffix array, and LCP positions from the
     /// header's contents, placing an LCP array when `write_lcp`.
-    pub fn set_positions(&mut self, write_lcp: bool) {
+    pub(crate) fn set_positions(&mut self, write_lcp: bool) {
         let seed_mask_len = match &self.sort_type {
             SuffixSortType::Mask(seed_mask) => seed_mask.bytes.len(),
             SuffixSortType::MaxQueryLen(_) => 0,
@@ -152,14 +172,14 @@ impl Header {
     }
 
     /// The byte position of the sequence names, after the arrays.
-    pub fn names_pos(&self) -> usize {
+    pub(crate) fn names_pos(&self) -> usize {
         let num_arrays = if self.lcp_pos.is_some() { 2 } else { 1 };
         self.suffix_array_pos + num_arrays * self.len_suffixes * self.int_size
     }
 
     /// Write the header and the sequence names into `file`, leaving
     /// the text and arrays to the caller. Returns the file's length.
-    pub fn write(&self, file: &File) -> Result<usize> {
+    pub(crate) fn write(&self, file: &File) -> Result<usize> {
         let (max_query_len, seed_mask): (usize, &[u8]) = match &self.sort_type {
             SuffixSortType::MaxQueryLen(max_query_len) => (*max_query_len, &[]),
             SuffixSortType::Mask(seed_mask) => (0, &seed_mask.bytes),

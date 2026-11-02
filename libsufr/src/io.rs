@@ -29,7 +29,7 @@ impl<T: Int> FileAccess<T> {
     /// representing the text, suffix array, or LCP array.
     /// This struct must be initialized using an `Int` of `u8` for the `text`
     /// or `u32`/`u64` for the SA/LCP.
-    /// The metadata needed to create this can be found in the `SufrFile`.
+    /// The metadata needed to create this can be found in the `Header`.
     ///
     /// Args:
     /// * `filename`: the _.sufr_ filename

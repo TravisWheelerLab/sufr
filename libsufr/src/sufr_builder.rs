@@ -2,9 +2,9 @@ use crate::{
     format::Header,
     io::{slice_int_to_slice_u8, vec_to_slice_u8, write_all_at},
     lcp::{lcp, LcpCache},
-    suffix_array::SuffixArray,
     types::{Int, SeedMask, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER},
     util::{self, find_lcp_full_offset},
+    SuffixArray,
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -166,7 +166,7 @@ impl SuffixArrayBuilder {
     }
 
     // Sets whether or not to force 64-bit output even for small sequences (default: `false`).
-    // Files must be read via SufrFile::<u64> directly so this is intended for testing only.
+    // Files must be read via Index::<u64> directly so this is intended for testing only.
     #[cfg(test)]
     pub(crate) fn with_force_64bit(mut self, force_64bit: bool) -> Self {
         self.force_64bit = force_64bit;
@@ -178,7 +178,8 @@ impl SuffixArrayBuilder {
         self
     }
 
-    /// Builds the suffix array, writing it to `path` and loading it into memory.
+    /// Builds the suffix array, writing it to `path` and opening it with
+    /// its suffix array on disk, and its text too when `low_memory`.
     pub fn build_to_file(
         mut self,
         path: impl AsRef<Path>,
@@ -205,7 +206,7 @@ impl SuffixArrayBuilder {
                 self.build::<u64, MemoryScratchBuffer<u64>>(path, occupancy)?
             }
         }
-        SuffixArray::read(&path.to_string_lossy(), low_memory)
+        SuffixArray::open(&path.to_string_lossy(), true, low_memory, None)
     }
 
     /// Upper-case soft-masked characters (or replace them with `N` when

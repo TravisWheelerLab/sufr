@@ -212,15 +212,6 @@ pub struct SearchOptions {
     /// A vector of query strings
     pub queries: Vec<String>,
 
-    /// A maximum query length to use.
-    /// If the suffix array was sorted with a shorter MQL, that
-    /// value will be used instead.
-    pub max_query_len: Option<usize>,
-
-    /// When `true`, the suffix array will be placed into memory.
-    /// When `false`, the suffix array will be read from disk.
-    pub low_memory: bool,
-
     /// Whether or not to return location information or to simply count
     pub find_suffixes: bool,
 }
@@ -349,13 +340,6 @@ impl Int for u64 {
 pub struct CountOptions {
     /// Vector of query strings
     pub queries: Vec<String>,
-
-    /// Maximum query length for search
-    pub max_query_len: Option<usize>,
-
-    /// When `true`, the suffix array will be placed into memory.
-    /// When `false`, the suffix array will be read from disk.
-    pub low_memory: bool,
 }
 
 // --------------------------------------------------
@@ -378,13 +362,6 @@ pub struct CountResult {
 pub struct ExtractOptions {
     /// Vector of query strings
     pub queries: Vec<String>,
-
-    /// Maximum query length for search
-    pub max_query_len: Option<usize>,
-
-    /// When `true`, the suffix array will be placed into memory.
-    /// When `false`, the suffix array will be read from disk.
-    pub low_memory: bool,
 
     /// Optional length of prefix to append before found suffixes (context)
     pub prefix_len: Option<usize>,
@@ -443,7 +420,7 @@ pub struct ExtractSequence {
 }
 
 // --------------------------------------------------
-/// Arguments to sufr_file.list
+/// Arguments to `Index::list`
 #[derive(Debug, Clone)]
 pub struct ListOptions {
     /// Ranks of suffixes to show
@@ -475,15 +452,6 @@ pub struct ListOptions {
 pub struct LocateOptions {
     /// A vector of query strings
     pub queries: Vec<String>,
-
-    /// A maximum query length to use.
-    /// If the suffix array was sorted with a shorter MQL, that
-    /// value will be used instead.
-    pub max_query_len: Option<usize>,
-
-    /// When `true`, the suffix array will be placed into memory.
-    /// When `false`, the suffix array will be read from disk.
-    pub low_memory: bool,
 }
 
 // --------------------------------------------------

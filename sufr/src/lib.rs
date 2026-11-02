@@ -2,12 +2,11 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    suffix_array::SuffixArray,
     types::{
         CountOptions, ExtractOptions, ListOptions, LocateOptions, SeedMask,
         SuffixSortType,
     },
-    SuffixArrayBuilder,
+    SuffixArray, SuffixArrayBuilder,
 };
 use log::info;
 use regex::Regex;
@@ -291,7 +290,12 @@ impl ValueEnum for LogLevel {
 
 // --------------------------------------------------
 pub fn count(args: &CountArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::open(
+        &args.file,
+        args.low_memory || args.very_low_memory,
+        args.very_low_memory,
+        args.max_query_len,
+    )?;
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
@@ -300,15 +304,7 @@ pub fn count(args: &CountArgs) -> Result<()> {
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
-    let count_args = CountOptions {
-        queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
-    };
+    let count_args = CountOptions { queries };
 
     for res in suffix_array.count(count_args)? {
         writeln!(output, "{} {}", res.query, res.count)?;
@@ -363,17 +359,16 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
 // --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::open(
+        &args.file,
+        args.low_memory || args.very_low_memory,
+        args.very_low_memory,
+        args.max_query_len,
+    )?;
     let queries = parse_locate_queries(&args.query)?;
     let now = Instant::now();
     let extract_args = ExtractOptions {
         queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
         prefix_len: args.prefix_len,
         suffix_len: args.suffix_len,
     };
@@ -410,7 +405,7 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 
 // --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::open(&args.file, true, args.very_low_memory, None)?;
     let mut ranks: Vec<usize> = vec![];
     for val in &args.ranks {
         let mut parsed: Vec<_> = parse_pos(val)?
@@ -458,7 +453,12 @@ fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
 
 // --------------------------------------------------
 pub fn locate(args: &LocateArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::open(
+        &args.file,
+        args.low_memory || args.very_low_memory,
+        args.very_low_memory,
+        args.max_query_len,
+    )?;
     let mut output: Box<dyn Write> = match &args.output {
         Some(out_name) => Box::new(File::create(out_name)?),
         _ => Box::new(io::stdout()),
@@ -467,15 +467,7 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
     let queries = parse_locate_queries(&args.query)?;
     let num_queries = queries.len();
     let now = Instant::now();
-    let loc_args = LocateOptions {
-        queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
-    };
+    let loc_args = LocateOptions { queries };
 
     for mut res in suffix_array.locate(loc_args)? {
         if res.positions.is_empty() {
@@ -567,7 +559,7 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 
 // --------------------------------------------------
 pub fn summarize(args: &SummarizeArgs) -> Result<()> {
-    let suffix_array = SuffixArray::read(&args.file, true)?;
+    let suffix_array = SuffixArray::open(&args.file, true, true, None)?;
     let meta = suffix_array.metadata()?;
     let num_fmt = NumberFormat::new();
     let mut rows = vec![vec!["Filename".to_string(), meta.filename.clone()]];
