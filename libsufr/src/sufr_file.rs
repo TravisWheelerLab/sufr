@@ -4,14 +4,14 @@
 //! fine-grained control over whether Sufr uses 32-bit or 64-bit
 //! integers. Most likely, you should use [libsufr::suffix_array](super::suffix_array).
 use crate::{
-    file_access::FileAccess,
+    format::Header,
+    io::{slice_int_to_slice_u8, vec_to_slice_u8, FileAccess},
     sufr_search::{SufrSearch, SufrSearchArgs},
     types::{
         CountOptions, CountResult, ExtractOptions, ExtractResult, ExtractSequence, Int,
         ListOptions, LocateOptions, LocatePosition, LocateResult, SearchOptions,
-        SearchResult, SeedMask, SuffixSortType, SufrMetadata,
+        SearchResult, SuffixSortType, SufrMetadata,
     },
-    util::{slice_int_to_slice_u8, vec_to_slice_u8},
 };
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
@@ -21,7 +21,8 @@ use rayon::prelude::*;
 use std::{
     cmp::min,
     fs::{self, File},
-    io::{self, Read, Seek, Write},
+    io::{self, Read, Write},
+    mem,
     ops::Range,
     path::{Path, PathBuf},
     time::Instant,
@@ -70,7 +71,7 @@ pub struct SufrFile<T: Int> {
     pub sort_type: SuffixSortType,
 
     /// The length of the text. Needed for parameterization of the struct
-    /// as `u32` or `u64`. Cf. [util::read_text_length](super::util::read_text_length)
+    /// as `u32` or `u64`. Cf. [format::read_text_length](super::format::read_text_length)
     pub text_len: T,
 
     /// The length of the suffix array.
@@ -117,13 +118,13 @@ impl<T: Int> SufrFile<T> {
     /// * `low_memory`: When `false`, the `text` will be loaded into memory.
     ///   When `true`, the `text` will be read from disk as needed.
     ///
-    /// You can use [util::read_text_length](super::util::read_text_length)
+    /// You can use [format::read_text_length](super::format::read_text_length)
     /// to get the length of the text to parameterize the `SufrFile` with
     /// the correct integer size.
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{sufr_file::SufrFile, util::read_text_length};
+    /// use libsufr::{format::read_text_length, sufr_file::SufrFile};
     ///
     /// fn main() -> Result<()> {
     ///     let filename = "../data/inputs/1.sufr";
@@ -137,130 +138,48 @@ impl<T: Int> SufrFile<T> {
     /// }
     /// ```
     pub fn read(filename: &str, low_memory: bool) -> Result<SufrFile<T>> {
-        let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
-
-        // Meta
-        let mut buffer = [0u8; 4];
-        file.read_exact(&mut buffer)?;
-        let version = buffer[0];
-        let is_dna = buffer[1] == 1;
-        let allow_ambiguity = buffer[2] == 1;
-        let ignore_softmask = buffer[3] == 1;
-
-        // Length of text
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let text_len = u64::from_le_bytes(buffer);
-        if std::mem::size_of::<usize>() == 4 && text_len > usize::MAX as u64 {
-            bail!("text_len exceeds native usize");
-        }
-        let text_len = text_len as usize;
-
-        // Position of text
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let text_pos = u64::from_le_bytes(buffer) as usize;
-
-        // Position of suffix array
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let suffix_array_pos = u64::from_le_bytes(buffer) as usize;
-
-        // Position of LCP array
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let lcp_pos = u64::from_le_bytes(buffer) as usize;
-
-        // Number of suffixes
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let len_suffixes = u64::from_le_bytes(buffer) as usize;
-
-        // Max query length
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let max_query_len = T::from_usize(u64::from_le_bytes(buffer) as usize);
-
-        // Number of sequences
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let num_sequences = T::from_usize(u64::from_le_bytes(buffer) as usize);
-
-        // Sequence starts
-        let mut sequence_starts = vec![T::from_usize(0); num_sequences.to_usize()];
-        file.read_exact(slice_int_to_slice_u8(&mut sequence_starts))?;
-
-        // Seed mask len
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let seed_mask_len = u64::from_le_bytes(buffer) as usize;
-
-        // Seed mask: stored as u8 for the 1s/0s
-        let seed_mask: Vec<u8> = if seed_mask_len > 0 {
-            let mut buffer = vec![0; seed_mask_len];
-            file.read_exact(&mut buffer)?;
-            buffer
-        } else {
-            vec![]
-        };
-
-        // Text
-        let text = if low_memory {
-            file.seek_relative(text_len as i64)?;
-            vec![]
-        } else {
-            let mut tmp = vec![0; text_len];
-            file.read_exact(&mut tmp)?;
-            tmp
-        };
-
-        // Text file access
+        let header = Header::read(filename, mem::size_of::<T>())?;
         let text_file: FileAccess<u8> =
-            FileAccess::new(filename, text_pos as u64, text_len)?;
-
-        // Suffix Array
-        let suffix_array_file: FileAccess<T> =
-            FileAccess::new(filename, suffix_array_pos as u64, len_suffixes)?;
-        file.seek_relative(suffix_array_file.size as i64)?;
-
-        // LCP (lcp_pos == 0 means the file was written without an LCP array)
-        let has_lcp = lcp_pos > 0;
-        let lcp_file: FileAccess<T> = if has_lcp {
-            FileAccess::new(filename, lcp_pos as u64, len_suffixes)?
+            FileAccess::new(filename, header.text_pos as u64, header.text_len)?;
+        let text = if low_memory {
+            vec![]
         } else {
-            FileAccess::new(filename, suffix_array_pos as u64, 0)?
+            text_file.get_range(0..header.text_len)?
         };
-        file.seek_relative(lcp_file.size as i64)?;
 
-        // Sequence names are variable in length so they are at the end
-        let mut buffer = vec![];
-        file.read_to_end(&mut buffer)?;
-        let sequence_names: Vec<String> = bincode::deserialize(&buffer)?;
-
-        let sort_type = if seed_mask.is_empty() {
-            SuffixSortType::MaxQueryLen(max_query_len.to_usize())
-        } else {
-            let seed_mask = SeedMask::from_bytes(&seed_mask)?;
-            SuffixSortType::Mask(seed_mask)
+        let suffix_array_file: FileAccess<T> = FileAccess::new(
+            filename,
+            header.suffix_array_pos as u64,
+            header.len_suffixes,
+        )?;
+        let lcp_file: FileAccess<T> = match header.lcp_pos {
+            Some(lcp_pos) => {
+                FileAccess::new(filename, lcp_pos as u64, header.len_suffixes)?
+            }
+            None => FileAccess::new(filename, header.suffix_array_pos as u64, 0)?,
         };
 
         Ok(SufrFile {
             filename: filename.to_string(),
-            version,
-            is_dna,
-            allow_ambiguity,
-            ignore_softmask,
+            version: header.version,
+            is_dna: header.is_dna,
+            allow_ambiguity: header.allow_ambiguity,
+            ignore_softmask: header.ignore_softmask,
             query_low_memory: true,
-            text_pos,
-            suffix_array_pos,
-            lcp_pos,
-            has_lcp,
-            text_len: T::from_usize(text_len),
-            len_suffixes: T::from_usize(len_suffixes),
-            sort_type,
-            num_sequences,
-            sequence_starts,
-            sequence_names,
+            text_pos: header.text_pos,
+            suffix_array_pos: header.suffix_array_pos,
+            lcp_pos: header.lcp_pos.unwrap_or(0),
+            has_lcp: header.lcp_pos.is_some(),
+            text_len: T::from_usize(header.text_len),
+            len_suffixes: T::from_usize(header.len_suffixes),
+            sort_type: header.sort_type,
+            num_sequences: T::from_usize(header.sequence_starts.len()),
+            sequence_starts: header
+                .sequence_starts
+                .into_iter()
+                .map(T::from_usize)
+                .collect(),
+            sequence_names: header.sequence_names,
             text,
             suffix_array_file,
             lcp_file,
@@ -1579,64 +1498,6 @@ mod test {
                     positions: vec![],
                 }]
             );
-        }
-
-        Ok(())
-    }
-
-    // --------------------------------------------------
-    #[test]
-    fn test_file_access() -> Result<()> {
-        let input_file = "../data/expected/abba.sufr";
-        let sufr_file: SufrFile<u32> = SufrFile::read(input_file, false)?;
-        let suf_by_rank = [
-            14, //  0: #
-            0,  //  1: AABABABABBABAB#
-            12, //  2: AB#
-            10, //  3: ABAB#
-            1,  //  4: ABABABABBABAB#
-            3,  //  5: ABABABBABAB#
-            5,  //  6: ABABBABAB#
-            7,  //  7: ABBABAB#
-            13, //  8: B#
-            11, //  9: BAB#
-            9,  // 10: BABAB#
-            2,  // 11: BABABABBABAB#
-            4,  // 12: BABABBABAB#
-            6,  // 13: BABBABAB#
-            8,  // 14: BBABAB#
-        ];
-
-        for (rank, &suffix) in suf_by_rank.iter().enumerate() {
-            let res = sufr_file.suffix_array_file.get(rank);
-            assert!(res.is_some());
-            assert_eq!(res.unwrap(), suffix);
-        }
-
-        let res = sufr_file.suffix_array_file.get_range(1..100);
-        assert!(res.is_err());
-        assert_eq!(
-            res.as_ref().unwrap_err().to_string(),
-            "Invalid range: 1..100"
-        );
-
-        let res = sufr_file.suffix_array_file.get_range(8..9);
-        assert!(res.is_ok());
-        assert_eq!(res.as_ref().unwrap(), &[13]);
-
-        let res = sufr_file.suffix_array_file.get_range(8..13);
-        assert!(res.is_ok());
-        assert_eq!(res.as_ref().unwrap(), &[13, 11, 9, 2, 4]);
-
-        let res = sufr_file.suffix_array_file.get_range(1..8);
-        assert!(res.is_ok());
-        assert_eq!(res.as_ref().unwrap(), &[0, 12, 10, 1, 3, 5, 7]);
-
-        let all: Vec<_> = sufr_file.suffix_array_file.iter().collect();
-        assert_eq!(all, &[14, 0, 12, 10, 1, 3, 5, 7, 13, 11, 9, 2, 4, 6, 8]);
-
-        for (i, suffix) in sufr_file.suffix_array_file.iter().enumerate() {
-            assert_eq!(suf_by_rank[i], suffix);
         }
 
         Ok(())

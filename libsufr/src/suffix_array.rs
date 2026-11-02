@@ -339,7 +339,7 @@ impl SuffixArray {
     /// ```
     ///
     pub fn read(filename: &str, low_memory: bool) -> Result<SuffixArray> {
-        let text_len = crate::util::read_text_length(filename)? as u64;
+        let text_len = crate::format::read_text_length(filename)? as u64;
         let sa: Box<dyn SuffixArrayTrait> = if text_len < u32::MAX as u64 {
             Box::new(SuffixArray32 {
                 inner: SufrFile::read(filename, low_memory)?,

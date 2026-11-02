@@ -20,7 +20,8 @@
 //! * Jack Roddy <jroddy@arizona.edu>
 //! * Travis Wheeler <twheeler@arizona.edu>
 
-mod file_access;
+pub mod format;
+mod io;
 mod lcp;
 #[cfg(test)]
 mod subsample_tests;

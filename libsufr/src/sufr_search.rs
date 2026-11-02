@@ -1,7 +1,7 @@
 //! # Search a suffix array
 
 use crate::{
-    file_access::FileAccess,
+    io::FileAccess,
     types::{Comparison, Int, SearchResult, SearchResultLocations, SuffixSortType},
     util::find_lcp_full_offset,
 };

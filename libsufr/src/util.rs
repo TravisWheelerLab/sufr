@@ -1,11 +1,9 @@
 //! Utility functions
 
-use crate::types::{
-    Int, SequenceFileData, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER,
-};
-use anyhow::{anyhow, bail, Result};
+use crate::types::{SequenceFileData, SuffixSortType, SENTINEL_CHARACTER};
+use anyhow::Result;
 use needletail::parse_fastx_file;
-use std::{fs::File, io::Read, path::Path, slice};
+use std::path::Path;
 
 // --------------------------------------------------
 /// When using a seed mask, the LCP stored on disk is the number of "care"
@@ -87,72 +85,9 @@ pub fn read_sequence_file(
 }
 
 // --------------------------------------------------
-/// Find length of the input text from a _.sufr_
-/// file to determine the `Int` type, `u32` or `u64`
-///
-/// Args:
-/// * `filename`: the _.sufr_ filename to read
-pub fn read_text_length(filename: &str) -> Result<usize> {
-    let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
-
-    // Meta (version, is_dna)
-    let mut buffer = [0; 4];
-    file.read_exact(&mut buffer)?;
-
-    let outfile_version = buffer[0];
-    if outfile_version == OUTFILE_VERSION {
-        // Length of text is the next usize
-        let mut buffer = [0; 8];
-        file.read_exact(&mut buffer)?;
-        let text_len = u64::from_le_bytes(buffer);
-        if std::mem::size_of::<usize>() == 4 && text_len > usize::MAX as u64 {
-            bail!("text_len exceeds native usize");
-        }
-        Ok(text_len as usize)
-    } else {
-        bail!("Unknown sufr version {outfile_version}");
-    }
-}
-
-// --------------------------------------------------
-/// Convert a (mutable) slice of T into a
-/// `&mut [u8]` (where `T` is the `Int` 32/64)
-///
-/// Args:
-/// * `buffer`: slice of `T` values
-pub(crate) fn slice_int_to_slice_u8<T: Int>(buffer: &mut [T]) -> &mut [u8] {
-    // TODO: rework - endianness-dependent
-    unsafe {
-        std::slice::from_raw_parts_mut(
-            buffer.as_mut_ptr() as *mut _,
-            std::mem::size_of_val(buffer),
-        )
-    }
-}
-
-// --------------------------------------------------
-/// Convert a `Vec<T>` (where `T` is the `Int` 32/64) into a
-/// slice of raw U8 for serializing to disk
-///
-/// Args:
-/// * `vec`: a vector of `T` values
-pub(crate) fn vec_to_slice_u8<T: Int>(vec: &[T]) -> &[u8] {
-    // TODO: rework - endianness-dependent
-    unsafe {
-        slice::from_raw_parts(
-            vec.as_ptr() as *const _,
-            std::mem::size_of_val(vec), //vec.len() * mem::size_of::<T>(),
-        )
-    }
-}
-
-// --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::{
-        find_lcp_full_offset, read_sequence_file, read_text_length,
-        slice_int_to_slice_u8, vec_to_slice_u8,
-    };
+    use super::{find_lcp_full_offset, read_sequence_file};
     use crate::types::{SeedMask, SuffixSortType};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -168,89 +103,6 @@ mod tests {
         assert_eq!(data.seq, b"ACGTacgtNacgtACGT$");
         assert_eq!(data.start_positions, [0, 9]);
         assert_eq!(data.sequence_names, ["ABC", "DEF"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_read_text_length() -> Result<()> {
-        let sufr_file = "../data/inputs/2.sufr";
-        let res = read_text_length(sufr_file);
-        assert!(res.is_ok());
-        let len = res.unwrap();
-        assert_eq!(len, 18);
-        Ok(())
-    }
-
-    #[test]
-    fn test_slice_int_to_slice_u8() -> Result<()> {
-        let mut buf: Vec<u32> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[0, 0, 0, 0]);
-        assert_eq!(buf, &[0u32]);
-
-        let mut buf: Vec<u64> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(buf, &[0u64]);
-
-        let mut buf: Vec<u32> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[1, 0, 0, 0]);
-        assert_eq!(buf, &[1u32]);
-
-        let mut buf: Vec<u64> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(buf, &[1u64]);
-
-        let mut buf: Vec<u32> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[255, 255, 255, 255]);
-        assert_eq!(buf, &[u32::MAX]);
-
-        let mut buf: Vec<u64> = vec![1];
-        slice_int_to_slice_u8(&mut buf)
-            .copy_from_slice(&[255, 255, 255, 255, 255, 255, 255, 255]);
-        assert_eq!(buf, &[u64::MAX]);
-
-        let mut buf: Vec<u32> = vec![1, 1];
-        slice_int_to_slice_u8(&mut buf)
-            .copy_from_slice(&[0, 0, 0, 0, 255, 255, 255, 255]);
-        assert_eq!(buf, &[0u32, u32::MAX]);
-
-        let mut buf: Vec<u64> = vec![1, 1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[
-            0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255,
-        ]);
-        assert_eq!(buf, &[0u64, u64::MAX]);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_vec_to_slice_u8() -> Result<()> {
-        let res = vec_to_slice_u8(&[0u32]);
-        assert_eq!(res, &[0, 0, 0, 0]);
-
-        let res = vec_to_slice_u8(&[0u64]);
-        assert_eq!(res, &[0, 0, 0, 0, 0, 0, 0, 0]);
-
-        let res = vec_to_slice_u8(&[1u32]);
-        assert_eq!(res, &[1, 0, 0, 0]);
-
-        let res = vec_to_slice_u8(&[1u64]);
-        assert_eq!(res, &[1, 0, 0, 0, 0, 0, 0, 0]);
-
-        let res = vec_to_slice_u8(&[u32::MAX]);
-        assert_eq!(res, &[255, 255, 255, 255]);
-
-        let res = vec_to_slice_u8(&[u64::MAX]);
-        assert_eq!(res, &[255, 255, 255, 255, 255, 255, 255, 255]);
-
-        let res = vec_to_slice_u8(&[0u32, u32::MAX]);
-        assert_eq!(res, &[0, 0, 0, 0, 255, 255, 255, 255]);
-
-        let res = vec_to_slice_u8(&[0u64, u64::MAX]);
-        assert_eq!(
-            res,
-            &[0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255]
-        );
-
         Ok(())
     }
 
