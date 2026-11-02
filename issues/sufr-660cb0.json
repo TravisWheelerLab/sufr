@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T18:31:30.70892308Z",
-  "updated_at": "2026-11-02T18:31:30.70892308Z",
+  "updated_at": "2026-11-02T19:59:04.465211556Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "03c9839b",
+      "at": "2026-11-02T19:59:04.465211106Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the site is `searched_ranks` (`index.rs:506-521`), with the TODO at :511. `sufr locate -m 1 data/inputs/1.sufr T` panics with \"assertion failed: range.start <= range.end\" at `io.rs:147`, reached through `suffixes_at` (`index.rs:524`).",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "bd21d2e",
