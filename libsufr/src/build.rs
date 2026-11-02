@@ -1,11 +1,7 @@
 use crate::{
-    format::Header,
-    io::{slice_int_to_slice_u8, vec_to_slice_u8, write_all_at},
+    format::{Header, SeedMask, Sort, OUTFILE_VERSION},
+    io::{as_bytes, as_bytes_mut, write_all_at, Int},
     lcp::{mask_offset, masked_lcp, suffix_lcp, LcpCache},
-    types::{
-        Int, SeedMask, SequenceFileData, SuffixSortType, OUTFILE_VERSION,
-        SENTINEL_CHARACTER,
-    },
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -26,47 +22,46 @@ use std::{
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
 
+/// The character placed at the end of the text, which must not occur in
+/// the text.
+const SENTINEL_CHARACTER: u8 = b'$';
+
 /// Configuration and construction of a _.sufr_ file.
 ///
 /// Start from a sequence file with [`Builder::from_sequence_file`] or
-/// from text in memory with [`Builder::from_data`], set options with the
-/// `with_*` methods, then write the file with [`Builder::build_to_file`].
+/// from text in memory with [`Builder::from_text`], set options, then
+/// write the file with [`Builder::write`].
 pub struct Builder {
-    // INPUT
     text: Vec<u8>,
     sequences: Vec<(usize, String)>,
-
-    // INPUT OPTIONS
     is_dna: bool,
     allow_ambiguity: bool,
     ignore_softmask: bool,
 
-    // PROCESSING OPTIONS
     /// The seed mask the suffixes are sorted by, if any.
     seed_mask: Option<SeedMask>,
 
     /// The number of characters the suffixes are sorted by, or 0 for all.
     max_query_len: usize,
+
     num_partitions: usize,
     memory_scratch: bool,
-
-    // OUTPUT OPTIONS
     force_64bit: bool,
     write_lcp: bool,
 
-    // BUILD STATE
+    /// The runs of at least 1000 `N`s in the text.
     n_ranges: Vec<Range<usize>>,
 }
 
 impl Builder {
-    /// Creates a new `Builder` from the contents of a sequence file.
-    /// `sequence_delimiter` must be within the alphabet or sort below all characters -
-    /// `%` is suggested for biological sequence.
-    // TODO: "must be" - should either be nonconfigurable or should support other values.
+    /// A builder for the sequences in a FASTA or FASTQ file, joined by
+    /// `sequence_delimiter`, which must be in the alphabet or sort below
+    /// all of it: `%` suits biological sequence.
     pub fn from_sequence_file(
         path: impl AsRef<Path>,
         sequence_delimiter: u8,
     ) -> Result<Self> {
+        // TODO: "must be" - should either be nonconfigurable or should support other values.
         let now = Instant::now();
         let data = read_sequence_file(path.as_ref(), sequence_delimiter)?;
         info!(
@@ -79,13 +74,12 @@ impl Builder {
             .into_iter()
             .zip(data.sequence_names)
             .collect();
-        Ok(Self::from_data(data.seq, sequences))
+        Ok(Self::from_text(data.seq, sequences))
     }
 
-    /// Creates a new `Builder` from in-memory `text`. `sequences`
-    /// describes the start positions and names for subsequences of `text`,
-    /// which should have a `%` inserted between them.
-    pub fn from_data(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
+    /// A builder for `text`, whose `sequences` are given by start position
+    /// and name, with a `%` between each two.
+    pub fn from_text(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
         // TODO: validate text and sequences?
         // - sequences should be sorted, first starting at 0, length < text.len(), no duplicates. If empty, default?
         Self {
@@ -104,11 +98,11 @@ impl Builder {
         }
     }
 
-    /// Sets whether the sequence text `is_dna` (default: `false`),
-    /// and if so whether to index `N`s (`allow_ambiguity`, default: `false`).
-    /// Additionally sets whether softmasked characters should be treated as `N`
-    /// (default: `false`, treat soft-masked as unmasked by converting back to uppercase).
-    pub fn with_dna_options(
+    /// Set whether the text `is_dna`, and if so whether to index `N`s
+    /// (`allow_ambiguity`) and whether to replace softmasked (lowercase)
+    /// characters with `N` rather than upper-case them (`ignore_softmask`).
+    /// All three default to `false`.
+    pub fn dna(
         mut self,
         is_dna: bool,
         allow_ambiguity: bool,
@@ -120,43 +114,46 @@ impl Builder {
         self
     }
 
-    /// Sets how the suffixes are sorted: by their first `n` characters
-    /// (`MaxQueryLen(n)`, where 0 means all of them, the default) or by
-    /// the care positions of a seed mask (`Mask`).
-    pub fn with_sort_type(mut self, sort_type: SuffixSortType) -> Self {
-        (self.seed_mask, self.max_query_len) = match sort_type {
-            SuffixSortType::Mask(seed_mask) => (Some(seed_mask), 0),
-            SuffixSortType::MaxQueryLen(max_query_len) => (None, max_query_len),
+    /// Set how the suffixes are sorted (default: `Sort::MaxQueryLen(0)`,
+    /// by all of their characters).
+    pub fn sort(mut self, sort: Sort) -> Self {
+        (self.seed_mask, self.max_query_len) = match sort {
+            Sort::Mask(seed_mask) => (Some(seed_mask), 0),
+            Sort::MaxQueryLen(max_query_len) => (None, max_query_len),
         };
         self
     }
-    /// Sets the number of partitions to be used during the construction (default: `1024`).
-    pub fn with_num_partitions(mut self, num_partitions: usize) -> Self {
+
+    /// Set the number of partitions the suffixes are sorted in
+    /// (default: 1024).
+    pub fn partitions(mut self, num_partitions: usize) -> Self {
         self.num_partitions = num_partitions;
         self
     }
-    /// Sets whether to keep the partitions in memory during construction
+
+    /// Set whether to keep the partitions in memory during construction
     /// instead of in temporary files (default: `false`).
-    pub fn with_memory_scratch(mut self, memory_scratch: bool) -> Self {
+    pub fn memory_scratch(mut self, memory_scratch: bool) -> Self {
         self.memory_scratch = memory_scratch;
         self
     }
 
-    // Sets whether or not to force 64-bit output even for small sequences (default: `false`).
-    // Files must be read via Index::<u64> directly so this is intended for testing only.
+    // only Index::<u64> can read a small text written this
+    // way, so this is for tests
     #[cfg(test)]
-    pub(crate) fn with_force_64bit(mut self, force_64bit: bool) -> Self {
+    pub(crate) fn force_64bit(mut self, force_64bit: bool) -> Self {
         self.force_64bit = force_64bit;
         self
     }
-    /// Sets whether or not to write the LCP array after construction (default: `false`).
-    pub fn with_write_lcp(mut self, write_lcp: bool) -> Self {
+
+    /// Set whether to write the LCP array (default: `false`).
+    pub fn write_lcp(mut self, write_lcp: bool) -> Self {
         self.write_lcp = write_lcp;
         self
     }
 
-    /// Builds the suffix array and writes it to `path`.
-    pub fn build_to_file(mut self, path: impl AsRef<Path>) -> Result<()> {
+    /// Build the suffix array and write it to `path`.
+    pub fn write(mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let occupancy = self.normalize_text();
         if self.allow_ambiguity {
@@ -203,16 +200,12 @@ impl Builder {
         path: &Path,
         occupancy: [u8; 256],
     ) -> Result<()> {
-        let partitions = self.sort::<T, B>(occupancy)?;
-        self.write::<T, B>(path, partitions)?;
+        let partitions = self.sort_partitions::<T, B>(occupancy)?;
+        self.write_partitions::<T, B>(path, partitions)?;
         Ok(())
     }
 
-    // --------------------------------------------------
-    /// If a suffix is in a long run of Ns, return the position of the final N
-    ///
-    /// Args:
-    /// * `suffix`: suffix position
+    /// The end of the run of `N`s holding `suffix`, if it is in one.
     fn find_n_run(&self, suffix: usize) -> Option<usize> {
         self.n_ranges
             .binary_search_by(|range| {
@@ -228,18 +221,8 @@ impl Builder {
             .map(|i| self.n_ranges[i].end)
     }
 
-    // --------------------------------------------------
-    /// Find the longest common prefix between two suffixes.
-    ///
-    /// Args:
-    /// * `start1`: position of first suffix
-    /// * `start2`: position of second suffix
-    /// * `len`: the maximum length to check, e.g., the maximum query
-    ///   length or the weight of the seed mask (number of 1/"care" positions)
-    /// * `skip`: skip over the this many characters at the beginning.
-    ///   Because of the incremental way the LCPs are calculated, we may know
-    ///   that two suffixes share the `skip` number in common already.
-    /// * `lcp_cache`: optional LcpCache to store/retrieve from, for optimization
+    /// The LCP of the suffixes at `start1` and `start2`, which share their
+    /// first `skip` characters, comparing at most `len` characters.
     #[inline(always)]
     fn find_lcp<T: Int>(
         &self,
@@ -261,8 +244,6 @@ impl Builder {
             );
         }
 
-        // If the two suffixes start in long stretches of Ns
-        // Then use the min of the end positions
         if let (Some(end1), Some(end2)) =
             (self.find_n_run(start1), self.find_n_run(start2))
         {
@@ -281,9 +262,9 @@ impl Builder {
         T::from_usize(suffix_lcp(&self.text, start1, start2, skip, len, lcp_cache))
     }
 
-    // --------------------------------------------------
-    /// Write the suffixes into temporary files for sorting
-    fn partition<T, B, A>(&self) -> Result<PartitionBuildResult<B>>
+    /// Place each suffix in the scratch buffer for its `A::COUNT`
+    /// character prefix.
+    fn partition<T, B, A>(&self) -> Result<PartitionedSuffixes<B>>
     where
         T: Int,
         B: ScratchBuffer<Item = T> + Send + Sync,
@@ -311,7 +292,7 @@ impl Builder {
                 for i in start..end {
                     let val = self.text.get(i).copied().unwrap_or(0);
                     if !(val == SENTINEL_CHARACTER
-                        || !self.is_dna // Allow anything else if not DNA
+                        || !self.is_dna
                         || (b"ACGT".contains(&val) || self.allow_ambiguity))
                     {
                         continue;
@@ -376,7 +357,6 @@ impl Builder {
                 Ok(())
             })?;
 
-        // Flush out any remaining buffers
         let mut num_suffixes = 0;
         let buffers = buffers
             .into_iter()
@@ -396,85 +376,23 @@ impl Builder {
             now.elapsed()
         );
 
-        //Ok((builders, num_suffixes))
-        Ok(PartitionBuildResult {
+        Ok(PartitionedSuffixes {
             buffers,
             num_suffixes,
         })
     }
 
-    // --------------------------------------------------
-    /// Sort the suffixes.
-    ///
-    /// Args:
-    /// * `num_partitions`: the number of partitions to used
-    /// * `occupancy`: occurrences of bytes, used to select partitioning strategy
-    fn sort<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
+    /// Sort the suffixes in `num_partitions` partitions, choosing the
+    /// prefix they are first placed by from the bytes that `occupancy`
+    /// marks as present.
+    fn sort_partitions<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
         &self,
-        mut occupancy: [u8; 256],
+        occupancy: [u8; 256],
     ) -> Result<Vec<Partition<B>>> {
         let num_partitions = self.num_partitions;
-        // ... and if there are none outside of the nucleic alphabet then use it.
-        for &c in NucleicAcidAlphabet::ALPHABET.iter() {
-            occupancy[c as usize] = 0;
-        }
-        let partition_build = if occupancy.iter().map(|&b| b as usize).sum::<usize>()
-            == 0
-        {
-            info!("Detected Nucleic Acid alphabet: using 5-character prefix for partitioning");
-            self.partition::<T, B, NucleicAcidAlphabet>()?
-        } else {
-            // Otherwise check the same for the amino acid alphabet
-            for &c in AminoAcidAlphabet::ALPHABET.iter() {
-                occupancy[c as usize] = 0;
-            }
-            if occupancy.iter().map(|&b| b as usize).sum::<usize>() == 0 {
-                info!("Detected Amino Acid alphabet: using 3-character prefix for partitioning");
-                self.partition::<T, B, AminoAcidAlphabet>()?
-            } else {
-                info!("Detected non-Nucleic/non-Amino Acid: using 2-byte prefix for partitioning");
-                self.partition::<T, B, BytesAlphabet>()?
-            }
-        };
-
-        // Be sure to round up to get all the suffixes
-        let num_per_partition = (partition_build.num_suffixes as f64
-            / num_partitions as f64)
-            .ceil() as usize;
+        let partitioned = self.partition_by_alphabet::<T, B>(occupancy)?;
         let total_sort_time = Instant::now();
-        let mut num_taken = 0;
-        let mut partition_inputs = std::iter::repeat_with(|| Vec::new())
-            .take(num_partitions)
-            .collect::<Vec<_>>();
-
-        // We (probably) have many more partitions than we need,
-        // so here we accumulate the small partitions from the left
-        // stopping when we reach a boundary like 1M/partition.
-        // This evens out the workload to sort the partitions.
-        let mut part_buffers = partition_build.buffers.into_iter();
-        for (partition_num, partition_input) in partition_inputs.iter_mut().enumerate()
-        {
-            let boundary = num_per_partition * (partition_num + 1);
-            for buffer in part_buffers.by_ref() {
-                if buffer.count() > 0 {
-                    num_taken += buffer.count();
-                    partition_input.push(buffer);
-                }
-
-                // Let the last partition soak up the rest
-                if partition_num < num_partitions - 1 && num_taken > boundary {
-                    break;
-                }
-            }
-        }
-
-        // Ensure we got all the suffixes
-        if num_taken != partition_build.num_suffixes {
-            bail!(
-                "Took {num_taken} but needed to take {}",
-                partition_build.num_suffixes
-            );
-        }
+        let partition_inputs = group_buffers(partitioned, num_partitions)?;
 
         let mut partitions: Vec<Option<Partition<B>>> =
             (0..num_partitions).map(|_| None).collect();
@@ -484,53 +402,12 @@ impl Builder {
             .par_iter_mut()
             .zip(partition_inputs)
             .enumerate()
-            .try_for_each(
-                |(partition_num, (partition, partition_input))| -> Result<()> {
-                    // Find the suffixes in this partition
-                    let mut part_sa = vec![];
-                    for buffer in partition_input {
-                        part_sa.extend_from_slice(&buffer.consume()?);
-                    }
+            .try_for_each(|(order, (partition, buffers))| -> Result<()> {
+                *partition = self.sort_partition(order, buffers, &lcp_cache)?;
+                Ok(())
+            })?;
 
-                    let len = part_sa.len();
-                    if len > 0 {
-                        let mut sa_w = part_sa.clone();
-                        let mut lcp = vec![T::default(); len];
-                        let mut lcp_w = vec![T::default(); len];
-                        self.merge_sort(
-                            &mut sa_w,
-                            &mut part_sa,
-                            len,
-                            &mut lcp,
-                            &mut lcp_w,
-                            &lcp_cache,
-                        );
-
-                        // Write to disk
-                        let mut sa_buffer = B::default();
-                        sa_buffer.extend_from_slice(&part_sa)?;
-                        let lcp_buffer = if self.write_lcp {
-                            let mut lcp_buffer = B::default();
-                            lcp_buffer.extend_from_slice(&lcp)?;
-                            Some(lcp_buffer)
-                        } else {
-                            None
-                        };
-
-                        *partition = Some(Partition {
-                            order: partition_num,
-                            len,
-                            first_suffix: part_sa.first().unwrap().to_usize(),
-                            last_suffix: part_sa.last().unwrap().to_usize(),
-                            sa_buffer,
-                            lcp_buffer,
-                        });
-                    }
-                    Ok(())
-                },
-            )?;
-
-        // Get rid of None/unwrap Some, put in order
+        // drop the empty partitions and put the rest in order
         let mut partitions: Vec<_> = partitions.into_iter().flatten().collect();
         partitions.sort_by_key(|p| p.order);
 
@@ -544,65 +421,140 @@ impl Builder {
         Ok(partitions)
     }
 
-    // --------------------------------------------------
-    fn merge_sort<T: Int>(
+    /// Partition the suffixes by the nucleic acid alphabet when the text
+    /// holds only its bytes, else by the amino acid alphabet when it holds
+    /// only those, else by bytes.
+    fn partition_by_alphabet<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
         &self,
-        x: &mut [T],
-        y: &mut [T],
-        n: usize,
-        lcp: &mut [T],
-        lcp_w: &mut [T],
-        lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
-    ) {
-        if n == 1 {
-            lcp[0] = T::default();
+        mut occupancy: [u8; 256],
+    ) -> Result<PartitionedSuffixes<B>> {
+        for &c in NucleicAcidAlphabet::ALPHABET.iter() {
+            occupancy[c as usize] = 0;
+        }
+        if occupancy.iter().map(|&b| b as usize).sum::<usize>() == 0 {
+            info!("Detected Nucleic Acid alphabet: using 5-character prefix for partitioning");
+            return self.partition::<T, B, NucleicAcidAlphabet>();
+        }
+
+        for &c in AminoAcidAlphabet::ALPHABET.iter() {
+            occupancy[c as usize] = 0;
+        }
+        if occupancy.iter().map(|&b| b as usize).sum::<usize>() == 0 {
+            info!("Detected Amino Acid alphabet: using 3-character prefix for partitioning");
+            self.partition::<T, B, AminoAcidAlphabet>()
         } else {
-            const NESTED_PAR_GRAIN_SIZE: usize = 1 << 13;
-            let mid = n / 2;
-            let (xl, xr) = x.split_at_mut(mid);
-            let (yl, yr) = y.split_at_mut(mid);
-            let (lcpw_l, lcpw_r) = lcp_w.split_at_mut(mid);
-            let (lcp_l, lcp_r) = lcp.split_at_mut(mid);
-
-            if mid < NESTED_PAR_GRAIN_SIZE {
-                self.merge_sort(yl, xl, mid, lcpw_l, lcp_l, lcp_cache);
-                self.merge_sort(yr, xr, n - mid, lcpw_r, lcp_r, lcp_cache);
-            } else {
-                rayon::join(
-                    || self.merge_sort(yl, xl, mid, lcpw_l, lcp_l, lcp_cache),
-                    || self.merge_sort(yr, xr, n - mid, lcpw_r, lcp_r, lcp_cache),
-                );
-            }
-
-            self.merge(
-                x,
-                mid,
-                lcp_w,
-                y,
-                lcp,
-                &mut lcp_cache.get_or_default().borrow_mut(),
-            );
+            info!("Detected non-Nucleic/non-Amino Acid: using 2-byte prefix for partitioning");
+            self.partition::<T, B, BytesAlphabet>()
         }
     }
 
-    // --------------------------------------------------
+    /// Sort the suffixes in `buffers` into the partition at `order`, or
+    /// `None` when there are none.
+    fn sort_partition<T: Int, B: ScratchBuffer<Item = T>>(
+        &self,
+        order: usize,
+        buffers: Vec<B>,
+        lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
+    ) -> Result<Option<Partition<B>>> {
+        let mut part_sa = vec![];
+        for buffer in buffers {
+            part_sa.extend_from_slice(&buffer.consume()?);
+        }
+
+        let len = part_sa.len();
+        if len == 0 {
+            return Ok(None);
+        }
+
+        let mut sa_w = part_sa.clone();
+        let mut lcp = vec![T::default(); len];
+        let mut lcp_w = vec![T::default(); len];
+        self.merge_sort(
+            Arrays {
+                sa: &mut sa_w,
+                lcp: &mut lcp_w,
+            },
+            Arrays {
+                sa: &mut part_sa,
+                lcp: &mut lcp,
+            },
+            lcp_cache,
+        );
+
+        let mut sa_buffer = B::default();
+        sa_buffer.extend_from_slice(&part_sa)?;
+        let lcp_buffer = if self.write_lcp {
+            let mut lcp_buffer = B::default();
+            lcp_buffer.extend_from_slice(&lcp)?;
+            Some(lcp_buffer)
+        } else {
+            None
+        };
+
+        Ok(Some(Partition {
+            order,
+            len,
+            first_suffix: part_sa.first().unwrap().to_usize(),
+            last_suffix: part_sa.last().unwrap().to_usize(),
+            sa_buffer,
+            lcp_buffer,
+        }))
+    }
+
+    /// Sort the suffixes in `out` with their LCPs, using `work`, which
+    /// starts with the same suffixes, as scratch space.
+    fn merge_sort<T: Int>(
+        &self,
+        mut work: Arrays<'_, T>,
+        mut out: Arrays<'_, T>,
+        lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
+    ) {
+        let n = work.sa.len();
+        if n == 1 {
+            out.lcp[0] = T::default();
+        } else {
+            const NESTED_PAR_GRAIN_SIZE: usize = 1 << 13;
+            let mid = n / 2;
+            let (work_l, work_r) = work.split_at_mut(mid);
+            let (out_l, out_r) = out.split_at_mut(mid);
+
+            // each half is sorted into `work`, swapping the
+            // roles, so the merge below reads `work`
+            if mid < NESTED_PAR_GRAIN_SIZE {
+                self.merge_sort(out_l, work_l, lcp_cache);
+                self.merge_sort(out_r, work_r, lcp_cache);
+            } else {
+                rayon::join(
+                    || self.merge_sort(out_l, work_l, lcp_cache),
+                    || self.merge_sort(out_r, work_r, lcp_cache),
+                );
+            }
+
+            self.merge(work, mid, out, &mut lcp_cache.get_or_default().borrow_mut());
+        }
+    }
+
+    /// Merge the sorted runs `from[..mid]` and `from[mid..]` into `into`.
     fn merge<T: Int>(
         &self,
-        suffix_array: &mut [T],
+        from: Arrays<'_, T>,
         mid: usize,
-        lcp_w: &mut [T],
-        target_sa: &mut [T],
-        target_lcp: &mut [T],
+        into: Arrays<'_, T>,
         lcp_cache: &mut LcpCache,
     ) {
-        let (mut x, mut y) = suffix_array.split_at_mut(mid);
-        let (mut lcp_x, mut lcp_y) = lcp_w.split_at_mut(mid);
+        let Arrays {
+            sa: target_sa,
+            lcp: target_lcp,
+        } = into;
+        let (mut x, mut y) = from.sa.split_at_mut(mid);
+        let (mut lcp_x, mut lcp_y) = from.lcp.split_at_mut(mid);
         let mut len_x = x.len();
         let mut len_y = y.len();
-        let mut m = T::default(); // Last LCP from left side (x)
-        let mut idx_x = 0; // Index into x (left side)
-        let mut idx_y = 0; // Index into y (right side)
-        let mut idx_target = 0; // Index into target
+        // the last LCP taken from x
+        let mut m = T::default();
+        let mut idx_x = 0;
+        let mut idx_y = 0;
+        let mut idx_target = 0;
 
         while idx_x < len_x && idx_y < len_y {
             let l_x = lcp_x[idx_x];
@@ -653,12 +605,11 @@ impl Builder {
                         (context, context)
                     };
 
-                    // If full LCP equals context/MQL, take shorter suffix
+                    // an LCP reaching the context sorts the shorter suffix
+                    // first, and otherwise the byte after the LCP decides
                     if len_lcp >= context {
                         target_sa[idx_target] = shorter_suffix;
-                    }
-                    // Else, look at the next char after the LCP to determine order.
-                    else {
+                    } else {
                         let cmp = self.text[(x[idx_x] + full_len_lcp).to_usize()]
                             .cmp(&self.text[(y[idx_y] + full_len_lcp).to_usize()]);
 
@@ -675,7 +626,6 @@ impl Builder {
                         }
                     }
 
-                    // If we took from the right...
                     if target_sa[idx_target] == x[idx_x] {
                         target_lcp[idx_target] = l_x;
                     } else {
@@ -698,7 +648,6 @@ impl Builder {
             idx_target += 1;
         }
 
-        // Copy rest of the data from X to Z.
         while idx_x < len_x {
             target_sa[idx_target] = x[idx_x];
             target_lcp[idx_target] = lcp_x[idx_x];
@@ -706,7 +655,6 @@ impl Builder {
             idx_target += 1;
         }
 
-        // Copy rest of the data from Y to Z.
         if idx_y < len_y {
             target_sa[idx_target] = y[idx_y];
             target_lcp[idx_target] = m;
@@ -722,13 +670,10 @@ impl Builder {
         }
     }
 
-    // --------------------------------------------------
-    /// Serialize contents of the sorted partitions to a _.sufr_ file.
-    /// The text is written first, then each partition's suffix array
-    /// (and LCP array, when requested) in parallel at its offset, then
-    /// the header and sequence names.
-    /// Returns the number of bytes written to disk.
-    fn write<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
+    /// Write the text, then each partition's suffix array (and LCP array,
+    /// when requested) in parallel at its offset, then the header and
+    /// sequence names. Returns the number of bytes written.
+    fn write_partitions<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
         &self,
         path: &Path,
         partitions: Vec<Partition<B>>,
@@ -741,25 +686,16 @@ impl Builder {
             File::create(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
         write_all_at(&file, &self.text, header.text_pos as u64)?;
 
-        // Offset (in elements) of each partition in the arrays, and the
-        // last suffix of the preceding partition for fixing the LCP boundary
-        let mut offsets = Vec::with_capacity(partitions.len());
-        let mut total = 0;
-        let mut prev_last_suffix = None;
-        for partition in &partitions {
-            offsets.push((total, prev_last_suffix));
-            total += partition.len;
-            prev_last_suffix = Some(partition.last_suffix);
-        }
+        let offsets = partition_offsets(&partitions);
 
-        // NB: Consuming the partitions' buffers frees
-        // memory/disk space along the way
+        // consuming the partitions' buffers frees memory
+        // and disk space along the way
         partitions.into_par_iter().zip(offsets).try_for_each(
             |(partition, (offset, prev_last_suffix))| -> Result<()> {
                 let sa = partition.sa_buffer.consume()?;
                 write_all_at(
                     &file,
-                    vec_to_slice_u8(&sa),
+                    as_bytes(&sa),
                     (header.suffix_array_pos + offset * int_size) as u64,
                 )?;
                 drop(sa);
@@ -768,21 +704,22 @@ impl Builder {
                     (partition.lcp_buffer, header.lcp_pos)
                 {
                     let mut lcp = lcp_buffer.consume()?;
+                    // the first LCP of a partition is with the last
+                    // suffix of the one before
                     if let Some(prev_last_suffix) = prev_last_suffix {
-                        // Fix LCP boundary
                         if let Some(val) = lcp.first_mut() {
                             *val = self.find_lcp(
                                 prev_last_suffix,
                                 partition.first_suffix,
                                 T::from_usize(self.text.len()),
-                                0, // start at beginning
+                                0,
                                 None,
                             );
                         }
                     }
                     write_all_at(
                         &file,
-                        vec_to_slice_u8(&lcp),
+                        as_bytes(&lcp),
                         (lcp_pos + offset * int_size) as u64,
                     )?;
                 }
@@ -799,7 +736,6 @@ impl Builder {
         Ok(bytes_out)
     }
 
-    // --------------------------------------------------
     /// The header of the output file, with `int_size` bytes per
     /// suffix array value.
     fn header(&self, int_size: usize, num_suffixes: usize) -> Header {
@@ -809,10 +745,10 @@ impl Builder {
             allow_ambiguity: self.allow_ambiguity,
             ignore_softmask: self.ignore_softmask,
             text_len: self.text.len(),
-            len_suffixes: num_suffixes,
-            sort_type: match &self.seed_mask {
-                Some(seed_mask) => SuffixSortType::Mask(seed_mask.clone()),
-                None => SuffixSortType::MaxQueryLen(self.max_query_len),
+            num_suffixes,
+            sort: match &self.seed_mask {
+                Some(seed_mask) => Sort::Mask(seed_mask.clone()),
+                None => Sort::MaxQueryLen(self.max_query_len),
             },
             sequence_starts: self.sequences.iter().map(|(start, _)| *start).collect(),
             sequence_names: self
@@ -830,17 +766,78 @@ impl Builder {
     }
 }
 
-/// Read sequence data from file
-///
-/// Args:
-/// * `path`: to FASTA/FASTQ file
-/// * `sequence_delimiter`: the character/byte you wish to place
-///   between sequences. For many applications (both nucleotide and
-///   protein), you might choose a character like `%` that sorts below
-///   the alphabet (A-Z) but above the sentinel `$` that is placed at
-///   the end of the returned text; however, when building a suffix array
-///   for use in a Burrows-Wheeler Transform, it might be better to use
-///   `N` for nucleotides and `X` for protein.
+/// The offset (in elements) of each partition in the arrays, with the
+/// last suffix of the partition before it.
+fn partition_offsets<B: ScratchBuffer>(
+    partitions: &[Partition<B>],
+) -> Vec<(usize, Option<usize>)> {
+    let mut offsets = Vec::with_capacity(partitions.len());
+    let mut total = 0;
+    let mut prev_last_suffix = None;
+    for partition in partitions {
+        offsets.push((total, prev_last_suffix));
+        total += partition.len;
+        prev_last_suffix = Some(partition.last_suffix);
+    }
+    offsets
+}
+
+/// Gather the buffers, which are in prefix order, into `num_partitions`
+/// groups of about the same number of suffixes.
+fn group_buffers<B: ScratchBuffer>(
+    partitioned: PartitionedSuffixes<B>,
+    num_partitions: usize,
+) -> Result<Vec<Vec<B>>> {
+    // round up to take every suffix
+    let num_per_partition =
+        (partitioned.num_suffixes as f64 / num_partitions as f64).ceil() as usize;
+    let mut num_taken = 0;
+    let mut partition_inputs = std::iter::repeat_with(|| Vec::new())
+        .take(num_partitions)
+        .collect::<Vec<_>>();
+
+    // there are (probably) many more buffers than partitions,
+    // so each partition takes buffers from the left until it
+    // passes its share, which evens out the sorting work
+    let mut part_buffers = partitioned.buffers.into_iter();
+    for (partition_num, partition_input) in partition_inputs.iter_mut().enumerate() {
+        let boundary = num_per_partition * (partition_num + 1);
+        for buffer in part_buffers.by_ref() {
+            if buffer.count() > 0 {
+                num_taken += buffer.count();
+                partition_input.push(buffer);
+            }
+
+            // the last partition takes the rest
+            if partition_num < num_partitions - 1 && num_taken > boundary {
+                break;
+            }
+        }
+    }
+
+    if num_taken != partitioned.num_suffixes {
+        bail!(
+            "Took {num_taken} but needed to take {}",
+            partitioned.num_suffixes
+        );
+    }
+    Ok(partition_inputs)
+}
+
+/// The text and sequences read from a FASTA/FASTQ file.
+struct SequenceFileData {
+    /// The sequences joined by the delimiter, ending in the sentinel.
+    seq: Vec<u8>,
+
+    /// The start of each sequence in `seq`.
+    start_positions: Vec<usize>,
+
+    /// The name of each sequence.
+    sequence_names: Vec<String>,
+}
+
+/// Read the sequences in the FASTA/FASTQ file at `path`, joined by
+/// `sequence_delimiter`.
 fn read_sequence_file(path: &Path, sequence_delimiter: u8) -> Result<SequenceFileData> {
     let mut reader = parse_fastx_file(path)?;
     let mut seq: Vec<u8> = Vec::with_capacity(u32::MAX as usize);
@@ -853,12 +850,11 @@ fn read_sequence_file(path: &Path, sequence_delimiter: u8) -> Result<SequenceFil
             seq.push(sequence_delimiter);
         }
 
-        // Record current length as start position
         start_positions.push(seq.len());
         seq.extend_from_slice(&rec.seq());
         i += 1;
 
-        // Only take ID value up to first whitespace
+        // the name is the ID up to its first whitespace
         let id = std::str::from_utf8(rec.id())?
             .split_whitespace()
             .next()
@@ -867,7 +863,6 @@ fn read_sequence_file(path: &Path, sequence_delimiter: u8) -> Result<SequenceFil
         sequence_names.push(id);
     }
 
-    // File delimiter
     seq.push(SENTINEL_CHARACTER);
 
     Ok(SequenceFileData {
@@ -987,20 +982,21 @@ impl PartitioningAlphabet for BytesAlphabet {
     }
 }
 
-// --------------------------------------------------
-/// Represents the partition values written to disk
+/// The sorted suffixes and LCPs of one partition.
 #[derive(Debug)]
 struct Partition<B: ScratchBuffer> {
-    /// The sorted position of this parition.
+    /// The position of this partition in the suffix array.
     order: usize,
 
     /// The number of suffixes/LCP values contained in this partition.
     len: usize,
 
-    /// The value of the first suffix. Used in stitching together the LCPs.
+    /// The first suffix, for the LCP at the boundary with the partition
+    /// before.
     first_suffix: usize,
 
-    /// The value of the last suffix. Used in stitching together the LCPs.
+    /// The last suffix, for the LCP at the boundary with the partition
+    /// after.
     last_suffix: usize,
 
     /// The buffer containing the suffix array.
@@ -1010,39 +1006,60 @@ struct Partition<B: ScratchBuffer> {
     lcp_buffer: Option<B>,
 }
 
-// --------------------------------------------------
-/// This struct provides access to the on-disk partitions.
+/// The unsorted suffixes in one scratch buffer per prefix, in prefix
+/// order.
 #[derive(Debug)]
-struct PartitionBuildResult<B: ScratchBuffer<Item: Int>> {
-    /// A thread-safe vector of `PartitionBuilder` values
+struct PartitionedSuffixes<B: ScratchBuffer<Item: Int>> {
     buffers: Vec<B>,
-
-    /// The total number of suffixes that were written to disk.
     num_suffixes: usize,
 }
 
-/// Trait representing scratch buffers that may be backed by disk or memory.
+/// A slice of the suffix array and the LCPs beside it.
+struct Arrays<'a, T> {
+    sa: &'a mut [T],
+    lcp: &'a mut [T],
+}
+
+impl<T> Arrays<'_, T> {
+    fn split_at_mut(&mut self, mid: usize) -> (Arrays<'_, T>, Arrays<'_, T>) {
+        let (sa_l, sa_r) = self.sa.split_at_mut(mid);
+        let (lcp_l, lcp_r) = self.lcp.split_at_mut(mid);
+        (
+            Arrays {
+                sa: sa_l,
+                lcp: lcp_l,
+            },
+            Arrays {
+                sa: sa_r,
+                lcp: lcp_r,
+            },
+        )
+    }
+}
+
+/// A buffer of suffixes or LCPs during construction, in memory or in a
+/// temporary file.
 trait ScratchBuffer: Default {
-    /// The type of items in the buffer
+    /// The type of the values.
     type Item: Int;
 
-    /// Append a slice of `vals` to `self`.
+    /// Append `vals`.
     fn extend_from_slice(&mut self, vals: &[Self::Item]) -> Result<()>;
 
-    /// Flush any unwritten data from `self` to the backing store.
+    /// Write any values still in memory to the backing store.
     fn flush(&mut self) -> Result<()>;
 
-    /// Return the number of items written to `self`.
+    /// The number of values appended.
     fn count(&self) -> usize;
 
-    /// Return the full contents of `self`, either already in memory or loaded from disk.
+    /// All the values, borrowed when they are in memory.
     fn read(&self) -> Result<Cow<'_, [Self::Item]>>;
 
-    /// Load the full contents of `self` into memory for the last time.
+    /// All the values, freeing the backing store.
     fn consume(self) -> Result<Vec<Self::Item>>;
 }
 
-/// Implements a scratch buffer that writes its items to disk, then reads them back from disk later
+/// A scratch buffer in a temporary file.
 #[derive(Debug)]
 struct DiskScratchBuffer<T: Int> {
     buf: Vec<T>,
@@ -1089,7 +1106,7 @@ impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
     fn flush(&mut self) -> Result<()> {
         if !self.buf.is_empty() {
             let mut file = self.open()?;
-            file.write_all(vec_to_slice_u8(&self.buf))?;
+            file.write_all(as_bytes(&self.buf))?;
             self.count += self.buf.len();
             self.buf.clear();
             self.buf.shrink_to_fit();
@@ -1110,7 +1127,7 @@ impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
                 let file_count = size / std::mem::size_of::<T>();
                 let mut data = Vec::with_capacity(file_count + self.buf.len());
                 data.resize(file_count, T::from_usize(0));
-                file.read_exact(slice_int_to_slice_u8(&mut data))?;
+                file.read_exact(as_bytes_mut(&mut data))?;
 
                 data.extend_from_slice(&self.buf);
                 Ok(Cow::Owned(data))
@@ -1134,13 +1151,14 @@ impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
 impl<T: Int> Drop for DiskScratchBuffer<T> {
     fn drop(&mut self) {
         if let Some(path) = self.path.take() {
-            // best-effort since this is in Drop, and the file may have been consume()d already
+            // best effort, since this is Drop and consume()
+            // may have removed the file already
             let _ = fs::remove_file(path);
         }
     }
 }
 
-/// Implements a scratch buffer that always keeps all items in memory
+/// A scratch buffer in memory.
 #[derive(Debug)]
 struct MemoryScratchBuffer<T: Int> {
     data: Vec<T>,
@@ -1177,12 +1195,11 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
     }
 }
 
-// --------------------------------------------------
 #[cfg(test)]
 mod test {
     use super::{read_sequence_file, Builder};
     use crate::{
-        types::{SeedMask, SuffixSortType},
+        format::{SeedMask, Sort},
         SuffixArray,
     };
     use anyhow::Result;
@@ -1207,7 +1224,7 @@ mod test {
     fn test_find_lcp_no_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTAGC".to_vec();
-        let sufr = Builder::from_data(text, vec![(0, "1".to_string())]);
+        let sufr = Builder::from_text(text, vec![(0, "1".to_string())]);
 
         // 0: TTTAGC
         // 1:  TTAGC
@@ -1238,8 +1255,8 @@ mod test {
     fn test_find_lcp_with_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTTTA".to_vec();
-        let sufr = Builder::from_data(text, vec![(0, "1".to_string())])
-            .with_sort_type(SuffixSortType::Mask(SeedMask::new("1101")?));
+        let sufr = Builder::from_text(text, vec![(0, "1".to_string())])
+            .sort(Sort::Mask(SeedMask::new("1101")?));
 
         // 0: TTTTTA
         // 1:  TTTTA
@@ -1261,9 +1278,9 @@ mod test {
         let build = |memory_scratch| -> Result<Vec<u8>> {
             let outfile = NamedTempFile::new()?;
             Builder::from_sequence_file("../data/inputs/2.fa", b'%')?
-                .with_memory_scratch(memory_scratch)
-                .with_write_lcp(true)
-                .build_to_file(outfile.path())?;
+                .memory_scratch(memory_scratch)
+                .write_lcp(true)
+                .write(outfile.path())?;
             Ok(fs::read(outfile.path())?)
         };
         assert_eq!(build(true)?, build(false)?);
@@ -1271,15 +1288,15 @@ mod test {
     }
 
     #[test]
-    fn test_build_to_file() -> Result<()> {
+    fn test_write() -> Result<()> {
         let outfile = NamedTempFile::new()?;
         Builder::from_sequence_file("../data/inputs/3.fa", b'%')?
-            .with_dna_options(true, false, true)
-            .build_to_file(outfile.path())?;
+            .dna(true, false, true)
+            .write(outfile.path())?;
         let suffix_array = SuffixArray::open(&outfile.path().to_string_lossy())?;
         let meta = suffix_array.metadata()?;
         assert_eq!(meta.text_len, 113);
-        assert_eq!(meta.len_suffixes, 101);
+        assert_eq!(meta.num_suffixes, 101);
         Ok(())
     }
 

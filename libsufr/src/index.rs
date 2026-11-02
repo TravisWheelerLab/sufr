@@ -1,12 +1,12 @@
 //! A _.sufr_ file opened for queries
 
 use crate::{
-    format::Header,
-    io::{slice_int_to_slice_u8, vec_to_slice_u8, FileAccess},
-    types::{Int, SeedMask, SuffixSortType, SufrMetadata},
+    format::{Header, SeedMask, Sort},
+    io::{as_bytes, as_bytes_mut, FileAccess, Int},
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
+use format_num::NumberFormat;
 use home::home_dir;
 use log::info;
 use rayon::prelude::*;
@@ -21,7 +21,6 @@ use std::{
     time::Instant,
 };
 
-// --------------------------------------------------
 /// Where [`Index::open`] puts the text or the suffix array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Storage {
@@ -32,7 +31,6 @@ pub enum Storage {
     Disk,
 }
 
-/// Where the text is read from.
 #[derive(Debug)]
 pub(crate) enum Text {
     Memory(Vec<u8>),
@@ -53,7 +51,101 @@ pub(crate) enum Suffixes<T> {
     Disk,
 }
 
-// --------------------------------------------------
+/// A summary of a _.sufr_ file.
+#[derive(Debug, PartialEq)]
+pub struct Metadata {
+    /// The file's name.
+    pub filename: String,
+
+    /// When the file was last modified.
+    pub modified: DateTime<Local>,
+
+    /// The file's size in bytes.
+    pub file_size: usize,
+
+    /// The serialization version.
+    pub file_version: usize,
+
+    /// Whether the text holds nucleotides.
+    pub is_dna: bool,
+
+    /// Whether nucleotides other than A, C, G, and T were allowed.
+    pub allow_ambiguity: bool,
+
+    /// Whether softmasked (lowercase) nucleotides were ignored.
+    pub ignore_softmask: bool,
+
+    /// The length of the text.
+    pub text_len: usize,
+
+    /// The number of suffixes in the suffix array.
+    pub num_suffixes: usize,
+
+    /// The number of sequences in the text.
+    pub num_sequences: usize,
+
+    /// The start of each sequence in the text.
+    pub sequence_starts: Vec<usize>,
+
+    /// The name of each sequence.
+    pub sequence_names: Vec<String>,
+
+    /// How the suffixes were sorted.
+    pub sort: Sort,
+
+    /// Whether the file has an LCP array.
+    pub has_lcp: bool,
+}
+
+impl Metadata {
+    /// The labelled rows that `sufr summarize` prints.
+    pub fn summary(&self) -> Vec<(&'static str, String)> {
+        let num_fmt = NumberFormat::new();
+        let number = |n: usize| num_fmt.format(",.0", n as f64);
+        let sort_row = match &self.sort {
+            Sort::Mask(seed_mask) => ("Seed mask", seed_mask.mask.clone()),
+            Sort::MaxQueryLen(max_query_len) => {
+                ("Max query len", number(*max_query_len))
+            }
+        };
+        let sequence_starts = self
+            .sequence_starts
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sequence_names = self.sequence_names.join(", ");
+        vec![
+            ("Filename", self.filename.clone()),
+            (
+                "Modified",
+                self.modified.format("%Y-%m-%d %H:%M").to_string(),
+            ),
+            ("File Size", format!("{} bytes", number(self.file_size))),
+            ("File Version", self.file_version.to_string()),
+            ("DNA", self.is_dna.to_string()),
+            ("Allow Ambiguity", self.allow_ambiguity.to_string()),
+            ("Ignore Softmask", self.ignore_softmask.to_string()),
+            ("Text Length", number(self.text_len)),
+            ("Len Suffixes", number(self.num_suffixes)),
+            (
+                "LCP array",
+                if self.has_lcp { "yes" } else { "no" }.to_string(),
+            ),
+            sort_row,
+            ("Num sequences", number(self.num_sequences)),
+            (
+                "Sequence starts",
+                textwrap::wrap(&sequence_starts, 40).join("\n"),
+            ),
+            (
+                "Sequence names",
+                textwrap::wrap(&sequence_names, 40).join("\n"),
+            ),
+        ]
+    }
+}
+
 /// A _.sufr_ file opened for queries, with its text and suffixes in
 /// memory or on disk as chosen by [`Index::open`].
 #[derive(Debug)]
@@ -102,29 +194,22 @@ impl<T: Int> Index<T> {
         let suffix_array_file = FileAccess::new(
             filename,
             header.suffix_array_pos as u64,
-            header.len_suffixes,
+            header.num_suffixes,
         )?;
         let lcp_file = match header.lcp_pos {
             Some(lcp_pos) => Some(FileAccess::new(
                 filename,
                 lcp_pos as u64,
-                header.len_suffixes,
+                header.num_suffixes,
             )?),
             None => None,
         };
 
-        let (seed_mask, search_max_query_len) = match &header.sort_type {
-            SuffixSortType::Mask(seed_mask) => {
+        let (seed_mask, search_max_query_len) = match &header.sort {
+            Sort::Mask(seed_mask) => {
                 (Some(seed_mask.clone()), max_query_len.unwrap_or(0))
             }
-            SuffixSortType::MaxQueryLen(built) => {
-                let search_max_query_len = match max_query_len {
-                    Some(mql) if *built > 0 => min(*built, mql),
-                    Some(mql) => mql,
-                    None => *built,
-                };
-                (None, search_max_query_len)
-            }
+            Sort::MaxQueryLen(built) => (None, searched_len(*built, max_query_len)),
         };
 
         let mut index = Index {
@@ -143,14 +228,13 @@ impl<T: Int> Index<T> {
         Ok(index)
     }
 
-    // --------------------------------------------------
     /// Read the whole suffix array into memory when `max_query_len`
     /// matches how it was sorted, and otherwise a subsample of it.
     fn load_suffixes(&self, max_query_len: Option<usize>) -> Result<Suffixes<T>> {
-        let built_max_query_len = match &self.header.sort_type {
-            SuffixSortType::MaxQueryLen(0) => self.header.text_len,
-            SuffixSortType::MaxQueryLen(mql) => *mql,
-            SuffixSortType::Mask(seed_mask) => seed_mask.weight,
+        let built_max_query_len = match &self.header.sort {
+            Sort::MaxQueryLen(0) => self.header.text_len,
+            Sort::MaxQueryLen(mql) => *mql,
+            Sort::Mask(seed_mask) => seed_mask.weight,
         };
 
         let mut max_query_len = max_query_len.unwrap_or(0);
@@ -174,17 +258,16 @@ impl<T: Int> Index<T> {
         Ok(Suffixes::Subsampled { suffixes, ranks })
     }
 
-    // --------------------------------------------------
     /// Read the subsample for `max_query_len` from its cache file in
     /// `~/.sufr`, or compute it and write the cache file.
     fn subsample_with_cache(&self, max_query_len: usize) -> Result<(Vec<T>, Vec<T>)> {
-        let sufr_dir = sufr_dir()?;
+        let cache_dir = cache_dir()?;
         let basename = Path::new(&self.filename)
             .file_name()
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        let cache_path = sufr_dir.join(format!("locate-{max_query_len}-{basename}"));
+        let cache_path = cache_dir.join(format!("locate-{max_query_len}-{basename}"));
 
         if let Ok(cache_meta) = fs::metadata(&cache_path) {
             let source_meta = fs::metadata(&self.filename)?;
@@ -203,11 +286,11 @@ impl<T: Int> Index<T> {
         }
 
         let now = Instant::now();
-        let (suffixes, ranks) = self.subsample_suffix_array(max_query_len);
+        let (suffixes, ranks) = self.subsample(max_query_len);
         info!(
             "Loaded compressed SA ({}/{}) in {:?}",
             suffixes.len(),
-            self.header.len_suffixes,
+            self.header.num_suffixes,
             now.elapsed()
         );
         if !suffixes.is_empty() {
@@ -216,7 +299,6 @@ impl<T: Int> Index<T> {
         Ok((suffixes, ranks))
     }
 
-    // --------------------------------------------------
     fn read_cache(&self, cache_path: &Path) -> Result<(Vec<T>, Vec<T>)> {
         let now = Instant::now();
         let mut file = File::open(cache_path)
@@ -229,34 +311,31 @@ impl<T: Int> Index<T> {
         let len = u64::from_le_bytes(buffer) as usize;
 
         let mut suffixes = vec![T::from_usize(0); len];
-        file.read_exact(slice_int_to_slice_u8(&mut suffixes))?;
+        file.read_exact(as_bytes_mut(&mut suffixes))?;
         let mut ranks = vec![T::from_usize(0); len];
-        file.read_exact(slice_int_to_slice_u8(&mut ranks))?;
+        file.read_exact(as_bytes_mut(&mut ranks))?;
 
         info!(
             "Read compressed SA ({}/{}) from cache file {} in {:?}",
             suffixes.len(),
-            self.header.len_suffixes,
+            self.header.num_suffixes,
             cache_path.display(),
             now.elapsed()
         );
         Ok((suffixes, ranks))
     }
 
-    // --------------------------------------------------
-    /// Subsample the suffix array for a maximum query length, using the
-    /// LCP array when the file has one, and otherwise the text.
-    pub(crate) fn subsample_suffix_array(
-        &self,
-        max_query_len: usize,
-    ) -> (Vec<T>, Vec<T>) {
+    /// The first suffix of each group sharing a `max_query_len` prefix,
+    /// with its rank, found from the LCP array when the file has one and
+    /// otherwise from the text.
+    pub(crate) fn subsample(&self, max_query_len: usize) -> (Vec<T>, Vec<T>) {
         let Some(lcp_file) = &self.lcp_file else {
-            return self.subsample_suffix_array_by_text(max_query_len);
+            return self.subsample_by_text(max_query_len);
         };
 
         let max_query_len = T::from_usize(max_query_len);
-        let mut suffixes: Vec<T> = Vec::with_capacity(self.header.len_suffixes);
-        let mut ranks: Vec<T> = Vec::with_capacity(self.header.len_suffixes);
+        let mut suffixes: Vec<T> = Vec::with_capacity(self.header.num_suffixes);
+        let mut ranks: Vec<T> = Vec::with_capacity(self.header.num_suffixes);
         for (i, (lcp, suffix)) in lcp_file
             .iter()
             .zip(self.suffix_array_file.iter())
@@ -271,21 +350,19 @@ impl<T: Int> Index<T> {
         (suffixes, ranks)
     }
 
-    // --------------------------------------------------
-    /// Subsample without an LCP array: keep a suffix when its first
-    /// `max_query_len` key symbols differ from its predecessor's, comparing
-    /// the text directly. In max-query-len mode the key is the first
-    /// `max_query_len` bytes (compared as slices, which lowers to memcmp);
-    /// in seed-mask mode it is the first `max_query_len` care positions.
-    fn subsample_suffix_array_by_text(&self, max_query_len: usize) -> (Vec<T>, Vec<T>) {
+    /// The subsample, keeping a suffix when the text of its first
+    /// `max_query_len` bytes, or care positions under a seed mask,
+    /// differs from its predecessor's.
+    fn subsample_by_text(&self, max_query_len: usize) -> (Vec<T>, Vec<T>) {
         let now = Instant::now();
         let text_len = self.header.text_len;
         let text_owned: Vec<u8>;
         let text: &[u8] = match &self.text {
             Text::Memory(text) => text,
             Text::Disk(text_file) => {
-                // Reading the whole text cannot be out of range, so this only
-                // fails on an I/O error, like the iterator over the SA file
+                // reading the whole text cannot be out of range, so
+                // this fails only on an I/O error, as the iterator
+                // over the suffix array file does
                 text_owned = text_file
                     .get_range(0..text_len)
                     .expect("failed to read text");
@@ -306,10 +383,12 @@ impl<T: Int> Index<T> {
                     })
                 })
             }
+            // compared as slices, which lowers to memcmp
             None => self.keep_differing(|a, b| {
                 let end_a = min(a + max_query_len, text_len);
                 let end_b = min(b + max_query_len, text_len);
-                // A suffix shorter than max_query_len always starts a new group
+                // a suffix shorter than max_query_len always starts a
+                // new group
                 end_a - a < max_query_len
                     || end_b - b < max_query_len
                     || text[a..end_a] != text[b..end_b]
@@ -318,14 +397,13 @@ impl<T: Int> Index<T> {
         info!(
             "Subsampled SA ({}/{}) from text (no LCP array) in {:?}",
             suffixes.len(),
-            self.header.len_suffixes,
+            self.header.num_suffixes,
             now.elapsed()
         );
 
         (suffixes, ranks)
     }
 
-    // --------------------------------------------------
     /// Keep each suffix, with its rank, for which `differs` is true of
     /// the previous suffix and it, and always the first suffix.
     /// The suffix array is streamed from disk in blocks, so memory is the
@@ -377,7 +455,6 @@ impl<T: Int> Index<T> {
         (suffixes, ranks)
     }
 
-    // --------------------------------------------------
     /// The text byte at `pos`.
     pub fn text_byte(&self, pos: usize) -> Option<u8> {
         match &self.text {
@@ -408,12 +485,12 @@ impl<T: Int> Index<T> {
             Suffixes::Memory(suffixes) | Suffixes::Subsampled { suffixes, .. } => {
                 suffixes.len()
             }
-            Suffixes::Disk => self.header.len_suffixes,
+            Suffixes::Disk => self.header.num_suffixes,
         }
     }
 
     /// The suffix at position `pos` of the suffixes a search runs over.
-    pub(crate) fn suffix(&self, pos: usize) -> Option<T> {
+    pub(crate) fn searched_suffix(&self, pos: usize) -> Option<T> {
         match &self.suffixes {
             Suffixes::Memory(suffixes) | Suffixes::Subsampled { suffixes, .. } => {
                 suffixes.get(pos).copied()
@@ -424,13 +501,13 @@ impl<T: Int> Index<T> {
 
     /// The ranks in the whole suffix array of the searched positions
     /// `first..=last`.
-    pub(crate) fn rank_range(&self, first: usize, last: usize) -> Range<usize> {
+    pub(crate) fn searched_ranks(&self, first: usize, last: usize) -> Range<usize> {
         let Suffixes::Subsampled { ranks, .. } = &self.suffixes else {
             return first..last + 1;
         };
 
         // TODO: the last group ends at the subsample's length,
-        //       not the suffix array's; should it be len_suffixes?
+        //       not the suffix array's; should it be num_suffixes?
         let end = if first != last {
             ranks[last].to_usize() + 1
         } else if first == ranks.len() - 1 {
@@ -451,7 +528,6 @@ impl<T: Int> Index<T> {
         }
     }
 
-    // --------------------------------------------------
     /// The text from `pos`, of at most `len` bytes when given, and
     /// otherwise to the end of the text.
     pub fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
@@ -461,13 +537,12 @@ impl<T: Int> Index<T> {
         Ok(String::from_utf8(bytes)?)
     }
 
-    // --------------------------------------------------
-    /// Retrieve file metadata
-    pub fn metadata(&self) -> Result<SufrMetadata> {
+    /// The file's metadata.
+    pub fn metadata(&self) -> Result<Metadata> {
         let fs_meta = fs::metadata(&self.filename)?;
         let modified: DateTime<Local> = DateTime::from(fs_meta.modified()?);
 
-        Ok(SufrMetadata {
+        Ok(Metadata {
             filename: self.filename.clone(),
             modified,
             file_size: fs_meta.len() as usize,
@@ -476,25 +551,34 @@ impl<T: Int> Index<T> {
             allow_ambiguity: self.header.allow_ambiguity,
             ignore_softmask: self.header.ignore_softmask,
             text_len: self.header.text_len,
-            len_suffixes: self.header.len_suffixes,
+            num_suffixes: self.header.num_suffixes,
             num_sequences: self.header.sequence_starts.len(),
             sequence_starts: self.header.sequence_starts.clone(),
             sequence_names: self.header.sequence_names.clone(),
-            sort_type: self.header.sort_type.clone(),
+            sort: self.header.sort.clone(),
             has_lcp: self.lcp_file.is_some(),
         })
     }
 }
 
-// --------------------------------------------------
-/// Find or create the `~/.sufr` directory.
-fn sufr_dir() -> Result<PathBuf> {
-    let home = home_dir().expect("Failed to get home directory");
-    let sufr_dir = home.join(".sufr");
-    if !sufr_dir.is_dir() {
-        fs::create_dir(&sufr_dir)?;
+/// The number of query characters a search compares, or 0 for all, in a
+/// file sorted by its first `built` characters.
+fn searched_len(built: usize, max_query_len: Option<usize>) -> usize {
+    match max_query_len {
+        Some(mql) if built > 0 => min(built, mql),
+        Some(mql) => mql,
+        None => built,
     }
-    Ok(sufr_dir)
+}
+
+/// Find or create the `~/.sufr` directory.
+fn cache_dir() -> Result<PathBuf> {
+    let home = home_dir().expect("Failed to get home directory");
+    let cache_dir = home.join(".sufr");
+    if !cache_dir.is_dir() {
+        fs::create_dir(&cache_dir)?;
+    }
+    Ok(cache_dir)
 }
 
 fn write_cache<T: Int>(cache_path: &Path, suffixes: &[T], ranks: &[T]) -> Result<()> {
@@ -502,8 +586,8 @@ fn write_cache<T: Int>(cache_path: &Path, suffixes: &[T], ranks: &[T]) -> Result
     let mut file = File::create(cache_path)
         .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
     file.write_all(&suffixes.len().to_le_bytes())?;
-    file.write_all(vec_to_slice_u8(suffixes))?;
-    file.write_all(vec_to_slice_u8(ranks))?;
+    file.write_all(as_bytes(suffixes))?;
+    file.write_all(as_bytes(ranks))?;
     info!(
         "Wrote to cache {} in {:?}",
         cache_path.display(),
@@ -512,12 +596,11 @@ fn write_cache<T: Int>(cache_path: &Path, suffixes: &[T], ranks: &[T]) -> Result
     Ok(())
 }
 
-// --------------------------------------------------
 #[cfg(test)]
 mod tests {
     use super::{Index, Storage, Suffixes, Text};
     use crate::{
-        types::{SeedMask, SuffixSortType},
+        format::{SeedMask, Sort},
         Builder,
     };
     use anyhow::Result;
@@ -650,18 +733,17 @@ mod tests {
     ) -> Result<(NamedTempFile, Index<u32>)> {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let mut builder = Builder::from_data(text.to_vec(), vec![(0, "s".to_string())])
-            .with_dna_options(true, false, false)
-            .with_num_partitions(3)
-            .with_write_lcp(write_lcp);
+        let mut builder = Builder::from_text(text.to_vec(), vec![(0, "s".to_string())])
+            .dna(true, false, false)
+            .partitions(3)
+            .write_lcp(write_lcp);
         if let Some(n) = max_query_len {
-            builder = builder.with_sort_type(SuffixSortType::MaxQueryLen(n));
+            builder = builder.sort(Sort::MaxQueryLen(n));
         }
         if let Some(mask) = seed_mask {
-            builder =
-                builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?));
+            builder = builder.sort(Sort::Mask(SeedMask::new(mask)?));
         }
-        builder.build_to_file(&outpath)?;
+        builder.write(&outpath)?;
         let index: Index<u32> =
             Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         Ok((outfile, index))
@@ -718,9 +800,9 @@ mod tests {
             assert!(without_lcp.lcp_file.is_none());
             let sa: Vec<u32> = without_lcp.suffix_array_file.iter().collect();
             let expected = expected_subsample(&text, &sa, &offsets, mql);
-            let from_text = without_lcp.subsample_suffix_array(mql);
+            let from_text = without_lcp.subsample(mql);
             assert_eq!(from_text, expected, "mask, mql={mql}, vs definition");
-            let from_lcp = with_lcp.subsample_suffix_array(mql);
+            let from_lcp = with_lcp.subsample(mql);
             assert_eq!(from_text, from_lcp, "mask, mql={mql}, vs LCP array");
         }
 
@@ -732,9 +814,9 @@ mod tests {
             let (_f2, without_lcp) = build(&text, None, Some(built_mql), false)?;
             let sa: Vec<u32> = without_lcp.suffix_array_file.iter().collect();
             let expected = expected_subsample(&text, &sa, &offsets, mql);
-            let from_text = without_lcp.subsample_suffix_array(mql);
+            let from_text = without_lcp.subsample(mql);
             assert_eq!(from_text, expected, "mql index, mql={mql}, vs definition");
-            let from_lcp = with_lcp.subsample_suffix_array(mql);
+            let from_lcp = with_lcp.subsample(mql);
             assert_eq!(from_text, from_lcp, "mql index, mql={mql}, vs LCP array");
         }
         Ok(())

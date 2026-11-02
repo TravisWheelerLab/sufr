@@ -1,9 +1,6 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::{
-    types::{SeedMask, OUTFILE_VERSION},
-    Index, Storage,
-};
+use libsufr::{Index, SeedMask, Storage, OUTFILE_VERSION};
 use pretty_assertions::assert_eq;
 use regex::Regex;
 use std::{

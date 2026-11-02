@@ -4,7 +4,6 @@ use log::info;
 use std::{fs::File, io::BufWriter};
 use sufr::{Cli, Command, LogLevel};
 
-// --------------------------------------------------
 fn main() {
     if let Err(e) = run(Cli::parse()) {
         eprintln!("Error: {e}");
@@ -12,7 +11,6 @@ fn main() {
     }
 }
 
-// --------------------------------------------------
 fn run(args: Cli) -> Result<()> {
     env_logger::Builder::new()
         .filter_level(match args.log {
@@ -21,7 +19,6 @@ fn run(args: Cli) -> Result<()> {
             _ => log::LevelFilter::Off,
         })
         .target(match args.log_file {
-            // Optional log file, default to STDOUT
             Some(ref filename) => env_logger::Target::Pipe(Box::new(BufWriter::new(
                 File::create(filename)?,
             ))),
@@ -40,35 +37,12 @@ fn run(args: Cli) -> Result<()> {
         .unwrap();
 
     match &args.command {
-        // TODO: enable once "check" is usable
-        //Some(Command::Check(args)) => {
-        //    sufr::check(args)?;
-        //    Ok(())
-        //}
-        Some(Command::Count(args)) => {
-            sufr::count(args)?;
-            Ok(())
-        }
-        Some(Command::Create(args)) => {
-            sufr::create(args)?;
-            Ok(())
-        }
-        Some(Command::Extract(args)) => {
-            sufr::extract(args)?;
-            Ok(())
-        }
-        Some(Command::List(args)) => {
-            sufr::list(args)?;
-            Ok(())
-        }
-        Some(Command::Locate(args)) => {
-            sufr::locate(args)?;
-            Ok(())
-        }
-        Some(Command::Summarize(args)) => {
-            sufr::summarize(args)?;
-            Ok(())
-        }
+        Some(Command::Count(args)) => sufr::count(args),
+        Some(Command::Create(args)) => sufr::create(args),
+        Some(Command::Extract(args)) => sufr::extract(args),
+        Some(Command::List(args)) => sufr::list(args),
+        Some(Command::Locate(args)) => sufr::locate(args),
+        Some(Command::Summarize(args)) => sufr::summarize(args),
         _ => unreachable!(),
     }
 }

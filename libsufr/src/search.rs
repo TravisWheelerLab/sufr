@@ -2,8 +2,8 @@
 
 use crate::{
     index::Index,
+    io::Int,
     lcp::{lcp, mask_offset, masked_lcp},
-    types::{Comparison, Int},
     SuffixArray,
 };
 use anyhow::Result;
@@ -15,7 +15,6 @@ use std::{
     path::Path,
 };
 
-// --------------------------------------------------
 /// The suffixes matching one query, as a range of ranks in the
 /// suffix array.
 #[derive(Debug)]
@@ -119,7 +118,6 @@ fn to_usize<T: Int>(values: Vec<T>) -> Vec<usize> {
     values.into_iter().map(|v| v.to_usize()).collect()
 }
 
-// --------------------------------------------------
 /// The queries, with each one that names an existing file replaced by
 /// the whitespace-separated queries in that file.
 pub fn read_queries(queries: &[String]) -> Result<Vec<String>> {
@@ -142,22 +140,30 @@ pub fn read_queries(queries: &[String]) -> Result<Vec<String>> {
     Ok(ret)
 }
 
-// --------------------------------------------------
+/// How a query compares to a suffix.
+#[derive(Debug)]
+struct Comparison {
+    /// Whether the query sorts before, after, or with the suffix.
+    cmp: Ordering,
+
+    /// The LCP of the query and the suffix.
+    lcp: usize,
+}
+
 impl<T: Int> Index<T> {
     /// The ranks of the suffixes matching `query`, empty when none match.
-    pub(crate) fn search(&self, query: &[u8]) -> Range<usize> {
+    pub(crate) fn matching_ranks(&self, query: &[u8]) -> Range<usize> {
         let n = self.num_searched();
-        let Some(start) = self.suffix_search_first(query, 0, n - 1, 0, 0) else {
+        let Some(start) = self.first_match(query, 0, n - 1, 0, 0) else {
             return 0..0;
         };
         let end = self
-            .suffix_search_last(query, start, n - 1, n, 0, 0)
+            .last_match(query, start, n - 1, n, 0, 0)
             .unwrap_or(start);
-        self.rank_range(start, end)
+        self.searched_ranks(start, end)
     }
 
-    // --------------------------------------------------
-    fn suffix_search_first(
+    fn first_match(
         &self,
         qry: &[u8],
         low: usize,
@@ -167,11 +173,11 @@ impl<T: Int> Index<T> {
     ) -> Option<usize> {
         if high >= low {
             let mid = low + ((high - low) / 2);
-            let mid_val = self.suffix(mid)?.to_usize();
+            let mid_val = self.searched_suffix(mid)?.to_usize();
             let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
 
             let mid_minus_one = if mid > 0 {
-                self.suffix(mid - 1)?.to_usize()
+                self.searched_suffix(mid - 1)?.to_usize()
             } else {
                 mid_val
             };
@@ -182,18 +188,17 @@ impl<T: Int> Index<T> {
             {
                 Some(mid)
             } else if mid_cmp.cmp == Ordering::Greater {
-                self.suffix_search_first(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
+                self.first_match(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
             } else {
                 // Ordering::Less
-                self.suffix_search_first(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
+                self.first_match(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
             }
         } else {
             None
         }
     }
 
-    // --------------------------------------------------
-    fn suffix_search_last(
+    fn last_match(
         &self,
         qry: &[u8],
         low: usize,
@@ -204,12 +209,11 @@ impl<T: Int> Index<T> {
     ) -> Option<usize> {
         if high >= low {
             let mid = low + ((high - low) / 2);
-            let mid_val = self.suffix(mid)?.to_usize();
+            let mid_val = self.searched_suffix(mid)?.to_usize();
             let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
 
-            // Weird hack because I cannot embed this call in the "if"
             let mid_plus_one = if mid < n - 1 {
-                self.suffix(mid + 1)?.to_usize()
+                self.searched_suffix(mid + 1)?.to_usize()
             } else {
                 mid_val
             };
@@ -220,28 +224,23 @@ impl<T: Int> Index<T> {
             {
                 Some(mid)
             } else if mid_cmp.cmp == Ordering::Less {
-                self.suffix_search_last(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
+                self.last_match(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
             } else {
-                self.suffix_search_last(qry, mid + 1, high, n, mid_cmp.lcp, right_lcp)
+                self.last_match(qry, mid + 1, high, n, mid_cmp.lcp, right_lcp)
             }
         } else {
             None
         }
     }
 
-    // --------------------------------------------------
-    /// Compare a query string to a suffix.
-    /// When the suffix array was sorted using a seed mask, only
-    /// compare the "care" positions; otherwise, compare all the positions
-    /// up to an optional maximum query length
+    /// How `query` compares to the suffix at `suffix_pos`, which share
+    /// their first `skip` characters.
     fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
         let max_query_len = self.max_query_len;
         let lcp = self.query_lcp(query, suffix_pos, skip);
         let cmp = if (max_query_len > 0) && (lcp >= max_query_len) {
-            // We've seen enough
             Ordering::Equal
         } else {
-            // Get the next chars
             let full_offset = match &self.seed_mask {
                 Some(seed_mask) => mask_offset(lcp, seed_mask),
                 None => lcp,
@@ -250,13 +249,8 @@ impl<T: Int> Index<T> {
                 query.get(full_offset),
                 &self.text_byte(suffix_pos + full_offset),
             ) {
-                // Entire query matched
                 (None, _) => Ordering::Equal,
-
-                // Compare next char
                 (Some(a), Some(b)) => a.cmp(b),
-
-                // Panic at the disco
                 _ => unreachable!(),
             }
         };
@@ -272,7 +266,6 @@ impl<T: Int> Index<T> {
         match &self.seed_mask {
             None => {
                 if (max_query_len > 0) && (skip >= max_query_len) {
-                    // If we've already seen enough
                     skip
                 } else {
                     let text_start = suffix_pos + skip;
@@ -306,7 +299,6 @@ impl<T: Int> Index<T> {
         }
     }
 
-    // --------------------------------------------------
     fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
         let seq_starts = &self.header.sequence_starts;
         let suffixes = self.suffixes_at(ranks.clone())?;
@@ -331,7 +323,6 @@ impl<T: Int> Index<T> {
         Ok(locations)
     }
 
-    // --------------------------------------------------
     fn extract(
         &self,
         ranks: Range<usize>,
@@ -386,7 +377,6 @@ impl<T: Int> Index<T> {
     }
 }
 
-// --------------------------------------------------
 #[cfg(test)]
 mod tests {
     use super::{read_queries, Extraction, Location};

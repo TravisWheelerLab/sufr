@@ -1,6 +1,6 @@
 //! Functions for LCP computation and caching.
 
-use crate::types::SeedMask;
+use crate::format::SeedMask;
 use std::cmp::min;
 
 /// A cache of LCP values for optimized calculation.
@@ -130,11 +130,8 @@ pub fn mask_offset(lcp: usize, mask: &SeedMask) -> usize {
     }
 }
 
-/// Computes the LCP of `a` and `b`, automatically selecting an optimized
-/// implementation for the target platform.
-///
-/// If `cache` is provided, it should be provided as `Some((cache, ia, ib))`,
-/// `ia` and `ib` are the offsets at which `a` and `b` begin in the original sequence.
+/// The LCP of `a` and `b`, using AVX2 when the CPU has it. `cache` holds
+/// the cache and the text positions where `a` and `b` start.
 pub fn lcp(a: &[u8], b: &[u8], cache: Option<(&LcpCache, usize, usize)>) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
@@ -148,11 +145,13 @@ pub fn lcp(a: &[u8], b: &[u8], cache: Option<(&LcpCache, usize, usize)>) -> usiz
     lcp_scalar(a, b)
 }
 
+/// The LCP of `a` and `b`, comparing 32 bytes at a time.
+///
+/// # Safety
+///
+/// The CPU must support AVX2.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-/// AVX2 implementation of LCP with an unrolled loop
-///
-/// SAFETY: This function must only be called after validating that avx2 is actually available
 unsafe fn lcp_avx2(
     a: &[u8],
     b: &[u8],
@@ -168,7 +167,8 @@ unsafe fn lcp_avx2(
     while i + UNROLL * 32 <= n {
         for j in 0..UNROLL {
             let off = i + j * 32;
-            // SAFETY: the bounds of a and b (256bits = 32 bytes; 4 iterations) are checked at the top of the while loop
+            // SAFETY: the loop condition keeps the 32 bytes at
+            //         `off` within both `a` and `b`
             let va = unsafe { _mm256_loadu_si256(a.as_ptr().add(off) as *const _) };
             let vb = unsafe { _mm256_loadu_si256(b.as_ptr().add(off) as *const _) };
             let eq = _mm256_cmpeq_epi8(va, vb);
@@ -189,7 +189,7 @@ unsafe fn lcp_avx2(
     i + lcp_scalar(&a[i..n], &b[i..n])
 }
 
-/// Scalar implementation of LCP
+/// The LCP of `a` and `b`, comparing a byte at a time.
 pub fn lcp_scalar(a: &[u8], b: &[u8]) -> usize {
     std::iter::zip(a, b).take_while(|(a, b)| a == b).count()
 }

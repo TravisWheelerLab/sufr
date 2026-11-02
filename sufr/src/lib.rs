@@ -1,11 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
-use libsufr::{
-    read_queries,
-    types::{SeedMask, SuffixSortType},
-    Builder, Storage, SuffixArray,
-};
+use libsufr::{read_queries, Builder, Hits, SeedMask, Sort, Storage, SuffixArray};
 use log::info;
 use rayon::prelude::*;
 use regex::Regex;
@@ -21,10 +17,8 @@ use std::{
 };
 use tabled::Table;
 
-// --------------------------------------------------
 type PositionList = Vec<Range<usize>>;
 
-// --------------------------------------------------
 #[derive(Parser, Debug)]
 #[command(arg_required_else_help = true, version, about)]
 pub struct Cli {
@@ -49,8 +43,6 @@ pub enum Command {
     /// Create sufr file
     Create(CreateArgs),
 
-    // Check sufr file for correctness
-    //Check(CheckArgs),
     /// Extract suffixes from a sufr file
     Extract(ExtractArgs),
 
@@ -66,18 +58,6 @@ pub enum Command {
     /// Summarize sufr file
     Summarize(SummarizeArgs),
 }
-
-//#[derive(Debug, Parser)]
-//#[command(about, alias = "ch")]
-//pub struct CheckArgs {
-//    /// Sufr file
-//    #[arg(value_name = "SUFR")]
-//    pub file: String,
-//
-//    /// List errors
-//    #[arg(short, long)]
-//    pub verbose: bool,
-//}
 
 #[derive(Debug, Parser)]
 #[command(about, alias = "cr")]
@@ -268,7 +248,6 @@ pub struct SummarizeArgs {
     pub file: String,
 }
 
-// --------------------------------------------------
 #[derive(Debug, Clone)]
 pub enum LogLevel {
     Info,
@@ -288,7 +267,6 @@ impl ValueEnum for LogLevel {
     }
 }
 
-// --------------------------------------------------
 /// Open a _.sufr_ file for `count`, `extract` or `locate`.
 fn open_for_search(
     file: &str,
@@ -317,7 +295,6 @@ fn create_output(output: &Option<String>) -> Result<Box<dyn Write>> {
     }
 }
 
-// --------------------------------------------------
 pub fn count(args: &CountArgs) -> Result<()> {
     let suffix_array = open_for_search(
         &args.file,
@@ -338,7 +315,6 @@ pub fn count(args: &CountArgs) -> Result<()> {
     Ok(())
 }
 
-// --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
     let outfile = &args.output.clone().unwrap_or(format!(
         "{}.sufr",
@@ -350,24 +326,20 @@ pub fn create(args: &CreateArgs) -> Result<()> {
 
     let mut builder =
         Builder::from_sequence_file(&args.input, args.sequence_delimiter as u8)?
-            .with_dna_options(args.is_dna, args.allow_ambiguity, args.ignore_softmask)
-            .with_num_partitions(args.num_partitions);
+            .dna(args.is_dna, args.allow_ambiguity, args.ignore_softmask)
+            .partitions(args.num_partitions);
 
     match (args.max_query_len, &args.seed_mask) {
         (Some(_), Some(_)) => bail!("Cannot use max_query_len and seed_mask together"),
-        (Some(n), None) => {
-            builder = builder.with_sort_type(SuffixSortType::MaxQueryLen(n))
-        }
-        (None, Some(mask)) => {
-            builder = builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?))
-        }
+        (Some(n), None) => builder = builder.sort(Sort::MaxQueryLen(n)),
+        (None, Some(mask)) => builder = builder.sort(Sort::Mask(SeedMask::new(mask)?)),
         (None, None) => (),
     }
 
-    builder = builder.with_write_lcp(args.write_lcp);
+    builder = builder.write_lcp(args.write_lcp);
 
     let now = Instant::now();
-    builder.build_to_file(outfile)?;
+    builder.write(outfile)?;
 
     let meta = fs::metadata(outfile)?;
     let bytes_written = meta.len();
@@ -383,7 +355,6 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     Ok(())
 }
 
-// --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
     let suffix_array = open_for_search(
         &args.file,
@@ -422,7 +393,6 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
     Ok(())
 }
 
-// --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
     let text = if args.very_low_memory {
         Storage::Disk
@@ -430,14 +400,7 @@ pub fn list(args: &ListArgs) -> Result<()> {
         Storage::Memory
     };
     let suffix_array = SuffixArray::open_with(&args.file, text, Storage::Disk, None)?;
-    let mut ranks: Vec<usize> = vec![];
-    for val in &args.ranks {
-        let mut parsed: Vec<_> = parse_pos(val)?
-            .into_iter()
-            .flat_map(|r| r.collect::<Vec<_>>())
-            .collect();
-        ranks.append(&mut parsed);
-    }
+    let ranks = parse_ranks(&args.ranks)?;
 
     if args.show_lcp && suffix_array.header().lcp_pos.is_none() {
         bail!(
@@ -467,7 +430,7 @@ pub fn list(args: &ListArgs) -> Result<()> {
 
     if ranks.is_empty() {
         let number = args.number.unwrap_or(0);
-        for (rank, suffix) in suffix_array.suffix_array().enumerate() {
+        for (rank, suffix) in suffix_array.suffixes().enumerate() {
             writeln!(output, "{}", row(rank, suffix)?)?;
             if number > 0 && rank == number - 1 {
                 break;
@@ -485,7 +448,6 @@ pub fn list(args: &ListArgs) -> Result<()> {
     Ok(())
 }
 
-// --------------------------------------------------
 pub fn locate(args: &LocateArgs) -> Result<()> {
     let suffix_array = open_for_search(
         &args.file,
@@ -499,49 +461,9 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
 
     let hits = suffix_array.search_all(&queries);
     if args.abs {
-        let suffixes: Vec<_> = hits.par_iter().map(|hits| hits.suffixes()).collect();
-        for (query, suffixes) in queries.iter().zip(suffixes) {
-            // TODO: a query whose suffixes cannot be read is
-            //       skipped without a message
-            let Ok(suffixes) = suffixes else {
-                continue;
-            };
-            if suffixes.is_empty() {
-                eprintln!("{query} not found");
-                continue;
-            }
-            let suffixes: Vec<_> = suffixes.iter().map(|s| s.to_string()).collect();
-            writeln!(output, "{query} {}", suffixes.join(" "))?;
-        }
+        write_suffixes(&mut output, &queries, &hits)?;
     } else {
-        let locations: Vec<_> = hits.par_iter().map(|hits| hits.locate()).collect();
-        for (query, locations) in queries.iter().zip(locations) {
-            // TODO: a query whose suffixes cannot be read is
-            //       skipped without a message
-            let Ok(locations) = locations else {
-                continue;
-            };
-            if locations.is_empty() {
-                eprintln!("{query} not found");
-                continue;
-            }
-            writeln!(output, "{query}")?;
-            for sequence in
-                locations.chunk_by(|a, b| a.sequence_name == b.sequence_name)
-            {
-                let positions: Vec<_> = sequence
-                    .iter()
-                    .map(|loc| loc.position.to_string())
-                    .collect();
-                writeln!(
-                    output,
-                    "{} {}",
-                    sequence[0].sequence_name,
-                    positions.join(",")
-                )?;
-            }
-            writeln!(output, "//")?;
-        }
+        write_locations(&mut output, &queries, &hits)?;
     }
 
     info!(
@@ -553,9 +475,76 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
     Ok(())
 }
 
-// --------------------------------------------------
-// Parse an index from a string representation of an integer.
-// Ensures the number does not start with '+'.
+/// Write each query's hits as positions in the text.
+fn write_suffixes(
+    output: &mut dyn Write,
+    queries: &[String],
+    hits: &[Hits],
+) -> Result<()> {
+    let suffixes: Vec<_> = hits.par_iter().map(|hits| hits.suffixes()).collect();
+    for (query, suffixes) in queries.iter().zip(suffixes) {
+        // TODO: a query whose suffixes cannot be read is
+        //       skipped without a message
+        let Ok(suffixes) = suffixes else {
+            continue;
+        };
+        if suffixes.is_empty() {
+            eprintln!("{query} not found");
+            continue;
+        }
+        let suffixes: Vec<_> = suffixes.iter().map(|s| s.to_string()).collect();
+        writeln!(output, "{query} {}", suffixes.join(" "))?;
+    }
+    Ok(())
+}
+
+/// Write each query's hits as positions within their sequences.
+fn write_locations(
+    output: &mut dyn Write,
+    queries: &[String],
+    hits: &[Hits],
+) -> Result<()> {
+    let locations: Vec<_> = hits.par_iter().map(|hits| hits.locate()).collect();
+    for (query, locations) in queries.iter().zip(locations) {
+        // TODO: a query whose suffixes cannot be read is
+        //       skipped without a message
+        let Ok(locations) = locations else {
+            continue;
+        };
+        if locations.is_empty() {
+            eprintln!("{query} not found");
+            continue;
+        }
+        writeln!(output, "{query}")?;
+        for sequence in locations.chunk_by(|a, b| a.sequence_name == b.sequence_name) {
+            let positions: Vec<_> = sequence
+                .iter()
+                .map(|loc| loc.position.to_string())
+                .collect();
+            writeln!(
+                output,
+                "{} {}",
+                sequence[0].sequence_name,
+                positions.join(",")
+            )?;
+        }
+        writeln!(output, "//")?;
+    }
+    Ok(())
+}
+
+/// The ranks named by each of `ranks`, in order.
+fn parse_ranks(ranks: &[String]) -> Result<Vec<usize>> {
+    let mut parsed = vec![];
+    for val in ranks {
+        for range in parse_pos(val)? {
+            parsed.extend(range);
+        }
+    }
+    Ok(parsed)
+}
+
+/// Parse a rank that does not start with `+`.
 fn parse_index(input: &str) -> Result<usize> {
     let value_error = || anyhow!(r#"illegal list value: "{input}""#);
     if input.starts_with('+') {
@@ -565,7 +554,7 @@ fn parse_index(input: &str) -> Result<usize> {
     }
 }
 
-// --------------------------------------------------
+/// Parse a comma-separated list of ranks and `first-last` rank ranges.
 fn parse_pos(range: &str) -> Result<PositionList> {
     let range_re = Regex::new(r"^(\d+)-(\d+)$").unwrap();
     range
@@ -588,7 +577,6 @@ fn parse_pos(range: &str) -> Result<PositionList> {
         .collect::<Result<_, _>>()
 }
 
-// --------------------------------------------------
 pub fn summarize(args: &SummarizeArgs) -> Result<()> {
     let suffix_array =
         SuffixArray::open_with(&args.file, Storage::Disk, Storage::Disk, None)?;
@@ -602,7 +590,6 @@ pub fn summarize(args: &SummarizeArgs) -> Result<()> {
     Ok(())
 }
 
-// --------------------------------------------------
 #[cfg(test)]
 mod tests {
     use super::{parse_index, parse_pos};
@@ -650,112 +637,5 @@ mod tests {
         let res = parse_pos("0");
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), vec![0..1]);
-
-        //let res = parse_pos("0-1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "0""#);
-        //
-        //// A leading "+" is an error
-        //let res = parse_pos("+1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "+1""#,);
-        //
-        //let res = parse_pos("+1-2".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(
-        //    res.unwrap_err().to_string(),
-        //    r#"illegal list value: "+1-2""#,
-        //);
-        //
-        //let res = parse_pos("1-+2".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(
-        //    res.unwrap_err().to_string(),
-        //    r#"illegal list value: "1-+2""#,
-        //);
-        //
-        //// Any non-number is an error
-        //let res = parse_pos("a".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a""#);
-        //
-        //let res = parse_pos("1,a".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a""#);
-        //
-        //let res = parse_pos("1-a".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "1-a""#,);
-        //
-        //let res = parse_pos("a-1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a-1""#,);
-        //
-        //// Wonky ranges
-        //let res = parse_pos("-".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos(",".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos("1,".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos("1-".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos("1-1-1".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos("1-1-a".to_string());
-        //assert!(res.is_err());
-        //
-        //// First number must be less than second
-        //let res = parse_pos("1-1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(
-        //    res.unwrap_err().to_string(),
-        //    "First number in range (1) must be lower than second number (1)"
-        //);
-        //
-        //let res = parse_pos("2-1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(
-        //    res.unwrap_err().to_string(),
-        //    "First number in range (2) must be lower than second number (1)"
-        //);
-        //
-        //// All the following are acceptable
-        //let res = parse_pos("1".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1]);
-        //
-        //let res = parse_pos("01".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1]);
-        //
-        //let res = parse_pos("1,3".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1, 2..3]);
-        //
-        //let res = parse_pos("001,0003".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1, 2..3]);
-        //
-        //let res = parse_pos("1-3".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..3]);
-        //
-        //let res = parse_pos("0001-03".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..3]);
-        //
-        //let res = parse_pos("1,7,3-5".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1, 6..7, 2..5]);
-        //
-        //let res = parse_pos("15,19-20".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![14..15, 18..20]);
     }
 }

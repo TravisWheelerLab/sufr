@@ -1,40 +1,101 @@
 //! Positioned file reads and writes, and on-disk access to the text/SA/LCP
 
-use crate::types::Int;
 use anyhow::{bail, Result};
 use rayon::prelude::*;
-use std::{cmp::min, fs::File, io, marker::PhantomData, mem, ops::Range, slice};
+use std::{
+    cmp::min,
+    fmt::{Debug, Display},
+    fs::File,
+    hash::Hash,
+    io,
+    marker::PhantomData,
+    mem,
+    ops::{Add, AddAssign, Range, Sub},
+    slice,
+};
 
-// --------------------------------------------------
-/// Struct to mediate file access to on-disk arrays of text, suffix/LCP arrays
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for u8 {}
+    impl Sealed for u32 {}
+    impl Sealed for u64 {}
+}
+
+/// An element of a _.sufr_ array: `u8` for the text, and `u32` or `u64`
+/// for the suffix and LCP arrays.
+///
+/// The trait is sealed because the byte casts in this module rely on
+/// `u8`, `u32` and `u64` having no padding and no invalid bit patterns.
+pub trait Int:
+    Debug
+    + AddAssign
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Copy
+    + Default
+    + Display
+    + Ord
+    + Hash
+    + Send
+    + Sync
+    + sealed::Sealed
+{
+    /// The value as a `usize`.
+    fn to_usize(&self) -> usize;
+
+    /// The value of `val`, truncated to `Self`.
+    fn from_usize(val: usize) -> Self;
+}
+
+impl Int for u8 {
+    fn to_usize(&self) -> usize {
+        *self as usize
+    }
+
+    fn from_usize(val: usize) -> Self {
+        val as Self
+    }
+}
+
+impl Int for u32 {
+    fn to_usize(&self) -> usize {
+        *self as usize
+    }
+
+    fn from_usize(val: usize) -> Self {
+        val as Self
+    }
+}
+
+impl Int for u64 {
+    fn to_usize(&self) -> usize {
+        *self as usize
+    }
+
+    fn from_usize(val: usize) -> Self {
+        val as Self
+    }
+}
+
+/// Read access to one array of a _.sufr_ file: the text, the suffix
+/// array, or the LCP array.
 #[derive(Debug)]
 pub struct FileAccess<T: Int> {
-    /// A read-only filehandle to the _.sufr_ file
     file: File,
 
-    /// The size in bytes for the entire text/SA/LCP
+    /// The size of the array in bytes.
     pub size: usize,
 
-    /// The starting byte position of the structure being read (text/SA/LCP)
     start_position: u64,
 
-    /// The final byte position of the structure being read (text/SA/LCP)
     end_position: u64,
 
     _marker: PhantomData<fn() -> T>,
 }
 
 impl<T: Int> FileAccess<T> {
-    /// Create a read-only file access to a portion of a _.sufr_ file
-    /// representing the text, suffix array, or LCP array.
-    /// This struct must be initialized using an `Int` of `u8` for the `text`
-    /// or `u32`/`u64` for the SA/LCP.
-    /// The metadata needed to create this can be found in the `Header`.
-    ///
-    /// Args:
-    /// * `filename`: the _.sufr_ filename
-    /// * `start`: the byte position in the file of the array
-    /// * `num_elements`: the length of the text/SA/LCP
+    /// Open the array of `num_elements` values starting at byte `start`
+    /// of `filename`.
     pub fn new(filename: &str, start: u64, num_elements: usize) -> Result<Self> {
         let file = File::open(filename)?;
         let size = num_elements * mem::size_of::<T>();
@@ -47,7 +108,7 @@ impl<T: Int> FileAccess<T> {
         })
     }
 
-    /// Create a `FileAccessIter` iterator.
+    /// An iterator over the values of the array.
     pub fn iter(&self) -> FileAccessIter<'_, T> {
         FileAccessIter {
             file_access: self,
@@ -58,21 +119,19 @@ impl<T: Int> FileAccess<T> {
         }
     }
 
-    // --------------------------------------------------
-    /// Return a value (`u8`/character from text or a SA/LCP value)
+    /// The value at `pos`, or `None` past the end of the array.
     ///
-    /// Args:
-    /// * `pos`: position in the array
-    //
-    // TODO: Ignoring lots of Results to return Option
+    /// # Panics
+    ///
+    /// Panics when the file cannot be read.
     pub fn get(&self, pos: usize) -> Option<T> {
-        // Don't bother looking for something beyond the end
+        // TODO: Ignoring lots of Results to return Option
         let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
         if seek < self.end_position {
             let mut val = T::from_usize(0);
             read_exact_at(
                 &self.file,
-                slice_int_to_slice_u8(std::slice::from_mut(&mut val)),
+                as_bytes_mut(std::slice::from_mut(&mut val)),
                 seek,
             )
             .unwrap();
@@ -82,11 +141,8 @@ impl<T: Int> FileAccess<T> {
         }
     }
 
-    // --------------------------------------------------
-    /// Return a range of values (`u8`/characters from text or a SA/LCP values)
-    ///
-    /// Args:
-    /// * `range`: start/stop positions in the array
+    /// The values in `range`, or an error when it runs past the end of
+    /// the array.
     pub fn get_range(&self, range: Range<usize>) -> Result<Vec<T>> {
         assert!(range.start <= range.end);
         let start = self.start_position as usize + (range.start * mem::size_of::<T>());
@@ -95,11 +151,7 @@ impl<T: Int> FileAccess<T> {
         if valid.contains(&start) && valid.contains(&end) {
             let num_vals = range.len();
             let mut buffer: Vec<T> = vec![T::from_usize(0); num_vals];
-            read_exact_at(
-                &self.file,
-                slice_int_to_slice_u8(&mut buffer),
-                start as u64,
-            )?;
+            read_exact_at(&self.file, as_bytes_mut(&mut buffer), start as u64)?;
             Ok(buffer)
         } else {
             bail!("Invalid range: {range:?}")
@@ -107,24 +159,21 @@ impl<T: Int> FileAccess<T> {
     }
 }
 
-// --------------------------------------------------
-/// An iterator over the values from a `FileAccess`
+/// An iterator over the values of a [`FileAccess`].
 #[derive(Debug)]
 pub struct FileAccessIter<'a, T: Int> {
     file_access: &'a FileAccess<T>,
-    /// Internal buffer for reading a portion of the file
     buffer: Vec<T>,
-    /// The current position when reading the buffer
     buffer_pos: usize,
-    /// The current position after reading a portion of the structure
-    /// from disk and into the `buffer`
+
+    /// The file position of the first byte not yet in `buffer`.
     current_position: u64,
-    /// Whether or not the last read off disk made it to the end of the array
+
     exhausted: bool,
 }
 
 impl<'a, T: Int> FileAccessIter<'a, T> {
-    /// The maximum size in bytes of the buffer (currently 2^24, 16 MiB)
+    /// The most bytes read from the file at once: 16 MiB.
     const BUFFER_SIZE: usize = 2usize.pow(24);
 }
 
@@ -135,15 +184,12 @@ impl<T: Int> Iterator for FileAccessIter<'_, T> {
         if self.exhausted {
             None
         } else {
-            // Fill the buffer
             if self.buffer.is_empty() || self.buffer_pos == self.buffer.len() {
                 if self.current_position >= self.file_access.end_position {
                     self.exhausted = true;
                     return None;
                 }
 
-                // Read whole elements, at most BUFFER_SIZE bytes, straight
-                // into the reused typed buffer
                 let bytes_wanted = min(
                     Self::BUFFER_SIZE,
                     (self.file_access.end_position - self.current_position) as usize,
@@ -152,7 +198,7 @@ impl<T: Int> Iterator for FileAccessIter<'_, T> {
                 self.buffer.resize(num_vals, T::from_usize(0));
                 read_exact_at(
                     &self.file_access.file,
-                    slice_int_to_slice_u8(&mut self.buffer),
+                    as_bytes_mut(&mut self.buffer),
                     self.current_position,
                 )
                 .unwrap();
@@ -169,13 +215,8 @@ impl<T: Int> Iterator for FileAccessIter<'_, T> {
     }
 }
 
-// --------------------------------------------------
-/// Convert a (mutable) slice of T into a
-/// `&mut [u8]` (where `T` is the `Int` 32/64)
-///
-/// Args:
-/// * `buffer`: slice of `T` values
-pub(crate) fn slice_int_to_slice_u8<T: Int>(buffer: &mut [T]) -> &mut [u8] {
+/// The bytes of `buffer`, in native byte order.
+pub(crate) fn as_bytes_mut<T: Int>(buffer: &mut [T]) -> &mut [u8] {
     // TODO: rework - endianness-dependent
     // SAFETY: T is u8, u32 or u64, which have no padding and
     //         accept every bit pattern, and the byte length is
@@ -188,29 +229,22 @@ pub(crate) fn slice_int_to_slice_u8<T: Int>(buffer: &mut [T]) -> &mut [u8] {
     }
 }
 
-// --------------------------------------------------
-/// Convert a `Vec<T>` (where `T` is the `Int` 32/64) into a
-/// slice of raw U8 for serializing to disk
-///
-/// Args:
-/// * `vec`: a vector of `T` values
-pub(crate) fn vec_to_slice_u8<T: Int>(vec: &[T]) -> &[u8] {
+/// The bytes of `vec`, in native byte order.
+pub(crate) fn as_bytes<T: Int>(vec: &[T]) -> &[u8] {
     // TODO: rework - endianness-dependent
     // SAFETY: T is u8, u32 or u64, which have no padding, and
     //         the byte length is the length of `vec`
     unsafe {
-        slice::from_raw_parts(
-            vec.as_ptr() as *const _,
-            std::mem::size_of_val(vec), //vec.len() * mem::size_of::<T>(),
-        )
+        slice::from_raw_parts(vec.as_ptr() as *const _, std::mem::size_of_val(vec))
     }
 }
 
-// Position-independent reads and writes for both Unix and Windows
+// the positioned reads and writes below take an absolute offset
+// and leave the file cursor alone, so several threads may use
+// one file at once
 
-/// Write from `buf` at an absolute `offset` without using the file cursor,
-/// so several threads may write disjoint regions of one file at once.
-/// Returns the number of bytes written, which may be fewer than requested.
+/// Write from `buf` at `offset`, returning the number of bytes written,
+/// which may be fewer than requested.
 #[cfg(unix)]
 fn write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
     use std::os::unix::fs::FileExt;
@@ -218,8 +252,6 @@ fn write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
     file.write_at(buf, offset)
 }
 
-// Windows version of `write_at`; `seek_write` also takes an absolute
-// offset per call, so concurrent calls place their data correctly.
 #[cfg(windows)]
 fn write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<usize> {
     use std::os::windows::fs::FileExt;
@@ -234,7 +266,7 @@ fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
     file.read_exact_at(buf, offset)
 }
 
-// Essentially the same as the Unix read_exact_at implementation, but using seek_read
+// the loop of std's unix read_exact_at, over seek_read
 #[cfg(windows)]
 fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
     use std::os::windows::fs::FileExt;
@@ -279,48 +311,46 @@ pub(crate) fn write_all_at(file: &File, buf: &[u8], offset: u64) -> Result<()> {
         })
 }
 
-// --------------------------------------------------
 #[cfg(test)]
 mod tests {
-    use super::{slice_int_to_slice_u8, vec_to_slice_u8, FileAccess};
+    use super::{as_bytes, as_bytes_mut, FileAccess};
     use crate::format::Header;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn test_slice_int_to_slice_u8() -> Result<()> {
+    fn test_as_bytes_mut() -> Result<()> {
         let mut buf: Vec<u32> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[0, 0, 0, 0]);
+        as_bytes_mut(&mut buf).copy_from_slice(&[0, 0, 0, 0]);
         assert_eq!(buf, &[0u32]);
 
         let mut buf: Vec<u64> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        as_bytes_mut(&mut buf).copy_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(buf, &[0u64]);
 
         let mut buf: Vec<u32> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[1, 0, 0, 0]);
+        as_bytes_mut(&mut buf).copy_from_slice(&[1, 0, 0, 0]);
         assert_eq!(buf, &[1u32]);
 
         let mut buf: Vec<u64> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
+        as_bytes_mut(&mut buf).copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(buf, &[1u64]);
 
         let mut buf: Vec<u32> = vec![1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[255, 255, 255, 255]);
+        as_bytes_mut(&mut buf).copy_from_slice(&[255, 255, 255, 255]);
         assert_eq!(buf, &[u32::MAX]);
 
         let mut buf: Vec<u64> = vec![1];
-        slice_int_to_slice_u8(&mut buf)
+        as_bytes_mut(&mut buf)
             .copy_from_slice(&[255, 255, 255, 255, 255, 255, 255, 255]);
         assert_eq!(buf, &[u64::MAX]);
 
         let mut buf: Vec<u32> = vec![1, 1];
-        slice_int_to_slice_u8(&mut buf)
-            .copy_from_slice(&[0, 0, 0, 0, 255, 255, 255, 255]);
+        as_bytes_mut(&mut buf).copy_from_slice(&[0, 0, 0, 0, 255, 255, 255, 255]);
         assert_eq!(buf, &[0u32, u32::MAX]);
 
         let mut buf: Vec<u64> = vec![1, 1];
-        slice_int_to_slice_u8(&mut buf).copy_from_slice(&[
+        as_bytes_mut(&mut buf).copy_from_slice(&[
             0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255,
         ]);
         assert_eq!(buf, &[0u64, u64::MAX]);
@@ -329,29 +359,29 @@ mod tests {
     }
 
     #[test]
-    fn test_vec_to_slice_u8() -> Result<()> {
-        let res = vec_to_slice_u8(&[0u32]);
+    fn test_as_bytes() -> Result<()> {
+        let res = as_bytes(&[0u32]);
         assert_eq!(res, &[0, 0, 0, 0]);
 
-        let res = vec_to_slice_u8(&[0u64]);
+        let res = as_bytes(&[0u64]);
         assert_eq!(res, &[0, 0, 0, 0, 0, 0, 0, 0]);
 
-        let res = vec_to_slice_u8(&[1u32]);
+        let res = as_bytes(&[1u32]);
         assert_eq!(res, &[1, 0, 0, 0]);
 
-        let res = vec_to_slice_u8(&[1u64]);
+        let res = as_bytes(&[1u64]);
         assert_eq!(res, &[1, 0, 0, 0, 0, 0, 0, 0]);
 
-        let res = vec_to_slice_u8(&[u32::MAX]);
+        let res = as_bytes(&[u32::MAX]);
         assert_eq!(res, &[255, 255, 255, 255]);
 
-        let res = vec_to_slice_u8(&[u64::MAX]);
+        let res = as_bytes(&[u64::MAX]);
         assert_eq!(res, &[255, 255, 255, 255, 255, 255, 255, 255]);
 
-        let res = vec_to_slice_u8(&[0u32, u32::MAX]);
+        let res = as_bytes(&[0u32, u32::MAX]);
         assert_eq!(res, &[0, 0, 0, 0, 255, 255, 255, 255]);
 
-        let res = vec_to_slice_u8(&[0u64, u64::MAX]);
+        let res = as_bytes(&[0u64, u64::MAX]);
         assert_eq!(
             res,
             &[0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255]
@@ -360,7 +390,6 @@ mod tests {
         Ok(())
     }
 
-    // --------------------------------------------------
     #[test]
     fn test_file_access() -> Result<()> {
         let input_file = "../data/expected/abba.sufr";
@@ -368,7 +397,7 @@ mod tests {
         let suffix_array_file: FileAccess<u32> = FileAccess::new(
             input_file,
             header.suffix_array_pos as u64,
-            header.len_suffixes,
+            header.num_suffixes,
         )?;
         let suf_by_rank = [
             14, //  0: #
