@@ -39,8 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   several partitions it buckets positions by the top 16 key bits into
   scratch buffers (temporary files, or memory with `with_memory_scratch`)
   and sorts one partition at a time; with one partition it sorts
-  everything in memory. Output is identical to `merge`, which remains the
-  default.
+  everything in memory. Radix defaults to one partition per 16 MiB of
+  input (about 512 MiB of sort memory per partition), because radix is
+  slower with many small partitions. The suffix order matches `merge`,
+  which remains the default, except among equal keys: radix always puts
+  the shorter suffix (larger position) first, while the merge sort's
+  order of equal keys can vary with the thread and partition counts.
 
 ### Changed
 
@@ -48,8 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - (breaking) Make `Int` unable to implement from other crates, due to guarantees required by sufr's `unsafe` code
 - (breaking) Change the partitioning strategy to be based on a prefix of each suffix,
   instead of using random sampling
-- Change the default for `sufr create --num-partitions` from 16 to 1024,
-  which should reduce memory usage on most machines with minimal change to build time
+- Change the default for `sufr create --num-partitions` from 16 to 1024
+  (for `merge`), which should reduce memory usage on most machines with
+  minimal change to build time
 - During construction, sufr now writes temporary files to a randomly named
   `sufr-*` directory *inside* the temporary directory (and removes it afterwards)
 - Reduce some unnecessary internal allocations

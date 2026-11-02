@@ -76,7 +76,7 @@ Arguments:
   <INPUT>  Input file
 
 Options:
-  -n, --num-partitions <NUM_PARTS>  Subproblem count [default: 1024]
+  -n, --num-partitions <NUM_PARTS>  Subproblem count [default: 1024 for merge, 1 per 16 MiB of input for radix]
   -m, --max-query-len <CONTEXT>     Max context
   -o, --output <OUTPUT>             Output file
   -d, --dna                         Input is DNA
@@ -84,7 +84,10 @@ Options:
   -i, --ignore-softmask             Ignore suffixes in soft-mask/lowercase regions
   -D, --sequence-delimiter <DELIM>  Character to separate sequences [default: %]
   -s, --seed-mask <MASK>            Spaced seeds mask
-  -h, --help                        Print help
+      --sort-strategy <STRATEGY>    Sort strategy ("radix" needs a seed mask or max query length) [default: merge] [possible values: merge, radix]
+      --write-lcp                   Also write the LCP array (needed by "list --show-lcp"; speeds up query-time max query lengths shorter than the build-time value)
+  -T, --tmp-dir <DIR>               Directory for temporary files (default: system temporary directory)
+  -h, --help                        Print help (see more with '--help')
 ```
 
 The resulting binary-encoded output file will contain:

@@ -86,9 +86,10 @@ pub struct CreateArgs {
     #[arg(value_name = "INPUT")]
     pub input: String,
 
-    /// Subproblem count
-    #[arg(short, long, value_name = "NUM_PARTS", default_value = "1024")]
-    pub num_partitions: usize,
+    /// Subproblem count [default: 1024 for merge, 1 per 16 MiB of input
+    /// for radix]
+    #[arg(short, long, value_name = "NUM_PARTS")]
+    pub num_partitions: Option<usize>,
 
     /// Max context
     #[arg(short, long, value_name = "CONTEXT", conflicts_with = "seed_mask")]
@@ -358,8 +359,11 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         &args.input,
         args.sequence_delimiter as u8,
     )?
-    .with_dna_options(args.is_dna, args.allow_ambiguity, args.ignore_softmask)
-    .with_num_partitions(args.num_partitions);
+    .with_dna_options(args.is_dna, args.allow_ambiguity, args.ignore_softmask);
+
+    if let Some(n) = args.num_partitions {
+        builder = builder.with_num_partitions(n);
+    }
 
     match (args.max_query_len, &args.seed_mask) {
         (Some(_), Some(_)) => bail!("Cannot use max_query_len and seed_mask together"),

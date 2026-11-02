@@ -27,6 +27,17 @@ use std::{
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
 
+/// The default number of merge sort partitions.
+const DEFAULT_MERGE_PARTITIONS: usize = 1024;
+
+/// The default number of suffixes per radix sort partition.
+//
+// a partition sorts with about 32 bytes per suffix, so
+// this is about 512 MiB. on 100 MB to 4.5 GB inputs,
+// smaller partitions saved little memory, and 1024
+// partitions took 1.4 to 2.6 times as long as one
+const RADIX_SUFFIXES_PER_PARTITION: usize = 1 << 24;
+
 /// Configuration and construction of [`SuffixArray`]s.
 ///
 /// Suffix Arrays can be constructed from a sequence file with [`SuffixArrayBuilder::from_sequence_file`],
@@ -72,7 +83,7 @@ pub struct SuffixArrayBuilder {
     // PROCESSING OPTIONS
     sort_type: SuffixSortType,
     sort_strategy: SortStrategy,
-    num_partitions: usize,
+    num_partitions: Option<usize>,
     memory_scratch: bool,
     temp_dir: Option<PathBuf>,
 
@@ -122,7 +133,7 @@ impl SuffixArrayBuilder {
             ignore_softmask: false,
             sort_type: SuffixSortType::MaxQueryLen(0),
             sort_strategy: SortStrategy::Merge,
-            num_partitions: 1024,
+            num_partitions: None,
             memory_scratch: false,
             temp_dir: None,
             force_64bit: false,
@@ -168,10 +179,24 @@ impl SuffixArrayBuilder {
         self.sort_strategy = sort_strategy;
         self
     }
-    /// Sets the number of partitions to be used during the construction (default: `1024`).
+    /// Sets the number of partitions used during construction (default:
+    /// `1024` for [`SortStrategy::Merge`], one per 16 MiB of text for
+    /// [`SortStrategy::Radix`]).
     pub fn with_num_partitions(mut self, num_partitions: usize) -> Self {
-        self.num_partitions = num_partitions;
+        self.num_partitions = Some(num_partitions);
         self
+    }
+
+    /// The configured number of partitions, or the strategy's default.
+    fn num_partitions(&self) -> usize {
+        self.num_partitions.unwrap_or(match self.sort_strategy {
+            SortStrategy::Merge => DEFAULT_MERGE_PARTITIONS,
+            // the text length stands in for the suffix count,
+            // which is not known until the suffixes are scanned
+            SortStrategy::Radix => {
+                self.text.len().div_ceil(RADIX_SUFFIXES_PER_PARTITION)
+            }
+        })
     }
     /// Sets whether to keep the partitions in memory during construction
     /// instead of in temporary files (default: `false`).
@@ -284,7 +309,7 @@ impl SuffixArrayBuilder {
                 self.write::<T, B>(path, partitions)?;
             }
             // the same output, without the bucketing passes
-            SortStrategy::Radix if self.num_partitions <= 1 => {
+            SortStrategy::Radix if self.num_partitions() <= 1 => {
                 self.sort_radix_in_memory::<T>(path)?
             }
             SortStrategy::Radix => {
@@ -327,7 +352,7 @@ impl SuffixArrayBuilder {
     // --------------------------------------------------
     /// All indexed suffix positions in descending order. The radix sort is
     /// stable, so this input order is what breaks ties between equal keys:
-    /// the shorter suffix (larger position) comes first, as in `merge`.
+    /// the shorter suffix (larger position) comes first.
     fn suffix_positions_descending<T: Int>(&self) -> Vec<T> {
         let chunk_len = 1 << 22;
         let mut chunks: Vec<Vec<T>> = self
@@ -471,7 +496,7 @@ impl SuffixArrayBuilder {
     ) -> Result<()> {
         let total_time = Instant::now();
         let encoder = self.radix_key_encoder()?;
-        let num_partitions = self.num_partitions.max(1);
+        let num_partitions = self.num_partitions().max(1);
         let digit_bits = encoder.total_bits.min(16);
         let shift = encoder.total_bits - digit_bits;
         let num_buckets = 1usize << digit_bits;
@@ -871,7 +896,7 @@ impl SuffixArrayBuilder {
         mut occupancy: [u8; 256],
         scratch_dir: Option<&Path>,
     ) -> Result<Vec<Partition<B>>> {
-        let num_partitions = self.num_partitions;
+        let num_partitions = self.num_partitions();
         // ... and if there are none outside of the nucleic alphabet then use it.
         for &c in NucleicAcidAlphabet::ALPHABET.iter() {
             occupancy[c as usize] = 0;
@@ -1712,11 +1737,28 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
 #[cfg(test)]
 mod test {
     use super::SuffixArrayBuilder;
-    use crate::types::SeedMask;
+    use crate::types::{SeedMask, SortStrategy};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_default_num_partitions() {
+        let builder = |len: usize| {
+            SuffixArrayBuilder::from_data(vec![b'A'; len], vec![(0, "s".to_string())])
+        };
+        let radix = |len: usize| builder(len).with_sort_strategy(SortStrategy::Radix);
+
+        assert_eq!(builder(1000).num_partitions(), 1024);
+        assert_eq!(builder(1000).with_num_partitions(7).num_partitions(), 7);
+
+        assert_eq!(radix(1000).num_partitions(), 1);
+        assert_eq!(radix(1 << 24).num_partitions(), 1);
+        assert_eq!(radix((1 << 24) + 1).num_partitions(), 2);
+        assert_eq!(radix(40_000_000).num_partitions(), 3);
+        assert_eq!(radix(1000).with_num_partitions(7).num_partitions(), 7);
+    }
 
     #[test]
     fn test_find_lcp_no_seed_mask() -> Result<()> {

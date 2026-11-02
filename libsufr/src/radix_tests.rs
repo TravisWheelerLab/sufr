@@ -1,5 +1,9 @@
 //! Tests that the radix-sort construction paths agree with the merge-sort
 //! path and with an independent definition of the seed-mask order.
+//!
+//! The comparisons with merge hold only on small inputs: on large ones,
+//! the merge sort's order of equal keys varies with the thread and
+//! partition counts.
 
 use crate::{
     subsample_tests::Rng,
