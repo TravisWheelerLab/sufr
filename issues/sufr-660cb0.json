@@ -1,0 +1,28 @@
+{
+  "id": "sufr-660cb0",
+  "title": "A subsampled hit on the last sample gives a reversed rank range and panics",
+  "body": "`Index::rank_range` (`libsufr/src/index.rs`, the `Subsampled` arm) turns a hit on the subsampled suffixes into a range of ranks in the whole suffix array. When the hit is the single last sample, it ends the range at `ranks.len()`, the number of samples, instead of at `len_suffixes`. The range is then reversed or short, and `suffixes_at` panics in `FileAccess::get_range`.\n\nReproduce with `sufr locate -m 1 data/inputs/1.sufr T`. A sweep at 2632038 and at the step 3 commit found 30 panicking (fixture, flags, query) combinations, the same before and after, so the behavior predates the reorganization. The code carries a TODO at the site.\n\nWhen a hit spans more than one sample, the range ends at `ranks[last] + 1`, which also cuts off the last group. That may be the same mistake or a second one.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T18:31:30.70892308Z",
+  "updated_at": "2026-11-02T18:31:30.70892308Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "bd21d2e",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
