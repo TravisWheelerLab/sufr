@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.781929599Z",
-  "updated_at": "2026-10-28T02:10:00.781929599Z",
+  "updated_at": "2026-11-02T18:31:30.716976617Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "340a2473",
+      "at": "2026-11-02T18:31:30.716976057Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "While reorganizing storage (sufr-b9d61c) the cache write was read again: it sizes its bytes by T through vec_to_slice_u8, so the overrun this issue describes may no longer exist. Check against index.rs before working it.",
+      "commit": "bd21d2e",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "b4a924a",
