@@ -1,0 +1,28 @@
+{
+  "id": "sufr-56f73a",
+  "title": "create_empty_dies passes because its input path does not exist",
+  "body": "`create_empty_dies` (`sufr/tests/cli.rs:104-110`) runs `create ../data/expected/empty.sa` and asserts failure. That path is a `.sa` file under `data/expected/` and the survey did not find it there. The empty input in the repository is `data/inputs/empty.fa` (0 bytes). The command probably fails because the file is missing, so the test does not show what the CLI does with an empty input.\n\nSeen by reading the test and listing `data/` in the survey. The command was not run.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:48:29.208729147Z",
+  "updated_at": "2026-11-02T17:48:29.208729147Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
