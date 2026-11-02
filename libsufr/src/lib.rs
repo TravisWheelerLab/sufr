@@ -20,18 +20,18 @@
 //! * Jack Roddy <jroddy@arizona.edu>
 //! * Travis Wheeler <twheeler@arizona.edu>
 
+mod build;
 mod format;
 mod index;
 mod io;
 mod lcp;
 mod search;
-mod build;
 
+pub use build::SuffixArrayBuilder;
 pub use format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
 pub use index::{Index, Metadata, Storage};
 pub use io::Int;
 pub use search::{read_queries, Extraction, Hits, Location};
-pub use build::SuffixArrayBuilder;
 
 use anyhow::Result;
 use log::info;
