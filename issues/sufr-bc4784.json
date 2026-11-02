@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.789271833Z",
-  "updated_at": "2026-10-28T02:10:00.789271833Z",
+  "updated_at": "2026-11-02T19:59:04.407759902Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "04a9410a",
+      "at": "2026-11-02T19:59:04.407759452Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the cache read fills a `Vec<T>` through `as_bytes_mut` (`index.rs:304-327`, `io.rs:222-232`). The `Vec<u8>` to `&[T]` cast and its alignment problem are gone.\n\nThe byte order problem remains. Suffix and rank data are still written and read in native byte order (TODOs at `io.rs:220` and `io.rs:234`). Only the length prefix is little-endian (`index.rs:310`, `index.rs:590`).",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "b4a924a",
