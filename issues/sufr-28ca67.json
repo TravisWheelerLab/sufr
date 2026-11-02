@@ -3,7 +3,7 @@
   "title": "Searches return Hits and no function takes a config struct",
   "body": "Callers configure and query through option structs. `SearchOptions`, `CountOptions`, `ExtractOptions`, `ListOptions` and `LocateOptions` and their result types live in `libsufr/src/types.rs` (`SearchOptions` at 211, `LocateOptions` at 475). The builder has three ways to set the sort: `with_sort_type`, `with_max_query_len` and `with_seed_mask` (`sufr_builder.rs:143-152`). `max_query_len` and low memory are passed per query.\n\nThe CLI handlers in `sufr/src/lib.rs` hold logic that belongs in the library.\n\n- `locate`: sort and group hits per sequence (480-526).\n- `extract`: absolute coordinates and a second `string_at` call per hit (385-405).\n- `summarize`: building 15 or 16 labelled rows (569-642).\n- `parse_locate_queries`: treating a path as a query file (439-457).\n- `count`, `extract` and `locate` share one skeleton, including the `Box<dyn Write>` choice and `very_low_memory ? true : low_memory`.\n\n## Proposal\n\n- `SuffixArray::open(path)` and `open_with(path, Load::{Memory, Subsampled(mql), Disk})`.\n- `sa.search(b\"ACG\")` returns `Hits`. `Hits` has `count()`, `ranks()`, `locate()` and `extract(before, after)`.\n- `SuffixArrayBuilder` takes `.sort(Sort::Full | MaxQueryLen(n) | Mask(m))` and drops the three older setters.\n- The option and result structs are deleted. No function takes a config struct.\n- The CLI-resident logic above moves into the library. `-l`, `-v` and `-m` map onto open options, and CLI output does not change.\n\nThe unmerged `search-api` branch has a similar query model (`SuffixArray::open`, `search -> Hits`). It is the inspiration, not a spec. It has 12 conflict hunks in 5 files against the current builder.",
   "type": "feature",
-  "status": "closed",
+  "status": "open",
   "priority": 2,
   "labels": [],
   "parent": "sufr-dbce71",
@@ -15,19 +15,16 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:05.584710436Z",
-  "updated_at": "2026-11-02T19:13:58.525167244Z",
-  "closed_at": "2026-11-02T19:13:58.525167244Z",
-  "close_reason": "Landed in dc7dd45: Hits, Location, Extraction and read_queries in search.rs; Storage and open_with; build.rs with Builder; option and result structs deleted; CLI logic moved into the library.",
-  "resolution": "done",
+  "updated_at": "2026-11-02T19:14:42.638912571Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e8655c9",
       "branch": "refactor"
     },
-    "closed": {
-      "commit": "dc7dd45",
-      "branch": "refactor"
-    }
+    "closed": null
   }
 }
