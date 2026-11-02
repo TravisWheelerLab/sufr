@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-02T18:03:55.82815672Z",
   "defer_until": null,
   "created_at": "2026-11-02T17:47:41.524224734Z",
-  "updated_at": "2026-11-02T17:48:55.837121764Z",
+  "updated_at": "2026-11-02T17:49:34.744248652Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -22,9 +22,10 @@
       "id": "6ad64c40",
       "at": "2026-11-02T17:48:55.837121094Z",
       "author": "Jack Roddy/4be42394",
-      "text": "A fresh `sufr create` is byte-identical to each fixture in `data/expected/*.sufr` when `--write-lcp` is passed. I checked all eight fixture inputs at e47d4bf's successor e8655c9 with a debug build, at `-n 3` and at the default partition count. The byte-level test can therefore compare `sufr create` output to the fixtures directly, which pins the header layout and the whole writer. sufr-c9b319 records why `--write-lcp` is needed.",
+      "text": "A fresh `sufr create` is byte-identical to each fixture in `data/expected/*.sufr` when `--write-lcp` is passed. I checked all eight fixture inputs at e8655c9 with a debug build, at `-n 3` and at the default partition count. The byte-level test can therefore compare `sufr create` output to the fixtures directly, which pins the header layout and the whole writer. sufr-c9b319 records why `--write-lcp` is needed.",
       "commit": "e8655c9",
-      "branch": "refactor"
+      "branch": "refactor",
+      "edited_at": "2026-11-02T17:49:34.744248382Z"
     }
   ],
   "stamps": {
