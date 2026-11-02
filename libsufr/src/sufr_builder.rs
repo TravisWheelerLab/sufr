@@ -1,13 +1,16 @@
 use crate::{
     format::Header,
     io::{slice_int_to_slice_u8, vec_to_slice_u8, write_all_at},
-    lcp::{lcp, LcpCache},
-    types::{Int, SeedMask, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER},
-    util::{self, find_lcp_full_offset},
+    lcp::{mask_offset, masked_lcp, suffix_lcp, LcpCache},
+    types::{
+        Int, SeedMask, SequenceFileData, SuffixSortType, OUTFILE_VERSION,
+        SENTINEL_CHARACTER,
+    },
     SuffixArray,
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
+use needletail::parse_fastx_file;
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -67,7 +70,11 @@ pub struct SuffixArrayBuilder {
     ignore_softmask: bool,
 
     // PROCESSING OPTIONS
-    sort_type: SuffixSortType,
+    /// The seed mask the suffixes are sorted by, if any.
+    seed_mask: Option<SeedMask>,
+
+    /// The number of characters the suffixes are sorted by, or 0 for all.
+    max_query_len: usize,
     num_partitions: usize,
     memory_scratch: bool,
 
@@ -89,7 +96,7 @@ impl SuffixArrayBuilder {
         sequence_delimiter: u8,
     ) -> Result<Self> {
         let now = Instant::now();
-        let data = util::read_sequence_file(path.as_ref(), sequence_delimiter)?;
+        let data = read_sequence_file(path.as_ref(), sequence_delimiter)?;
         info!(
             "Read input of len {} in {:?}",
             data.seq.len(),
@@ -115,7 +122,8 @@ impl SuffixArrayBuilder {
             is_dna: false,
             allow_ambiguity: false,
             ignore_softmask: false,
-            sort_type: SuffixSortType::MaxQueryLen(0),
+            seed_mask: None,
+            max_query_len: 0,
             num_partitions: 1024,
             memory_scratch: false,
             force_64bit: false,
@@ -142,7 +150,10 @@ impl SuffixArrayBuilder {
 
     /// Sets the `sort_type` of this builder.
     pub fn with_sort_type(mut self, sort_type: SuffixSortType) -> Self {
-        self.sort_type = sort_type;
+        (self.seed_mask, self.max_query_len) = match sort_type {
+            SuffixSortType::Mask(seed_mask) => (Some(seed_mask), 0),
+            SuffixSortType::MaxQueryLen(max_query_len) => (None, max_query_len),
+        };
         self
     }
     /// Sets the `max_query_len` of this builder.
@@ -277,72 +288,36 @@ impl SuffixArrayBuilder {
         skip: usize,
         lcp_cache: Option<&mut LcpCache>,
     ) -> T {
-        // TODO: Could we use traits for SortType, parameterize the builder
-        // on initialization and avoid conditionals here?
-        match &self.sort_type {
-            SuffixSortType::Mask(mask) => {
-                // Use the seed diff vector to select only the
-                // "care" positions up to the length of the text
-                let a_vals = mask
-                    .positions
-                    .iter()
-                    .skip(skip)
-                    .map(|&offset| start1 + offset)
-                    .filter(|&v| v < self.text.len());
-
-                let b_vals = mask
-                    .positions
-                    .iter()
-                    .skip(skip)
-                    .map(|&offset| start2 + offset)
-                    .filter(|&v| v < self.text.len());
-
-                unsafe {
-                    T::from_usize(
-                        skip + a_vals
-                            .zip(b_vals)
-                            .take_while(|(a, b)| {
-                                self.text.get_unchecked(*a)
-                                    == self.text.get_unchecked(*b)
-                            })
-                            .count(),
-                    )
-                }
-            }
-            SuffixSortType::MaxQueryLen(max_query_len) => {
-                match (&self.find_n_run(start1), &self.find_n_run(start2)) {
-                    // If the two suffixes start in long stretches of Ns
-                    // Then use the min of the end positions
-                    (Some(end1), Some(end2)) => {
-                        T::from_usize(min(end1 - start1, end2 - start2))
-                    }
-                    _ => {
-                        let text_len = self.text.len();
-                        let len = if max_query_len > &0 {
-                            *max_query_len
-                        } else {
-                            len.to_usize()
-                        };
-                        let start1 = start1 + skip;
-                        let start2 = start2 + skip;
-                        let end1 = min(start1 + len, text_len);
-                        let end2 = min(start2 + len, text_len);
-                        let lcp = lcp(
-                            &self.text[start1..end1],
-                            &self.text[start2..end2],
-                            lcp_cache.as_deref().map(|c| (c, start1, start2)),
-                        );
-                        // IMPORTANT: Only cache if lcp < len (uncapped, "true" LCP)
-                        if skip + lcp >= LcpCache::MIN_CACHEABLE && lcp < len {
-                            if let Some(c) = lcp_cache {
-                                c.set(start1 - skip, start2 - skip, skip + lcp);
-                            }
-                        }
-                        T::from_usize(skip + lcp)
-                    }
-                }
-            }
+        // with a mask, `len` is not consulted: the comparison
+        // stops at the end of the mask or of the text
+        if let Some(mask) = &self.seed_mask {
+            return T::from_usize(
+                skip + masked_lcp(
+                    &self.text[start1..],
+                    &self.text[start2..],
+                    &mask.positions[skip..],
+                ),
+            );
         }
+
+        // If the two suffixes start in long stretches of Ns
+        // Then use the min of the end positions
+        if let (Some(end1), Some(end2)) =
+            (self.find_n_run(start1), self.find_n_run(start2))
+        {
+            return T::from_usize(min(end1 - start1, end2 - start2));
+        }
+
+        // TODO: a nonzero max_query_len replaces `len` rather than
+        // capping it, so past a nonzero `skip` the comparison runs
+        // beyond max_query_len and the LCP array can hold values
+        // above it
+        let len = if self.max_query_len > 0 {
+            self.max_query_len
+        } else {
+            len.to_usize()
+        };
+        T::from_usize(suffix_lcp(&self.text, start1, start2, skip, len, lcp_cache))
     }
 
     // --------------------------------------------------
@@ -382,8 +357,8 @@ impl SuffixArrayBuilder {
                     }
 
                     let mut key = 0;
-                    match &self.sort_type {
-                        SuffixSortType::Mask(mask) => {
+                    match &self.seed_mask {
+                        Some(mask) => {
                             for (j, &off) in
                                 mask.positions.iter().enumerate().take(A::COUNT)
                             {
@@ -392,7 +367,7 @@ impl SuffixArrayBuilder {
                                     << ((A::COUNT - j - 1) * A::BITS);
                             }
                         }
-                        SuffixSortType::MaxQueryLen(_) => {
+                        None => {
                             for (j, &c) in
                                 self.text[i..].iter().enumerate().take(A::COUNT)
                             {
@@ -685,21 +660,18 @@ impl SuffixArrayBuilder {
                     let shorter_suffix = max(x[idx_x], y[idx_y]);
                     let max_n = T::from_usize(self.text.len()) - shorter_suffix;
 
-                    let context = match &self.sort_type {
-                        SuffixSortType::Mask(seed_mask) => T::from_usize(
+                    let context = match &self.seed_mask {
+                        Some(seed_mask) => T::from_usize(
                             seed_mask
                                 .positions
                                 .iter()
                                 .filter(|&i| *i < max_n.to_usize())
                                 .count(),
                         ),
-                        SuffixSortType::MaxQueryLen(max_query_len) => {
-                            if max_query_len > &0 {
-                                min(T::from_usize(*max_query_len), max_n)
-                            } else {
-                                max_n
-                            }
+                        None if self.max_query_len > 0 => {
+                            min(T::from_usize(self.max_query_len), max_n)
                         }
+                        None => max_n,
                     };
 
                     // LCP(X_i, Y_j)
@@ -711,8 +683,10 @@ impl SuffixArrayBuilder {
                             m.to_usize(), // skip
                             Some(lcp_cache),
                         );
-                        let full_lcp =
-                            find_lcp_full_offset(lcp.to_usize(), &self.sort_type);
+                        let full_lcp = match &self.seed_mask {
+                            Some(seed_mask) => mask_offset(lcp.to_usize(), seed_mask),
+                            None => lcp.to_usize(),
+                        };
                         (lcp, T::from_usize(full_lcp))
                     } else {
                         (context, context)
@@ -875,7 +849,10 @@ impl SuffixArrayBuilder {
             ignore_softmask: self.ignore_softmask,
             text_len: self.text.len(),
             len_suffixes: num_suffixes,
-            sort_type: self.sort_type.clone(),
+            sort_type: match &self.seed_mask {
+                Some(seed_mask) => SuffixSortType::Mask(seed_mask.clone()),
+                None => SuffixSortType::MaxQueryLen(self.max_query_len),
+            },
             sequence_starts: self.sequences.iter().map(|(start, _)| *start).collect(),
             sequence_names: self
                 .sequences
@@ -890,6 +867,53 @@ impl SuffixArrayBuilder {
         header.set_positions(self.write_lcp);
         header
     }
+}
+
+/// Read sequence data from file
+///
+/// Args:
+/// * `path`: to FASTA/FASTQ file
+/// * `sequence_delimiter`: the character/byte you wish to place
+///   between sequences. For many applications (both nucleotide and
+///   protein), you might choose a character like `%` that sorts below
+///   the alphabet (A-Z) but above the sentinel `$` that is placed at
+///   the end of the returned text; however, when building a suffix array
+///   for use in a Burrows-Wheeler Transform, it might be better to use
+///   `N` for nucleotides and `X` for protein.
+fn read_sequence_file(path: &Path, sequence_delimiter: u8) -> Result<SequenceFileData> {
+    let mut reader = parse_fastx_file(path)?;
+    let mut seq: Vec<u8> = Vec::with_capacity(u32::MAX as usize);
+    let mut sequence_names: Vec<String> = vec![];
+    let mut start_positions: Vec<usize> = vec![];
+    let mut i = 0;
+    while let Some(rec) = reader.next() {
+        let rec = rec?;
+        if i > 0 {
+            seq.push(sequence_delimiter);
+        }
+
+        // Record current length as start position
+        start_positions.push(seq.len());
+        seq.extend_from_slice(&rec.seq());
+        i += 1;
+
+        // Only take ID value up to first whitespace
+        let id = std::str::from_utf8(rec.id())?
+            .split_whitespace()
+            .next()
+            .map_or((i + 1).to_string(), |v| v.to_string());
+
+        sequence_names.push(id);
+    }
+
+    // File delimiter
+    seq.push(SENTINEL_CHARACTER);
+
+    Ok(SequenceFileData {
+        seq,
+        start_positions,
+        sequence_names,
+    })
 }
 
 /// Find the runs of at least 1000 `N`s in `text`.
@@ -1195,12 +1219,25 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
 // --------------------------------------------------
 #[cfg(test)]
 mod test {
-    use super::SuffixArrayBuilder;
+    use super::{read_sequence_file, SuffixArrayBuilder};
     use crate::types::SeedMask;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
-    use std::fs;
+    use std::{fs, path::Path};
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_read_sequence_file() -> Result<()> {
+        let file = Path::new("../data/inputs/2.fa");
+        let sequence_delimiter = b'N';
+        let res = read_sequence_file(file, sequence_delimiter);
+        assert!(res.is_ok());
+        let data = res.unwrap();
+        assert_eq!(data.seq, b"ACGTacgtNacgtACGT$");
+        assert_eq!(data.start_positions, [0, 9]);
+        assert_eq!(data.sequence_names, ["ABC", "DEF"]);
+        Ok(())
+    }
 
     #[test]
     fn test_find_lcp_no_seed_mask() -> Result<()> {

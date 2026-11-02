@@ -2,12 +2,12 @@
 
 use crate::{
     index::Index,
+    lcp::{lcp, mask_offset, masked_lcp},
     types::{
         Comparison, CountOptions, CountResult, ExtractOptions, ExtractResult,
         ExtractSequence, Int, LocateOptions, LocatePosition, LocateResult,
-        SearchOptions, SearchResult, SearchResultLocations, SuffixSortType,
+        SearchOptions, SearchResult, SearchResultLocations,
     },
-    util::find_lcp_full_offset,
 };
 use anyhow::Result;
 use log::info;
@@ -179,86 +179,17 @@ impl<T: Int> Index<T> {
     /// compare the "care" positions; otherwise, compare all the positions
     /// up to an optional maximum query length
     fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
-        let text_len = self.header.text_len;
-        let sort_type = &self.header.sort_type;
-        let (lcp, max_query_len) = match sort_type {
-            SuffixSortType::MaxQueryLen(mql) => {
-                // The "MaxQueryLen(mql)" refers to how the suffix array
-                // was built, but there may be a runtime value in self.max_query_len.
-                // If both are present, take the lowest.
-                let max_query_len: usize = if mql > &0 && self.max_query_len.is_some() {
-                    min(*mql, self.max_query_len.unwrap_or(0))
-                } else if let Some(val) = self.max_query_len {
-                    val
-                } else {
-                    *mql
-                };
-
-                let lcp = if (max_query_len > 0) && (skip >= max_query_len) {
-                    // If we've already seen enough
-                    skip
-                } else {
-                    let text_start = suffix_pos + skip;
-                    let text_end = if max_query_len > 0 {
-                        min(text_len, text_start + max_query_len)
-                    } else {
-                        min(text_len, text_start + query.len())
-                    };
-
-                    query
-                        .iter()
-                        .skip(skip)
-                        .zip(self.text_range(text_start..text_end).unwrap())
-                        .map_while(|(a, b)| (a == &b).then_some(a))
-                        .count()
-                        + skip
-                };
-                (lcp, max_query_len)
-            }
-            SuffixSortType::Mask(seed_mask) => {
-                let max_query_len = self.max_query_len.unwrap_or(0);
-                let lcp = if skip >= seed_mask.weight
-                    || (max_query_len > 0 && skip >= max_query_len)
-                {
-                    skip
-                } else {
-                    let end = if max_query_len > 0 {
-                        min(max_query_len, seed_mask.weight)
-                    } else {
-                        seed_mask.weight
-                    };
-                    let mask_pos = &seed_mask.positions[skip..end];
-                    let query_len =
-                        mask_pos.iter().filter(|&v| v < &query.len()).count();
-                    let suffix_len = mask_pos
-                        .iter()
-                        .map(|offset| suffix_pos + offset) // add offset to start of suffix
-                        .filter(|&v| v < text_len) // don't go off end of text
-                        .count();
-                    let len = min(query_len, suffix_len);
-
-                    if len > 0 {
-                        skip + seed_mask.positions[skip..skip + len]
-                            .iter()
-                            .take_while(|&offset| {
-                                self.text_byte(suffix_pos + offset)
-                                    .is_some_and(|val| query[*offset] == val)
-                            })
-                            .count()
-                    } else {
-                        skip
-                    }
-                };
-                (lcp, max_query_len)
-            }
-        };
-
+        let max_query_len = self.max_query_len;
+        let lcp = self.query_lcp(query, suffix_pos, skip);
         let cmp = if (max_query_len > 0) && (lcp >= max_query_len) {
             // We've seen enough
             Ordering::Equal
         } else {
             // Get the next chars
-            let full_offset = find_lcp_full_offset(lcp, sort_type);
+            let full_offset = match &self.seed_mask {
+                Some(seed_mask) => mask_offset(lcp, seed_mask),
+                None => lcp,
+            };
             match (
                 query.get(full_offset),
                 &self.text_byte(suffix_pos + full_offset),
@@ -275,6 +206,48 @@ impl<T: Int> Index<T> {
         };
 
         Comparison { lcp, cmp }
+    }
+
+    /// The LCP of `query` and the suffix at `suffix_pos`, which share their
+    /// first `skip` characters, counted in care positions under a seed mask.
+    fn query_lcp(&self, query: &[u8], suffix_pos: usize, skip: usize) -> usize {
+        let text_len = self.header.text_len;
+        let max_query_len = self.max_query_len;
+        match &self.seed_mask {
+            None => {
+                if (max_query_len > 0) && (skip >= max_query_len) {
+                    // If we've already seen enough
+                    skip
+                } else {
+                    let text_start = suffix_pos + skip;
+                    let text_end = if max_query_len > 0 {
+                        min(text_len, text_start + max_query_len)
+                    } else {
+                        min(text_len, text_start + query.len())
+                    };
+                    let text = self.text_slice(text_start..text_end).unwrap();
+                    skip + lcp(query.get(skip..).unwrap_or_default(), &text, None)
+                }
+            }
+            Some(seed_mask) => {
+                if skip >= seed_mask.weight
+                    || (max_query_len > 0 && skip >= max_query_len)
+                {
+                    skip
+                } else {
+                    let end = if max_query_len > 0 {
+                        min(max_query_len, seed_mask.weight)
+                    } else {
+                        seed_mask.weight
+                    };
+                    let positions = &seed_mask.positions[skip..end];
+                    let last = positions[positions.len() - 1];
+                    let text_end = min(text_len, suffix_pos + last + 1);
+                    let text = self.text_slice(suffix_pos..text_end).unwrap();
+                    skip + masked_lcp(query, &text, positions)
+                }
+            }
+        }
     }
 
     // --------------------------------------------------

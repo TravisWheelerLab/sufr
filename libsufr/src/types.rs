@@ -254,8 +254,7 @@ pub struct Comparison {
 }
 
 // --------------------------------------------------
-/// This struct is returned by `libsufr::utils::read_sequence_file`
-/// for reading sequences from a FASTA/Q file.
+/// The text and sequences read from a FASTA/FASTQ file.
 #[derive(Debug)]
 pub struct SequenceFileData {
     /// The sequence as a vector of bytes. Multiple sequences are

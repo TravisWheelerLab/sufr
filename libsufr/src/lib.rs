@@ -27,7 +27,6 @@ mod lcp;
 mod search;
 mod sufr_builder;
 pub mod types;
-pub mod util;
 
 #[doc(inline)]
 pub use index::Index;

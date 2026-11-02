@@ -1,5 +1,8 @@
 //! Functions for LCP computation and caching.
 
+use crate::types::SeedMask;
+use std::cmp::min;
+
 /// A cache of LCP values for optimized calculation.
 ///
 /// Given two indices i and j, with an LCP of l at that position,
@@ -71,6 +74,62 @@ impl LcpCache {
 
 const _: () = assert!(LcpCache::MIN_CACHEABLE >= LcpCache::PROBE_AT);
 
+/// The LCP of the suffixes of `text` at `start1` and `start2`, which share
+/// their first `skip` bytes, comparing at most `len` bytes past `skip`.
+#[inline(always)]
+pub fn suffix_lcp(
+    text: &[u8],
+    start1: usize,
+    start2: usize,
+    skip: usize,
+    len: usize,
+    cache: Option<&mut LcpCache>,
+) -> usize {
+    let text_len = text.len();
+    let from1 = start1 + skip;
+    let from2 = start2 + skip;
+    let end1 = min(from1 + len, text_len);
+    let end2 = min(from2 + len, text_len);
+    let lcp = lcp(
+        &text[from1..end1],
+        &text[from2..end2],
+        cache.as_deref().map(|c| (c, from1, from2)),
+    );
+
+    // a capped LCP is not the true LCP of the two
+    // suffixes, and the cache holds only true LCPs
+    if skip + lcp >= LcpCache::MIN_CACHEABLE && lcp < len {
+        if let Some(c) = cache {
+            c.set(start1, start2, skip + lcp);
+        }
+    }
+    skip + lcp
+}
+
+/// The number of leading `positions` at which `a` and `b` hold the same
+/// byte, stopping at the first position past the end of either.
+#[inline(always)]
+pub fn masked_lcp(a: &[u8], b: &[u8], positions: &[usize]) -> usize {
+    positions
+        .iter()
+        .take_while(|&&offset| {
+            matches!((a.get(offset), b.get(offset)), (Some(x), Some(y)) if x == y)
+        })
+        .count()
+}
+
+/// The offset of the byte that follows a masked LCP of `lcp` care
+/// positions: the next care position, or one past the last one.
+pub fn mask_offset(lcp: usize, mask: &SeedMask) -> usize {
+    if lcp == 0 || lcp > mask.bytes.len() {
+        return lcp;
+    }
+    match mask.positions.get(lcp) {
+        Some(&next) => next,
+        None => mask.positions[lcp - 1] + 1,
+    }
+}
+
 /// Computes the LCP of `a` and `b`, automatically selecting an optimized
 /// implementation for the target platform.
 ///
@@ -138,6 +197,7 @@ pub fn lcp_scalar(a: &[u8], b: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
 
     #[test]
     fn test_lcp_cache() {
@@ -166,5 +226,37 @@ mod tests {
             1024,
             lcp(&text[0..], &text[2048..], Some((&cache, 0, 2048)))
         );
+    }
+
+    #[test]
+    fn test_suffix_lcp() {
+        let text = b"ACGTNNACGT$";
+        assert_eq!(suffix_lcp(text, 0, 6, 0, text.len(), None), 4);
+        assert_eq!(suffix_lcp(text, 0, 6, 0, 2, None), 2);
+        assert_eq!(suffix_lcp(text, 0, 6, 2, 1, None), 3);
+    }
+
+    #[test]
+    fn test_mask_offset() -> Result<()> {
+        let seed_mask = SeedMask::new("101")?;
+        assert_eq!(mask_offset(0, &seed_mask), 0);
+        assert_eq!(mask_offset(1, &seed_mask), 2);
+        assert_eq!(mask_offset(2, &seed_mask), 3);
+
+        let seed_mask = SeedMask::new("11011")?;
+        assert_eq!(mask_offset(0, &seed_mask), 0);
+        assert_eq!(mask_offset(1, &seed_mask), 1);
+        assert_eq!(mask_offset(2, &seed_mask), 3);
+        assert_eq!(mask_offset(3, &seed_mask), 4);
+        assert_eq!(mask_offset(4, &seed_mask), 5);
+
+        let seed_mask = SeedMask::new("10011001")?;
+        assert_eq!(mask_offset(0, &seed_mask), 0);
+        assert_eq!(mask_offset(1, &seed_mask), 3);
+        assert_eq!(mask_offset(2, &seed_mask), 4);
+        assert_eq!(mask_offset(3, &seed_mask), 7);
+        assert_eq!(mask_offset(4, &seed_mask), 8);
+
+        Ok(())
     }
 }

@@ -3,7 +3,7 @@
 use crate::{
     format::Header,
     io::{slice_int_to_slice_u8, vec_to_slice_u8, FileAccess},
-    types::{Int, ListOptions, SuffixSortType, SufrMetadata},
+    types::{Int, ListOptions, SeedMask, SuffixSortType, SufrMetadata},
 };
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
@@ -11,6 +11,7 @@ use home::home_dir;
 use log::info;
 use rayon::prelude::*;
 use std::{
+    borrow::Cow,
     cmp::min,
     fs::{self, File},
     io::{self, Read, Write},
@@ -63,8 +64,11 @@ pub struct Index<T: Int> {
 
     suffixes: Suffixes<T>,
 
-    /// The query-time maximum query length given to `open`.
-    pub(crate) max_query_len: Option<usize>,
+    /// The seed mask the suffixes were sorted by, if any.
+    pub(crate) seed_mask: Option<SeedMask>,
+
+    /// The number of query characters a search compares, or 0 for all.
+    pub(crate) max_query_len: usize,
 }
 
 impl<T: Int> Index<T> {
@@ -100,6 +104,20 @@ impl<T: Int> Index<T> {
             None => None,
         };
 
+        let (seed_mask, search_max_query_len) = match &header.sort_type {
+            SuffixSortType::Mask(seed_mask) => {
+                (Some(seed_mask.clone()), max_query_len.unwrap_or(0))
+            }
+            SuffixSortType::MaxQueryLen(built) => {
+                let search_max_query_len = match max_query_len {
+                    Some(mql) if *built > 0 => min(*built, mql),
+                    Some(mql) => mql,
+                    None => *built,
+                };
+                (None, search_max_query_len)
+            }
+        };
+
         let mut index = Index {
             filename: filename.to_string(),
             header,
@@ -107,7 +125,8 @@ impl<T: Int> Index<T> {
             lcp_file,
             text,
             suffixes: Suffixes::Disk,
-            max_query_len,
+            seed_mask,
+            max_query_len: search_max_query_len,
         };
         if !low_memory {
             index.suffixes = index.load_suffixes(max_query_len)?;
@@ -265,8 +284,8 @@ impl<T: Int> Index<T> {
             }
         };
 
-        let (suffixes, ranks) = match &self.header.sort_type {
-            SuffixSortType::Mask(seed_mask) => {
+        let (suffixes, ranks) = match &self.seed_mask {
+            Some(seed_mask) => {
                 let positions =
                     &seed_mask.positions[..min(max_query_len, seed_mask.weight)];
                 self.keep_differing(|a, b| {
@@ -278,7 +297,7 @@ impl<T: Int> Index<T> {
                     })
                 })
             }
-            SuffixSortType::MaxQueryLen(_) => self.keep_differing(|a, b| {
+            None => self.keep_differing(|a, b| {
                 let end_a = min(a + max_query_len, text_len);
                 let end_b = min(b + max_query_len, text_len);
                 // A suffix shorter than max_query_len always starts a new group
@@ -366,6 +385,14 @@ impl<T: Int> Index<T> {
         }
     }
 
+    /// The text bytes in `range`, borrowed when the text is in memory.
+    pub(crate) fn text_slice(&self, range: Range<usize>) -> Result<Cow<'_, [u8]>> {
+        match &self.text {
+            Text::Memory(text) => Ok(Cow::Borrowed(&text[range])),
+            Text::Disk(text_file) => Ok(Cow::Owned(text_file.get_range(range)?)),
+        }
+    }
+
     /// The number of suffixes a search runs over.
     pub(crate) fn num_searched(&self) -> usize {
         match &self.suffixes {
@@ -413,18 +440,6 @@ impl<T: Int> Index<T> {
                 self.suffix_array_file.get_range(ranks)
             }
         }
-    }
-
-    // --------------------------------------------------
-    /// Calculate the length of the longest common prefix for two suffixes,
-    /// comparing at most `len` positions. Does not consult the on-disk LCP.
-    pub fn find_lcp(&self, start1: usize, start2: usize, len: usize) -> usize {
-        let end1 = min(start1 + len, len);
-        let end2 = min(start2 + len, len);
-        (start1..end1)
-            .zip(start2..end2)
-            .take_while(|(a, b)| self.text_byte(*a) == self.text_byte(*b))
-            .count()
     }
 
     // --------------------------------------------------
@@ -592,14 +607,6 @@ mod tests {
             )?;
             assert_eq!(index.text_range(0..5)?, b"ACGTN");
         }
-        Ok(())
-    }
-
-    #[test]
-    fn test_find_lcp() -> Result<()> {
-        // the text is ACGTNNACGT$
-        let index = Index::<u32>::open("../data/inputs/1.sufr", true, true, None)?;
-        assert_eq!(index.find_lcp(0, 6, index.header.text_len - 1), 4);
         Ok(())
     }
 
