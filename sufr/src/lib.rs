@@ -1,7 +1,10 @@
 use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
-use libsufr::{read_queries, Builder, Hits, SeedMask, Sort, Storage, SuffixArray};
+use libsufr::{
+    read_queries, Hits, SeedMask, Storage, SuffixArray, SuffixArrayBuilder,
+    SuffixSortType,
+};
 use log::info;
 use rayon::prelude::*;
 use regex::Regex;
@@ -324,22 +327,28 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             .to_string_lossy()
     ));
 
-    let mut builder =
-        Builder::from_sequence_file(&args.input, args.sequence_delimiter as u8)?
-            .dna(args.is_dna, args.allow_ambiguity, args.ignore_softmask)
-            .partitions(args.num_partitions);
+    let mut builder = SuffixArrayBuilder::from_sequence_file(
+        &args.input,
+        args.sequence_delimiter as u8,
+    )?
+    .with_dna_options(args.is_dna, args.allow_ambiguity, args.ignore_softmask)
+    .with_num_partitions(args.num_partitions);
 
     match (args.max_query_len, &args.seed_mask) {
         (Some(_), Some(_)) => bail!("Cannot use max_query_len and seed_mask together"),
-        (Some(n), None) => builder = builder.sort(Sort::MaxQueryLen(n)),
-        (None, Some(mask)) => builder = builder.sort(Sort::Mask(SeedMask::new(mask)?)),
+        (Some(n), None) => {
+            builder = builder.with_sort_type(SuffixSortType::MaxQueryLen(n))
+        }
+        (None, Some(mask)) => {
+            builder = builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?))
+        }
         (None, None) => (),
     }
 
-    builder = builder.write_lcp(args.write_lcp);
+    builder = builder.with_write_lcp(args.write_lcp);
 
     let now = Instant::now();
-    builder.write(outfile)?;
+    builder.build_to_file(outfile, true)?;
 
     let meta = fs::metadata(outfile)?;
     let bytes_written = meta.len();

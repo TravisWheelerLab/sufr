@@ -1,14 +1,14 @@
 use anyhow::Result;
-use libsufr::{Builder, Index, Sort, Storage};
+use libsufr::{Index, Storage, SuffixArrayBuilder, SuffixSortType};
 use tempfile::NamedTempFile;
 
 fn build_and_read(write_lcp: bool) -> Result<Index<u32>> {
     let outfile = NamedTempFile::new()?;
     let outpath = outfile.path().to_string_lossy().to_string();
-    Builder::from_sequence_file("../data/inputs/1.fa", b'%')?
-        .dna(true, false, false)
-        .write_lcp(write_lcp)
-        .write(&outpath)?;
+    SuffixArrayBuilder::from_sequence_file("../data/inputs/1.fa", b'%')?
+        .with_dna_options(true, false, false)
+        .with_write_lcp(write_lcp)
+        .build_to_file(&outpath, true)?;
     Index::open(&outpath, Storage::Memory, Storage::Disk, None)
 }
 
@@ -22,7 +22,7 @@ fn check_common(sufr: &Index<u32>) {
     assert_eq!(header.num_suffixes, 9);
     assert_eq!(header.sequence_starts, [0]);
     assert_eq!(header.sequence_names, ["1"]);
-    assert_eq!(header.sort, Sort::MaxQueryLen(0));
+    assert_eq!(header.sort_type, SuffixSortType::MaxQueryLen(0));
     assert_eq!(sufr.text_range(0..11).unwrap(), b"ACGTNNACGT$");
     assert_eq!(header.text_pos, 72);
     assert_eq!(header.suffix_array_pos, 83);

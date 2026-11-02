@@ -72,7 +72,7 @@ pub struct Header {
     pub num_suffixes: usize,
 
     /// How the suffixes were sorted.
-    pub sort: Sort,
+    pub sort_type: SuffixSortType,
 
     /// The start of each sequence in the text.
     pub sequence_starts: Vec<usize>,
@@ -124,10 +124,10 @@ impl Header {
         file.read_exact(&mut buffer)?;
         let mut seed_mask = vec![0u8; u64::from_le_bytes(buffer) as usize];
         file.read_exact(&mut seed_mask)?;
-        let sort = if seed_mask.is_empty() {
-            Sort::MaxQueryLen(u64_at(MAX_QUERY_LEN) as usize)
+        let sort_type = if seed_mask.is_empty() {
+            SuffixSortType::MaxQueryLen(u64_at(MAX_QUERY_LEN) as usize)
         } else {
-            Sort::Mask(SeedMask::from_bytes(&seed_mask)?)
+            SuffixSortType::Mask(SeedMask::from_bytes(&seed_mask)?)
         };
 
         let lcp_pos = u64_at(LCP_POS) as usize;
@@ -138,7 +138,7 @@ impl Header {
             ignore_softmask: fixed[IGNORE_SOFTMASK] == 1,
             text_len: text_len as usize,
             num_suffixes: u64_at(NUM_SUFFIXES) as usize,
-            sort,
+            sort_type,
             sequence_starts,
             sequence_names: vec![],
             int_size,
@@ -158,9 +158,9 @@ impl Header {
     /// Set the text, suffix array, and LCP positions from the
     /// header's contents, placing an LCP array when `write_lcp`.
     pub(crate) fn set_positions(&mut self, write_lcp: bool) {
-        let seed_mask_len = match &self.sort {
-            Sort::Mask(seed_mask) => seed_mask.bytes.len(),
-            Sort::MaxQueryLen(_) => 0,
+        let seed_mask_len = match &self.sort_type {
+            SuffixSortType::Mask(seed_mask) => seed_mask.bytes.len(),
+            SuffixSortType::MaxQueryLen(_) => 0,
         };
         self.text_pos = SEQUENCE_STARTS
             + self.sequence_starts.len() * self.int_size
@@ -181,9 +181,9 @@ impl Header {
     /// Write the header and the sequence names into `file`, leaving
     /// the text and arrays to the caller. Returns the file's length.
     pub(crate) fn write(&self, file: &File) -> Result<usize> {
-        let (max_query_len, seed_mask): (usize, &[u8]) = match &self.sort {
-            Sort::MaxQueryLen(max_query_len) => (*max_query_len, &[]),
-            Sort::Mask(seed_mask) => (0, &seed_mask.bytes),
+        let (max_query_len, seed_mask): (usize, &[u8]) = match &self.sort_type {
+            SuffixSortType::MaxQueryLen(max_query_len) => (*max_query_len, &[]),
+            SuffixSortType::Mask(seed_mask) => (0, &seed_mask.bytes),
         };
 
         let mut bytes = vec![
@@ -240,7 +240,7 @@ pub(crate) fn read_text_length(filename: &str) -> Result<usize> {
 
 /// How the suffixes in a _.sufr_ file were sorted.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Sort {
+pub enum SuffixSortType {
     /// By their first `n` characters, or by all of them when `n` is 0.
     MaxQueryLen(usize),
 
@@ -358,7 +358,7 @@ impl Display for SeedMask {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_text_length, Header, SeedMask, Sort, OUTFILE_VERSION};
+    use super::{read_text_length, Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use tempfile::NamedTempFile;
@@ -376,10 +376,10 @@ mod tests {
     #[test]
     fn test_header_round_trip() -> Result<()> {
         let cases = [
-            (4, Sort::Mask(SeedMask::new("1101")?), true),
-            (8, Sort::MaxQueryLen(5), false),
+            (4, SuffixSortType::Mask(SeedMask::new("1101")?), true),
+            (8, SuffixSortType::MaxQueryLen(5), false),
         ];
-        for (int_size, sort, write_lcp) in cases {
+        for (int_size, sort_type, write_lcp) in cases {
             let mut header = Header {
                 version: OUTFILE_VERSION,
                 is_dna: true,
@@ -387,7 +387,7 @@ mod tests {
                 ignore_softmask: true,
                 text_len: 20,
                 num_suffixes: 17,
-                sort,
+                sort_type,
                 sequence_starts: vec![0, 7, 13],
                 sequence_names: vec!["a".to_string(), "b".into(), "c".into()],
                 int_size,

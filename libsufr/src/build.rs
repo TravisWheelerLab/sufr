@@ -1,7 +1,9 @@
 use crate::{
-    format::{Header, SeedMask, Sort, OUTFILE_VERSION},
+    format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION},
+    index::Storage,
     io::{as_bytes, as_bytes_mut, write_all_at, Int},
     lcp::{mask_offset, masked_lcp, suffix_lcp, LcpCache},
+    SuffixArray,
 };
 use anyhow::{anyhow, bail, Result};
 use log::info;
@@ -28,10 +30,10 @@ const SENTINEL_CHARACTER: u8 = b'$';
 
 /// Configuration and construction of a _.sufr_ file.
 ///
-/// Start from a sequence file with [`Builder::from_sequence_file`] or
-/// from text in memory with [`Builder::from_text`], set options, then
-/// write the file with [`Builder::write`].
-pub struct Builder {
+/// Start from a sequence file with [`SuffixArrayBuilder::from_sequence_file`] or
+/// from text in memory with [`SuffixArrayBuilder::from_data`], set options, then
+/// write the file with [`SuffixArrayBuilder::build_to_file`].
+pub struct SuffixArrayBuilder {
     text: Vec<u8>,
     sequences: Vec<(usize, String)>,
     is_dna: bool,
@@ -53,7 +55,7 @@ pub struct Builder {
     n_ranges: Vec<Range<usize>>,
 }
 
-impl Builder {
+impl SuffixArrayBuilder {
     /// A builder for the sequences in a FASTA or FASTQ file, joined by
     /// `sequence_delimiter`, which must be in the alphabet or sort below
     /// all of it: `%` suits biological sequence.
@@ -74,12 +76,12 @@ impl Builder {
             .into_iter()
             .zip(data.sequence_names)
             .collect();
-        Ok(Self::from_text(data.seq, sequences))
+        Ok(Self::from_data(data.seq, sequences))
     }
 
     /// A builder for `text`, whose `sequences` are given by start position
     /// and name, with a `%` between each two.
-    pub fn from_text(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
+    pub fn from_data(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
         // TODO: validate text and sequences?
         // - sequences should be sorted, first starting at 0, length < text.len(), no duplicates. If empty, default?
         Self {
@@ -102,7 +104,7 @@ impl Builder {
     /// (`allow_ambiguity`) and whether to replace softmasked (lowercase)
     /// characters with `N` rather than upper-case them (`ignore_softmask`).
     /// All three default to `false`.
-    pub fn dna(
+    pub fn with_dna_options(
         mut self,
         is_dna: bool,
         allow_ambiguity: bool,
@@ -114,26 +116,36 @@ impl Builder {
         self
     }
 
-    /// Set how the suffixes are sorted (default: `Sort::MaxQueryLen(0)`,
+    /// Set how the suffixes are sorted (default: `SuffixSortType::MaxQueryLen(0)`,
     /// by all of their characters).
-    pub fn sort(mut self, sort: Sort) -> Self {
-        (self.seed_mask, self.max_query_len) = match sort {
-            Sort::Mask(seed_mask) => (Some(seed_mask), 0),
-            Sort::MaxQueryLen(max_query_len) => (None, max_query_len),
+    pub fn with_sort_type(mut self, sort_type: SuffixSortType) -> Self {
+        (self.seed_mask, self.max_query_len) = match sort_type {
+            SuffixSortType::Mask(seed_mask) => (Some(seed_mask), 0),
+            SuffixSortType::MaxQueryLen(max_query_len) => (None, max_query_len),
         };
         self
     }
 
+    /// Sort the suffixes by their first `max_query_len` characters.
+    pub fn with_max_query_len(self, max_query_len: usize) -> Self {
+        self.with_sort_type(SuffixSortType::MaxQueryLen(max_query_len))
+    }
+
+    /// Sort the suffixes by the care positions of `mask`.
+    pub fn with_seed_mask(self, mask: SeedMask) -> Self {
+        self.with_sort_type(SuffixSortType::Mask(mask))
+    }
+
     /// Set the number of partitions the suffixes are sorted in
     /// (default: 1024).
-    pub fn partitions(mut self, num_partitions: usize) -> Self {
+    pub fn with_num_partitions(mut self, num_partitions: usize) -> Self {
         self.num_partitions = num_partitions;
         self
     }
 
     /// Set whether to keep the partitions in memory during construction
     /// instead of in temporary files (default: `false`).
-    pub fn memory_scratch(mut self, memory_scratch: bool) -> Self {
+    pub fn with_memory_scratch(mut self, memory_scratch: bool) -> Self {
         self.memory_scratch = memory_scratch;
         self
     }
@@ -141,19 +153,24 @@ impl Builder {
     // only Index::<u64> can read a small text written this
     // way, so this is for tests
     #[cfg(test)]
-    pub(crate) fn force_64bit(mut self, force_64bit: bool) -> Self {
+    pub(crate) fn with_force_64bit(mut self, force_64bit: bool) -> Self {
         self.force_64bit = force_64bit;
         self
     }
 
     /// Set whether to write the LCP array (default: `false`).
-    pub fn write_lcp(mut self, write_lcp: bool) -> Self {
+    pub fn with_write_lcp(mut self, write_lcp: bool) -> Self {
         self.write_lcp = write_lcp;
         self
     }
 
-    /// Build the suffix array and write it to `path`.
-    pub fn write(mut self, path: impl AsRef<Path>) -> Result<()> {
+    /// Build the suffix array, write it to `path` and open the result.
+    /// With `low_memory`, the suffixes stay on disk.
+    pub fn build_to_file(
+        mut self,
+        path: impl AsRef<Path>,
+        low_memory: bool,
+    ) -> Result<SuffixArray> {
         let path = path.as_ref();
         let occupancy = self.normalize_text();
         if self.allow_ambiguity {
@@ -175,7 +192,12 @@ impl Builder {
                 self.build::<u64, MemoryScratchBuffer<u64>>(path, occupancy)?
             }
         }
-        Ok(())
+        let suffixes = if low_memory {
+            Storage::Disk
+        } else {
+            Storage::Memory
+        };
+        SuffixArray::open_with(&path.to_string_lossy(), Storage::Memory, suffixes, None)
     }
 
     /// Upper-case soft-masked characters (or replace them with `N` when
@@ -382,7 +404,7 @@ impl Builder {
         })
     }
 
-    /// Sort the suffixes in `num_partitions` partitions, choosing the
+    /// SuffixSortType the suffixes in `num_partitions` partitions, choosing the
     /// prefix they are first placed by from the bytes that `occupancy`
     /// marks as present.
     fn sort_partitions<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
@@ -448,7 +470,7 @@ impl Builder {
         }
     }
 
-    /// Sort the suffixes in `buffers` into the partition at `order`, or
+    /// SuffixSortType the suffixes in `buffers` into the partition at `order`, or
     /// `None` when there are none.
     fn sort_partition<T: Int, B: ScratchBuffer<Item = T>>(
         &self,
@@ -501,7 +523,7 @@ impl Builder {
         }))
     }
 
-    /// Sort the suffixes in `out` with their LCPs, using `work`, which
+    /// SuffixSortType the suffixes in `out` with their LCPs, using `work`, which
     /// starts with the same suffixes, as scratch space.
     fn merge_sort<T: Int>(
         &self,
@@ -746,9 +768,9 @@ impl Builder {
             ignore_softmask: self.ignore_softmask,
             text_len: self.text.len(),
             num_suffixes,
-            sort: match &self.seed_mask {
-                Some(seed_mask) => Sort::Mask(seed_mask.clone()),
-                None => Sort::MaxQueryLen(self.max_query_len),
+            sort_type: match &self.seed_mask {
+                Some(seed_mask) => SuffixSortType::Mask(seed_mask.clone()),
+                None => SuffixSortType::MaxQueryLen(self.max_query_len),
             },
             sequence_starts: self.sequences.iter().map(|(start, _)| *start).collect(),
             sequence_names: self
@@ -1197,9 +1219,9 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
 
 #[cfg(test)]
 mod test {
-    use super::{read_sequence_file, Builder};
+    use super::{read_sequence_file, SuffixArrayBuilder};
     use crate::{
-        format::{SeedMask, Sort},
+        format::{SeedMask, SuffixSortType},
         SuffixArray,
     };
     use anyhow::Result;
@@ -1224,7 +1246,7 @@ mod test {
     fn test_find_lcp_no_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTAGC".to_vec();
-        let sufr = Builder::from_text(text, vec![(0, "1".to_string())]);
+        let sufr = SuffixArrayBuilder::from_data(text, vec![(0, "1".to_string())]);
 
         // 0: TTTAGC
         // 1:  TTAGC
@@ -1255,8 +1277,8 @@ mod test {
     fn test_find_lcp_with_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTTTA".to_vec();
-        let sufr = Builder::from_text(text, vec![(0, "1".to_string())])
-            .sort(Sort::Mask(SeedMask::new("1101")?));
+        let sufr = SuffixArrayBuilder::from_data(text, vec![(0, "1".to_string())])
+            .with_sort_type(SuffixSortType::Mask(SeedMask::new("1101")?));
 
         // 0: TTTTTA
         // 1:  TTTTA
@@ -1277,10 +1299,10 @@ mod test {
     fn test_memory_scratch_matches_disk() -> Result<()> {
         let build = |memory_scratch| -> Result<Vec<u8>> {
             let outfile = NamedTempFile::new()?;
-            Builder::from_sequence_file("../data/inputs/2.fa", b'%')?
-                .memory_scratch(memory_scratch)
-                .write_lcp(true)
-                .write(outfile.path())?;
+            SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
+                .with_memory_scratch(memory_scratch)
+                .with_write_lcp(true)
+                .build_to_file(outfile.path(), false)?;
             Ok(fs::read(outfile.path())?)
         };
         assert_eq!(build(true)?, build(false)?);
@@ -1290,9 +1312,9 @@ mod test {
     #[test]
     fn test_write() -> Result<()> {
         let outfile = NamedTempFile::new()?;
-        Builder::from_sequence_file("../data/inputs/3.fa", b'%')?
-            .dna(true, false, true)
-            .write(outfile.path())?;
+        SuffixArrayBuilder::from_sequence_file("../data/inputs/3.fa", b'%')?
+            .with_dna_options(true, false, true)
+            .build_to_file(outfile.path(), false)?;
         let suffix_array = SuffixArray::open(&outfile.path().to_string_lossy())?;
         let meta = suffix_array.metadata()?;
         assert_eq!(meta.text_len, 113);

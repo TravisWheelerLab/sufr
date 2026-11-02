@@ -1,7 +1,7 @@
 //! A _.sufr_ file opened for queries
 
 use crate::{
-    format::{Header, SeedMask, Sort},
+    format::{Header, SeedMask, SuffixSortType},
     io::{as_bytes, as_bytes_mut, FileAccess, Int},
 };
 use anyhow::{anyhow, Result};
@@ -91,7 +91,7 @@ pub struct Metadata {
     pub sequence_names: Vec<String>,
 
     /// How the suffixes were sorted.
-    pub sort: Sort,
+    pub sort_type: SuffixSortType,
 
     /// Whether the file has an LCP array.
     pub has_lcp: bool,
@@ -102,9 +102,9 @@ impl Metadata {
     pub fn summary(&self) -> Vec<(&'static str, String)> {
         let num_fmt = NumberFormat::new();
         let number = |n: usize| num_fmt.format(",.0", n as f64);
-        let sort_row = match &self.sort {
-            Sort::Mask(seed_mask) => ("Seed mask", seed_mask.mask.clone()),
-            Sort::MaxQueryLen(max_query_len) => {
+        let sort_row = match &self.sort_type {
+            SuffixSortType::Mask(seed_mask) => ("Seed mask", seed_mask.mask.clone()),
+            SuffixSortType::MaxQueryLen(max_query_len) => {
                 ("Max query len", number(*max_query_len))
             }
         };
@@ -205,11 +205,13 @@ impl<T: Int> Index<T> {
             None => None,
         };
 
-        let (seed_mask, search_max_query_len) = match &header.sort {
-            Sort::Mask(seed_mask) => {
+        let (seed_mask, search_max_query_len) = match &header.sort_type {
+            SuffixSortType::Mask(seed_mask) => {
                 (Some(seed_mask.clone()), max_query_len.unwrap_or(0))
             }
-            Sort::MaxQueryLen(built) => (None, searched_len(*built, max_query_len)),
+            SuffixSortType::MaxQueryLen(built) => {
+                (None, searched_len(*built, max_query_len))
+            }
         };
 
         let mut index = Index {
@@ -231,10 +233,10 @@ impl<T: Int> Index<T> {
     /// Read the whole suffix array into memory when `max_query_len`
     /// matches how it was sorted, and otherwise a subsample of it.
     fn load_suffixes(&self, max_query_len: Option<usize>) -> Result<Suffixes<T>> {
-        let built_max_query_len = match &self.header.sort {
-            Sort::MaxQueryLen(0) => self.header.text_len,
-            Sort::MaxQueryLen(mql) => *mql,
-            Sort::Mask(seed_mask) => seed_mask.weight,
+        let built_max_query_len = match &self.header.sort_type {
+            SuffixSortType::MaxQueryLen(0) => self.header.text_len,
+            SuffixSortType::MaxQueryLen(mql) => *mql,
+            SuffixSortType::Mask(seed_mask) => seed_mask.weight,
         };
 
         let mut max_query_len = max_query_len.unwrap_or(0);
@@ -555,7 +557,7 @@ impl<T: Int> Index<T> {
             num_sequences: self.header.sequence_starts.len(),
             sequence_starts: self.header.sequence_starts.clone(),
             sequence_names: self.header.sequence_names.clone(),
-            sort: self.header.sort.clone(),
+            sort_type: self.header.sort_type.clone(),
             has_lcp: self.lcp_file.is_some(),
         })
     }
@@ -600,8 +602,8 @@ fn write_cache<T: Int>(cache_path: &Path, suffixes: &[T], ranks: &[T]) -> Result
 mod tests {
     use super::{Index, Storage, Suffixes, Text};
     use crate::{
-        format::{SeedMask, Sort},
-        Builder,
+        format::{SeedMask, SuffixSortType},
+        SuffixArrayBuilder,
     };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -733,17 +735,19 @@ mod tests {
     ) -> Result<(NamedTempFile, Index<u32>)> {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let mut builder = Builder::from_text(text.to_vec(), vec![(0, "s".to_string())])
-            .dna(true, false, false)
-            .partitions(3)
-            .write_lcp(write_lcp);
+        let mut builder =
+            SuffixArrayBuilder::from_data(text.to_vec(), vec![(0, "s".to_string())])
+                .with_dna_options(true, false, false)
+                .with_num_partitions(3)
+                .with_write_lcp(write_lcp);
         if let Some(n) = max_query_len {
-            builder = builder.sort(Sort::MaxQueryLen(n));
+            builder = builder.with_sort_type(SuffixSortType::MaxQueryLen(n));
         }
         if let Some(mask) = seed_mask {
-            builder = builder.sort(Sort::Mask(SeedMask::new(mask)?));
+            builder =
+                builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?));
         }
-        builder.write(&outpath)?;
+        builder.build_to_file(&outpath, true)?;
         let index: Index<u32> =
             Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         Ok((outfile, index))

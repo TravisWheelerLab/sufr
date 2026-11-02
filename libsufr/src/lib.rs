@@ -8,7 +8,7 @@
 //!
 //! [^patro]: <https://doi.org/10.4230/LIPIcs.WABI.2023.16>
 //!
-//! Most readers should use [Builder] to create and
+//! Most readers should use [SuffixArrayBuilder] to create and
 //! [SuffixArray] to read suffix arrays.
 //!
 //! If you want to choose between 32-bit and 64-bit values yourself,
@@ -20,18 +20,18 @@
 //! * Jack Roddy <jroddy@arizona.edu>
 //! * Travis Wheeler <twheeler@arizona.edu>
 
-mod build;
 mod format;
 mod index;
 mod io;
 mod lcp;
 mod search;
+mod build;
 
-pub use build::Builder;
-pub use format::{Header, SeedMask, Sort, OUTFILE_VERSION};
+pub use format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
 pub use index::{Index, Metadata, Storage};
 pub use io::Int;
 pub use search::{read_queries, Extraction, Hits, Location};
+pub use build::SuffixArrayBuilder;
 
 use anyhow::Result;
 use log::info;
@@ -163,7 +163,8 @@ impl SuffixArray {
 #[cfg(test)]
 mod tests {
     use super::{
-        Builder, Index, SeedMask, Sort, Storage, SuffixArray, OUTFILE_VERSION,
+        Index, SeedMask, Storage, SuffixArray, SuffixArrayBuilder, SuffixSortType,
+        OUTFILE_VERSION,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -175,11 +176,11 @@ mod tests {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
 
-        Builder::from_sequence_file(seq_file, b'N')?
-            .dna(true, false, false)
-            .partitions(2)
-            .write_lcp(true)
-            .write(&outpath)?;
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_dna_options(true, false, false)
+            .with_num_partitions(2)
+            .with_write_lcp(true)
+            .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
         let index: Index<u32> =
@@ -207,12 +208,12 @@ mod tests {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
 
-        Builder::from_sequence_file(seq_file, b'N')?
-            .dna(true, true, false)
-            .partitions(2)
-            .force_64bit(true)
-            .write_lcp(true)
-            .write(&outpath)?;
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_dna_options(true, true, false)
+            .with_num_partitions(2)
+            .with_force_64bit(true)
+            .with_write_lcp(true)
+            .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
         let index: Index<u64> =
@@ -238,11 +239,11 @@ mod tests {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
 
-        Builder::from_sequence_file(seq_file, b'N')?
-            .dna(true, false, false)
-            .partitions(2)
-            .write_lcp(true)
-            .write(&outpath)?;
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_dna_options(true, false, false)
+            .with_num_partitions(2)
+            .with_write_lcp(true)
+            .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
         let index: Index<u32> =
@@ -314,12 +315,12 @@ mod tests {
         // 1 AACAAA$
         // 3 CAAA$
 
-        Builder::from_sequence_file(seq_file, b'N')?
-            .dna(true, false, false)
-            .partitions(1)
-            .sort(Sort::Mask(SeedMask::new("101").unwrap()))
-            .write_lcp(true)
-            .write(&outpath)?;
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_dna_options(true, false, false)
+            .with_num_partitions(1)
+            .with_sort_type(SuffixSortType::Mask(SeedMask::new("101").unwrap()))
+            .with_write_lcp(true)
+            .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
         let index: Index<u32> =
@@ -356,12 +357,12 @@ mod tests {
         // 15  7 CAAACAAAC$
         // 16  3 CAAACAAACAAAC$
 
-        Builder::from_sequence_file(seq_file, b'N')?
-            .dna(true, false, false)
-            .partitions(1)
-            .sort(Sort::Mask(SeedMask::new("11011").unwrap()))
-            .write_lcp(true)
-            .write(&outpath)?;
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_dna_options(true, false, false)
+            .with_num_partitions(1)
+            .with_sort_type(SuffixSortType::Mask(SeedMask::new("11011").unwrap()))
+            .with_write_lcp(true)
+            .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
         let index = Index::<u32>::open(&outpath, Storage::Memory, Storage::Disk, None)?;
@@ -382,12 +383,12 @@ mod tests {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
 
-        Builder::from_sequence_file(seq_file, b'N')?
-            .dna(true, false, false)
-            .partitions(1)
-            .sort(Sort::Mask(SeedMask::new("11000111").unwrap()))
-            .write_lcp(true)
-            .write(&outpath)?;
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_dna_options(true, false, false)
+            .with_num_partitions(1)
+            .with_sort_type(SuffixSortType::Mask(SeedMask::new("11000111").unwrap()))
+            .with_write_lcp(true)
+            .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
         let index: Index<u32> =
@@ -459,7 +460,7 @@ mod tests {
         assert_eq!(meta.num_sequences, 1);
         assert_eq!(meta.sequence_starts, vec![0]);
         assert_eq!(meta.sequence_names, vec!["1".to_string()]);
-        assert_eq!(meta.sort, Sort::MaxQueryLen(0));
+        assert_eq!(meta.sort_type, SuffixSortType::MaxQueryLen(0));
         assert!(meta.has_lcp);
 
         let summary = meta.summary();
