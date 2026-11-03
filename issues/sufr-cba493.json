@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T20:26:12.804937494Z",
-  "updated_at": "2026-11-03T20:26:12.804937494Z",
+  "updated_at": "2026-11-03T20:36:29.954657705Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "75572b1e",
+      "at": "2026-11-03T20:36:29.954656895Z",
+      "author": "Jack Roddy/5bf3e231",
+      "text": "On the 10 MiB long-n fixture from benchmarks/, four builds write four different files: head, head with the LCP cache off, head with the merge's skip zeroed, and head with the shortcut off. The shortcut-off build and a build with both the shortcut and the cache off write the same file, so the cache is output-neutral once the shortcut is gone. The other differences are the short LCPs reaching the merge as skip and the cache as entries. Whether the suffix order differs at this size is not checked; on the tiny input only the LCP column differed.",
+      "commit": "069d033",
+      "branch": "bench"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "069d033",
