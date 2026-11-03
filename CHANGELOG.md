@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text (`from_data`)
 - Add `SuffixArrayBuilder::with_memory_scratch` to keep the partitions in
   memory during construction instead of in temporary files
+- Add `SuffixArrayBuilder::with_temp_dir` and `sufr create --tmp-dir`/`-T` to
+  set the directory for temporary files during construction
 - Re-export `SuffixArray` at the crate root as `libsufr::SuffixArray`
 - Implement vectorized LCP calculation (AVX2 on x86-64), significantly
   improving build time on some inputs
@@ -37,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of using random sampling
 - Change the default for `sufr create --num-partitions` from 16 to 1024,
   which should reduce memory usage on most machines with minimal change to build time
+- During construction, sufr now writes temporary files to a randomly named
+  `sufr-*` directory *inside* the temporary directory (and removes it afterwards)
 - Reduce some unnecessary internal allocations
 - During build, the merge sort makes better use of the available threads
   with work-stealing via `rayon::join`

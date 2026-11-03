@@ -5,7 +5,7 @@ use crate::{
     types::{Int, SeedMask, SuffixSortType, OUTFILE_VERSION, SENTINEL_CHARACTER},
     util::{self, find_lcp_full_offset, slice_int_to_slice_u8, vec_to_slice_u8},
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use log::info;
 use rayon::prelude::*;
 use std::{
@@ -69,6 +69,7 @@ pub struct SuffixArrayBuilder {
     sort_type: SuffixSortType,
     num_partitions: usize,
     memory_scratch: bool,
+    temp_dir: Option<PathBuf>,
 
     // OUTPUT OPTIONS
     force_64bit: bool,
@@ -117,6 +118,7 @@ impl SuffixArrayBuilder {
             sort_type: SuffixSortType::MaxQueryLen(0),
             num_partitions: 1024,
             memory_scratch: false,
+            temp_dir: None,
             force_64bit: false,
             write_lcp: false,
             n_ranges: vec![],
@@ -163,6 +165,12 @@ impl SuffixArrayBuilder {
         self.memory_scratch = memory_scratch;
         self
     }
+    /// Sets the directory in which each build creates, then removes, a randomly
+    /// named `sufr-*` directory for temporary files (default: [`std::env::temp_dir`]).
+    pub fn with_temp_dir(mut self, temp_dir: impl Into<PathBuf>) -> Self {
+        self.temp_dir = Some(temp_dir.into());
+        self
+    }
 
     // Sets whether or not to force 64-bit output even for small sequences (default: `false`).
     // Files must be read via SufrFile::<u64> directly so this is intended for testing only.
@@ -189,21 +197,47 @@ impl SuffixArrayBuilder {
             self.n_ranges = find_n_ranges(&self.text);
         }
 
+        let scratch_dir = if self.memory_scratch {
+            None
+        } else {
+            let parent = self.temp_dir.clone().unwrap_or_else(std::env::temp_dir);
+            let dir = tempfile::Builder::new()
+                .prefix("sufr-")
+                .tempdir_in(&parent)
+                .with_context(|| {
+                    format!(
+                        "Failed to create temporary directory in '{}'",
+                        parent.display()
+                    )
+                })?;
+            Some(dir)
+        };
+        let scratch_path = scratch_dir.as_ref().map(|d| d.path());
+
         let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
         match (fits_u32, self.memory_scratch) {
-            (true, false) => {
-                self.build::<u32, DiskScratchBuffer<u32>>(path, occupancy)?
-            }
-            (true, true) => {
-                self.build::<u32, MemoryScratchBuffer<u32>>(path, occupancy)?
-            }
-            (false, false) => {
-                self.build::<u64, DiskScratchBuffer<u64>>(path, occupancy)?
-            }
-            (false, true) => {
-                self.build::<u64, MemoryScratchBuffer<u64>>(path, occupancy)?
-            }
+            (true, false) => self.build::<u32, DiskScratchBuffer<u32>>(
+                path,
+                occupancy,
+                scratch_path,
+            )?,
+            (true, true) => self.build::<u32, MemoryScratchBuffer<u32>>(
+                path,
+                occupancy,
+                scratch_path,
+            )?,
+            (false, false) => self.build::<u64, DiskScratchBuffer<u64>>(
+                path,
+                occupancy,
+                scratch_path,
+            )?,
+            (false, true) => self.build::<u64, MemoryScratchBuffer<u64>>(
+                path,
+                occupancy,
+                scratch_path,
+            )?,
         }
+        drop(scratch_dir);
         SuffixArray::read(&path.to_string_lossy(), low_memory)
     }
 
@@ -228,8 +262,9 @@ impl SuffixArrayBuilder {
         &self,
         path: &Path,
         occupancy: [u8; 256],
+        scratch_dir: Option<&Path>,
     ) -> Result<()> {
-        let partitions = self.sort::<T, B>(occupancy)?;
+        let partitions = self.sort::<T, B>(occupancy, scratch_dir)?;
         self.write::<T, B>(path, partitions)?;
         Ok(())
     }
@@ -345,7 +380,10 @@ impl SuffixArrayBuilder {
 
     // --------------------------------------------------
     /// Write the suffixes into temporary files for sorting
-    fn partition<T, B, A>(&self) -> Result<PartitionBuildResult<B>>
+    fn partition<T, B, A>(
+        &self,
+        scratch_dir: Option<&Path>,
+    ) -> Result<PartitionBuildResult<B>>
     where
         T: Int,
         B: ScratchBuffer<Item = T> + Send + Sync,
@@ -354,7 +392,7 @@ impl SuffixArrayBuilder {
         let alphabet = A::init();
         let mut buffers: Vec<_> = vec![];
         for _ in 0..A::NUM_PARTITIONS {
-            let buffer = B::default();
+            let buffer = B::new(scratch_dir);
             buffers.push(Mutex::new(buffer));
         }
 
@@ -474,6 +512,7 @@ impl SuffixArrayBuilder {
     fn sort<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
         &self,
         mut occupancy: [u8; 256],
+        scratch_dir: Option<&Path>,
     ) -> Result<Vec<Partition<B>>> {
         let num_partitions = self.num_partitions;
         // ... and if there are none outside of the nucleic alphabet then use it.
@@ -484,7 +523,7 @@ impl SuffixArrayBuilder {
             == 0
         {
             info!("Detected Nucleic Acid alphabet: using 5-character prefix for partitioning");
-            self.partition::<T, B, NucleicAcidAlphabet>()?
+            self.partition::<T, B, NucleicAcidAlphabet>(scratch_dir)?
         } else {
             // Otherwise check the same for the amino acid alphabet
             for &c in AminoAcidAlphabet::ALPHABET.iter() {
@@ -492,10 +531,10 @@ impl SuffixArrayBuilder {
             }
             if occupancy.iter().map(|&b| b as usize).sum::<usize>() == 0 {
                 info!("Detected Amino Acid alphabet: using 3-character prefix for partitioning");
-                self.partition::<T, B, AminoAcidAlphabet>()?
+                self.partition::<T, B, AminoAcidAlphabet>(scratch_dir)?
             } else {
                 info!("Detected non-Nucleic/non-Amino Acid: using 2-byte prefix for partitioning");
-                self.partition::<T, B, BytesAlphabet>()?
+                self.partition::<T, B, BytesAlphabet>(scratch_dir)?
             }
         };
 
@@ -569,10 +608,10 @@ impl SuffixArrayBuilder {
                         );
 
                         // Write to disk
-                        let mut sa_buffer = B::default();
+                        let mut sa_buffer = B::new(scratch_dir);
                         sa_buffer.extend_from_slice(&part_sa)?;
                         let lcp_buffer = if self.write_lcp {
-                            let mut lcp_buffer = B::default();
+                            let mut lcp_buffer = B::new(scratch_dir);
                             lcp_buffer.extend_from_slice(&lcp)?;
                             Some(lcp_buffer)
                         } else {
@@ -1151,9 +1190,13 @@ struct PartitionBuildResult<B: ScratchBuffer<Item: Int>> {
 }
 
 /// Trait representing scratch buffers that may be backed by disk or memory.
-trait ScratchBuffer: Default {
+trait ScratchBuffer: Sized {
     /// The type of items in the buffer
     type Item: Int;
+
+    /// Create an empty buffer that stores any files in `temp_dir`, or in the
+    /// system temporary directory if `None`.
+    fn new(temp_dir: Option<&Path>) -> Self;
 
     /// Append a slice of `vals` to `self`.
     fn extend_from_slice(&mut self, vals: &[Self::Item]) -> Result<()>;
@@ -1176,6 +1219,7 @@ trait ScratchBuffer: Default {
 struct DiskScratchBuffer<T: Int> {
     buf: Vec<T>,
     count: usize,
+    dir: Option<PathBuf>,
     path: Option<PathBuf>,
 }
 
@@ -1184,7 +1228,10 @@ impl<T: Int> DiskScratchBuffer<T> {
 
     fn open(&mut self) -> Result<File> {
         if self.path.is_none() {
-            let tmp = NamedTempFile::new()?;
+            let tmp = match &self.dir {
+                Some(dir) => NamedTempFile::new_in(dir)?,
+                None => NamedTempFile::new()?,
+            };
             let (_, path) = tmp.keep()?;
             self.path = Some(path)
         }
@@ -1195,18 +1242,18 @@ impl<T: Int> DiskScratchBuffer<T> {
     }
 }
 
-impl<T: Int> Default for DiskScratchBuffer<T> {
-    fn default() -> Self {
+impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
+    type Item = T;
+
+    fn new(temp_dir: Option<&Path>) -> Self {
         Self {
             buf: vec![],
             count: 0,
+            dir: temp_dir.map(Path::to_path_buf),
             path: None,
         }
     }
-}
 
-impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
-    type Item = T;
     fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
         self.buf.extend_from_slice(vals);
         if self.buf.len() >= Self::FLUSH_AT {
@@ -1275,14 +1322,12 @@ struct MemoryScratchBuffer<T: Int> {
     data: Vec<T>,
 }
 
-impl<T: Int> Default for MemoryScratchBuffer<T> {
-    fn default() -> Self {
-        Self { data: vec![] }
-    }
-}
-
 impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
     type Item = T;
+
+    fn new(_temp_dir: Option<&Path>) -> Self {
+        Self { data: vec![] }
+    }
 
     fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
         self.data.extend_from_slice(vals);
@@ -1380,6 +1425,43 @@ mod test {
             Ok(fs::read(outfile.path())?)
         };
         assert_eq!(build(true)?, build(false)?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_temp_dir() -> Result<()> {
+        let build = |temp_dir: Option<&std::path::Path>| -> Result<Vec<u8>> {
+            let outfile = NamedTempFile::new()?;
+            let mut builder =
+                SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
+                    .with_write_lcp(true);
+            if let Some(dir) = temp_dir {
+                builder = builder.with_temp_dir(dir);
+            }
+            builder.build_to_file(outfile.path(), false)?;
+            Ok(fs::read(outfile.path())?)
+        };
+
+        let temp_dir = tempfile::tempdir()?;
+        assert_eq!(build(Some(temp_dir.path()))?, build(None)?);
+
+        // the build removes its sufr-* directory
+        assert_eq!(fs::read_dir(temp_dir.path())?.count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_temp_dir_missing() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let missing = temp_dir.path().join("does-not-exist");
+        let outfile = NamedTempFile::new()?;
+        let res = SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
+            .with_temp_dir(&missing)
+            .build_to_file(outfile.path(), false);
+        let err = res.err().expect("build should fail");
+        assert!(err
+            .to_string()
+            .contains("Failed to create temporary directory"));
         Ok(())
     }
 

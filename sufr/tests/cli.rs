@@ -111,6 +111,50 @@ fn create_empty_dies() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
+fn create_tmp_dir() -> Result<()> {
+    let tmp_dir = tempfile::tempdir()?;
+    let build = |extra: &[&str]| -> Result<Vec<u8>> {
+        let outfile = NamedTempFile::new()?;
+        let outpath = outfile.path().to_string_lossy().to_string();
+        let mut args = vec!["create", "--dna", "-o", &outpath, SEQ2];
+        args.extend_from_slice(extra);
+        Command::cargo_bin(PRG)?.args(&args).assert().success();
+        Ok(fs::read(outfile.path())?)
+    };
+
+    let tmp_path = tmp_dir.path().to_string_lossy().to_string();
+    assert_eq!(build(&["--tmp-dir", &tmp_path])?, build(&[])?);
+
+    // the build removes its sufr-* directory
+    assert_eq!(fs::read_dir(tmp_dir.path())?.count(), 0);
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn create_tmp_dir_missing_dies() -> Result<()> {
+    let tmp_dir = tempfile::tempdir()?;
+    let missing = tmp_dir.path().join("does-not-exist");
+    let outfile = NamedTempFile::new()?;
+    let output = Command::cargo_bin(PRG)?
+        .args([
+            "create",
+            "--dna",
+            "-o",
+            &outfile.path().to_string_lossy(),
+            "-T",
+            &missing.to_string_lossy(),
+            SEQ2,
+        ])
+        .output()?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("Failed to create temporary directory"));
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
 fn create_seq1() -> Result<()> {
     create(
         SEQ1,

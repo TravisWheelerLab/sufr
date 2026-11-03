@@ -123,6 +123,10 @@ pub struct CreateArgs {
     /// query-time max query lengths shorter than the build-time value)
     #[arg(long)]
     pub write_lcp: bool,
+
+    /// Directory for temporary files (default: system temporary directory)
+    #[arg(short('T'), long, value_name = "DIR")]
+    pub tmp_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -343,6 +347,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     }
 
     builder = builder.with_write_lcp(args.write_lcp);
+    if let Some(tmp_dir) = &args.tmp_dir {
+        builder = builder.with_temp_dir(tmp_dir);
+    }
 
     let now = Instant::now();
     builder.build_to_file(outfile, true)?;
