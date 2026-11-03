@@ -1,0 +1,10 @@
+{
+  "slug": "expected-fixtures-write-lcp",
+  "text": "The fixtures in data/expected/*.sufr were built with --write-lcp, and mk_test_files.py does not pass it, so regenerating them with the script gives different bytes. Details on sufr-c9b319.",
+  "created_at": "2026-11-03T22:47:05.435087532Z",
+  "updated_at": "2026-11-03T22:47:05.435087532Z",
+  "stamp": {
+    "commit": "efaf30f",
+    "branch": "bench"
+  }
+}
