@@ -1,4 +1,4 @@
-use super::scratch::ScratchBuffer;
+use super::scratch::{Scratch, ScratchKind};
 use crate::{format::SeedMask, io::Int};
 use anyhow::{bail, Result};
 use log::info;
@@ -109,7 +109,7 @@ impl PrefixEncoder {
 
 /// The sorted suffixes and LCPs of one partition.
 #[derive(Debug)]
-pub(super) struct Partition<B: ScratchBuffer> {
+pub(super) struct Partition<T: Int> {
     /// The position of this partition in the suffix array.
     pub(super) order: usize,
 
@@ -125,37 +125,33 @@ pub(super) struct Partition<B: ScratchBuffer> {
     pub(super) last_suffix: usize,
 
     /// The buffer containing the suffix array.
-    pub(super) sa_buffer: B,
+    pub(super) sa_buffer: Scratch<T>,
 
     /// The buffer containing the LCP array, when one is written.
-    pub(super) lcp_buffer: Option<B>,
+    pub(super) lcp_buffer: Option<Scratch<T>>,
 }
 
 /// The unsorted suffixes in one scratch buffer per prefix, in prefix
 /// order.
 #[derive(Debug)]
-pub(super) struct PartitionedSuffixes<B: ScratchBuffer<Item: Int>> {
-    buffers: Vec<B>,
+pub(super) struct PartitionedSuffixes<T: Int> {
+    buffers: Vec<Scratch<T>>,
     pub(super) num_suffixes: usize,
 }
 
 /// Place each suffix of `text` whose first byte `keep` marks in the
-/// scratch buffer for its bucket number from `encoder`.
-pub(super) fn partition<T, B>(
+/// scratch buffer of `kind` for its bucket number from `encoder`.
+pub(super) fn partition<T: Int>(
     text: &[u8],
     encoder: &PrefixEncoder,
     keep: &[bool; 256],
     mask: Option<&SeedMask>,
-) -> Result<PartitionedSuffixes<B>>
-where
-    T: Int,
-    B: ScratchBuffer<Item = T> + Send + Sync,
-{
+    kind: ScratchKind,
+) -> Result<PartitionedSuffixes<T>> {
     let num_partitions = encoder.num_buckets();
     let mut buffers: Vec<_> = vec![];
     for _ in 0..num_partitions {
-        let buffer = B::default();
-        buffers.push(Mutex::new(buffer));
+        buffers.push(Mutex::new(Scratch::new(kind)));
     }
 
     let now = Instant::now();
@@ -241,15 +237,15 @@ where
 
 /// Gather the buffers, which are in prefix order, into `num_partitions`
 /// groups of about the same number of suffixes.
-pub(super) fn group_buffers<B: ScratchBuffer>(
-    partitioned: PartitionedSuffixes<B>,
+pub(super) fn group_buffers<T: Int>(
+    partitioned: PartitionedSuffixes<T>,
     num_partitions: usize,
-) -> Result<Vec<Vec<B>>> {
+) -> Result<Vec<Vec<Scratch<T>>>> {
     // round up to take every suffix
     let num_per_partition =
         (partitioned.num_suffixes as f64 / num_partitions as f64).ceil() as usize;
     let mut num_taken = 0;
-    let mut partition_inputs = std::iter::repeat_with(|| Vec::new())
+    let mut partition_inputs = std::iter::repeat_with(Vec::new)
         .take(num_partitions)
         .collect::<Vec<_>>();
 

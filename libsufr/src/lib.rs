@@ -36,7 +36,7 @@ pub use search::{read_queries, Extraction, Hits, Location};
 use anyhow::Result;
 use log::info;
 use rayon::prelude::*;
-use std::time::Instant;
+use std::{path::Path, time::Instant};
 
 /// A suffix array read from a _.sufr_ file, whose arrays hold `u32` or
 /// `u64` values depending on the length of the text.
@@ -69,6 +69,52 @@ impl SuffixArray {
         } else {
             let index = Index::open(filename, text, suffixes, max_query_len)?;
             Ok(SuffixArray::U64(index))
+        }
+    }
+
+    /// Build the suffix array of `text` with `u32` values when the text
+    /// is short enough and `force_64bit` is not set, else `u64`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn construct(
+        path: &Path,
+        text: Vec<u8>,
+        sequences: Vec<(usize, String)>,
+        alphabet: Alphabet,
+        mask: Option<SeedMask>,
+        max_query_len: usize,
+        num_partitions: usize,
+        write_lcp: bool,
+        memory_scratch: bool,
+        force_64bit: bool,
+        low_memory: bool,
+    ) -> Result<SuffixArray> {
+        let fits_u32 = (text.len() as u64) < u32::MAX as u64 && !force_64bit;
+        if fits_u32 {
+            Ok(SuffixArray::U32(build::construct::<u32>(
+                path,
+                text,
+                sequences,
+                alphabet,
+                mask,
+                max_query_len,
+                num_partitions,
+                write_lcp,
+                memory_scratch,
+                low_memory,
+            )?))
+        } else {
+            Ok(SuffixArray::U64(build::construct::<u64>(
+                path,
+                text,
+                sequences,
+                alphabet,
+                mask,
+                max_query_len,
+                num_partitions,
+                write_lcp,
+                memory_scratch,
+                low_memory,
+            )?))
         }
     }
 

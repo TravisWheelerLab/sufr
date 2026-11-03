@@ -5,7 +5,7 @@ mod write;
 
 use crate::{
     format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION},
-    index::Storage,
+    index::{Index, Storage, Text},
     io::Int,
     SuffixArray,
 };
@@ -13,7 +13,7 @@ use anyhow::Result;
 use log::info;
 use needletail::parse_fastx_file;
 use partition::{group_buffers, partition, PrefixEncoder};
-use scratch::{DiskScratchBuffer, MemoryScratchBuffer, ScratchBuffer};
+use scratch::ScratchKind;
 use sort::{first_lcps, sort_partitions};
 use std::{mem, ops::Range, path::Path, time::Instant};
 use write::write;
@@ -165,88 +165,107 @@ impl SuffixArrayBuilder {
     /// Build the suffix array, write it to `path` and open the result.
     /// With `low_memory`, the suffixes stay on disk.
     pub fn build_to_file(
-        mut self,
+        self,
         path: impl AsRef<Path>,
         low_memory: bool,
     ) -> Result<SuffixArray> {
-        let path = path.as_ref();
-        let occupancy = normalize(&mut self.text, &self.alphabet);
-        let keep = keep_table(&self.alphabet);
-        let n_ranges = match self.alphabet {
-            Alphabet::Dna {
-                allow_ambiguity: true,
-                ..
-            } => find_n_ranges(&self.text),
-            _ => vec![],
-        };
-        let encoder = PrefixEncoder::from_occupancy(occupancy);
-
-        let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
-        match (fits_u32, self.memory_scratch) {
-            (true, false) => sort_and_write::<u32, DiskScratchBuffer<u32>>(
-                &self, path, &encoder, &keep, &n_ranges,
-            )?,
-            (true, true) => sort_and_write::<u32, MemoryScratchBuffer<u32>>(
-                &self, path, &encoder, &keep, &n_ranges,
-            )?,
-            (false, false) => sort_and_write::<u64, DiskScratchBuffer<u64>>(
-                &self, path, &encoder, &keep, &n_ranges,
-            )?,
-            (false, true) => sort_and_write::<u64, MemoryScratchBuffer<u64>>(
-                &self, path, &encoder, &keep, &n_ranges,
-            )?,
-        }
-
-        let suffixes = if low_memory {
-            Storage::Disk
-        } else {
-            Storage::Memory
-        };
-        SuffixArray::open_with(&path.to_string_lossy(), Storage::Memory, suffixes, None)
+        SuffixArray::construct(
+            path.as_ref(),
+            self.text,
+            self.sequences,
+            self.alphabet,
+            self.seed_mask,
+            self.max_query_len,
+            self.num_partitions,
+            self.write_lcp,
+            self.memory_scratch,
+            self.force_64bit,
+            low_memory,
+        )
     }
 }
 
-/// Partition, sort and write the suffixes of `builder`'s text, with `T`
-/// per suffix and LCP and `B` for scratch.
-fn sort_and_write<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
-    builder: &SuffixArrayBuilder,
+/// Build the suffix array of `text` with `T` per suffix and LCP, write it
+/// to `path` and open the result.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn construct<T: Int>(
     path: &Path,
-    encoder: &PrefixEncoder,
-    keep: &[bool; 256],
-    n_ranges: &[Range<usize>],
-) -> Result<()> {
-    let text = &builder.text;
-    let mask = builder.seed_mask.as_ref();
-    let max_query_len = builder.max_query_len;
+    mut text: Vec<u8>,
+    sequences: Vec<(usize, String)>,
+    alphabet: Alphabet,
+    mask: Option<SeedMask>,
+    max_query_len: usize,
+    num_partitions: usize,
+    write_lcp: bool,
+    memory_scratch: bool,
+    low_memory: bool,
+) -> Result<Index<T>> {
+    let occupancy = normalize(&mut text, &alphabet);
+    let keep = keep_table(&alphabet);
+    let n_ranges = match alphabet {
+        Alphabet::Dna {
+            allow_ambiguity: true,
+            ..
+        } => find_n_ranges(&text),
+        _ => vec![],
+    };
+    let encoder = PrefixEncoder::from_occupancy(occupancy);
+    let mask = mask.as_ref();
+    let scratch = if memory_scratch {
+        ScratchKind::Memory
+    } else {
+        ScratchKind::Disk
+    };
 
-    let partitioned = partition::<T, B>(text, encoder, keep, mask)?;
-    let num_suffixes = partitioned.num_suffixes;
-    let groups = group_buffers(partitioned, builder.num_partitions)?;
-    let partitions = sort_partitions(
-        text,
-        groups,
+    let partitioned = partition::<T>(&text, &encoder, &keep, mask, scratch)?;
+    let header = header(
+        &alphabet,
+        &sequences,
+        text.len(),
+        partitioned.num_suffixes,
         mask,
         max_query_len,
-        n_ranges,
-        builder.write_lcp,
-    )?;
-    let first_lcps = if builder.write_lcp {
-        first_lcps(text, &partitions, mask, max_query_len, n_ranges)
+        write_lcp,
+        mem::size_of::<T>(),
+    );
+    let groups = group_buffers(partitioned, num_partitions)?;
+    let partitions =
+        sort_partitions(&text, groups, mask, max_query_len, &n_ranges, write_lcp)?;
+    let first_lcps = if write_lcp {
+        first_lcps(&text, &partitions, mask, max_query_len, &n_ranges)
     } else {
         vec![]
     };
-    let header = header(builder, mem::size_of::<T>(), num_suffixes);
-    write(path, &header, text, partitions, &first_lcps)
+    write(path, &header, &text, partitions, &first_lcps)?;
+
+    let suffixes = if low_memory {
+        Storage::Disk
+    } else {
+        Storage::Memory
+    };
+    Index::new(
+        &path.to_string_lossy(),
+        header,
+        Text::Memory(text),
+        suffixes,
+        None,
+    )
 }
 
 /// The header of the output file, with `int_size` bytes per
 /// suffix array value.
+#[allow(clippy::too_many_arguments)]
 fn header(
-    builder: &SuffixArrayBuilder,
-    int_size: usize,
+    alphabet: &Alphabet,
+    sequences: &[(usize, String)],
+    text_len: usize,
     num_suffixes: usize,
+    mask: Option<&SeedMask>,
+    max_query_len: usize,
+    write_lcp: bool,
+    int_size: usize,
 ) -> Header {
-    let (is_dna, allow_ambiguity, ignore_softmask) = match builder.alphabet {
+    let (is_dna, allow_ambiguity, ignore_softmask) = match *alphabet {
         Alphabet::Dna {
             allow_ambiguity,
             ignore_softmask,
@@ -258,24 +277,20 @@ fn header(
         is_dna,
         allow_ambiguity,
         ignore_softmask,
-        text_len: builder.text.len(),
+        text_len,
         num_suffixes,
-        sort_type: match &builder.seed_mask {
+        sort_type: match mask {
             Some(seed_mask) => SuffixSortType::Mask(seed_mask.clone()),
-            None => SuffixSortType::MaxQueryLen(builder.max_query_len),
+            None => SuffixSortType::MaxQueryLen(max_query_len),
         },
-        sequence_starts: builder.sequences.iter().map(|(start, _)| *start).collect(),
-        sequence_names: builder
-            .sequences
-            .iter()
-            .map(|(_, name)| name.clone())
-            .collect(),
+        sequence_starts: sequences.iter().map(|(start, _)| *start).collect(),
+        sequence_names: sequences.iter().map(|(_, name)| name.clone()).collect(),
         int_size,
         text_pos: 0,
         suffix_array_pos: 0,
         lcp_pos: None,
     };
-    header.set_positions(builder.write_lcp);
+    header.set_positions(write_lcp);
     header
 }
 

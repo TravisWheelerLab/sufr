@@ -1,4 +1,4 @@
-use super::{partition::Partition, scratch::ScratchBuffer};
+use super::partition::Partition;
 use crate::{
     format::Header,
     io::{as_bytes, write_all_at, Int},
@@ -11,11 +11,11 @@ use std::{fs::File, mem, path::Path, time::Instant};
 /// Write `text`, then each partition's suffix array (and LCP array, when
 /// `header` places one, starting with its entry in `first_lcps`) in
 /// parallel at its offset, then `header` and the sequence names.
-pub(super) fn write<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
+pub(super) fn write<T: Int>(
     path: &Path,
     header: &Header,
     text: &[u8],
-    partitions: Vec<Partition<B>>,
+    partitions: Vec<Partition<T>>,
     first_lcps: &[Option<T>],
 ) -> Result<()> {
     let now = Instant::now();
@@ -68,7 +68,7 @@ pub(super) fn write<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
 }
 
 /// The offset (in elements) of each partition in the arrays.
-fn partition_offsets<B: ScratchBuffer>(partitions: &[Partition<B>]) -> Vec<usize> {
+fn partition_offsets<T: Int>(partitions: &[Partition<T>]) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(partitions.len());
     let mut total = 0;
     for partition in partitions {

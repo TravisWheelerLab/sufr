@@ -191,6 +191,18 @@ impl<T: Int> Index<T> {
             Storage::Disk => Text::Disk(text_file),
             Storage::Memory => Text::Memory(text_file.get_range(0..header.text_len)?),
         };
+        Self::new(filename, header, text, suffixes, max_query_len)
+    }
+
+    /// The index over `filename`, whose `header` and `text` are already
+    /// read, with its suffixes stored as given.
+    pub(crate) fn new(
+        filename: &str,
+        header: Header,
+        text: Text,
+        suffixes: Storage,
+        max_query_len: Option<usize>,
+    ) -> Result<Index<T>> {
         let suffix_array_file = FileAccess::new(
             filename,
             header.suffix_array_pos as u64,

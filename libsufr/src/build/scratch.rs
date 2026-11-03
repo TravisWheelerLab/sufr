@@ -8,37 +8,86 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+/// Where a [`Scratch`] buffer keeps its values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScratchKind {
+    Disk,
+    Memory,
+}
+
 /// A buffer of suffixes or LCPs during construction, in memory or in a
 /// temporary file.
-pub(super) trait ScratchBuffer: Default {
-    /// The type of the values.
-    type Item: Int;
+#[derive(Debug)]
+pub(super) enum Scratch<T: Int> {
+    Disk(DiskScratch<T>),
+    Memory(Vec<T>),
+}
+
+impl<T: Int> Scratch<T> {
+    /// An empty buffer of `kind`.
+    pub(super) fn new(kind: ScratchKind) -> Self {
+        match kind {
+            ScratchKind::Disk => Scratch::Disk(DiskScratch {
+                buf: vec![],
+                count: 0,
+                path: None,
+            }),
+            ScratchKind::Memory => Scratch::Memory(vec![]),
+        }
+    }
+
+    pub(super) fn kind(&self) -> ScratchKind {
+        match self {
+            Scratch::Disk(_) => ScratchKind::Disk,
+            Scratch::Memory(_) => ScratchKind::Memory,
+        }
+    }
 
     /// Append `vals`.
-    fn extend_from_slice(&mut self, vals: &[Self::Item]) -> Result<()>;
+    pub(super) fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
+        match self {
+            Scratch::Disk(disk) => disk.extend_from_slice(vals),
+            Scratch::Memory(data) => {
+                data.extend_from_slice(vals);
+                Ok(())
+            }
+        }
+    }
 
     /// Write any values still in memory to the backing store.
-    fn flush(&mut self) -> Result<()>;
+    pub(super) fn flush(&mut self) -> Result<()> {
+        match self {
+            Scratch::Disk(disk) => disk.flush(),
+            Scratch::Memory(_) => Ok(()),
+        }
+    }
 
     /// The number of values appended.
-    fn count(&self) -> usize;
-
-    /// All the values, borrowed when they are in memory.
-    fn read(&self) -> Result<Cow<'_, [Self::Item]>>;
+    pub(super) fn count(&self) -> usize {
+        match self {
+            Scratch::Disk(disk) => disk.count + disk.buf.len(),
+            Scratch::Memory(data) => data.len(),
+        }
+    }
 
     /// All the values, freeing the backing store.
-    fn consume(self) -> Result<Vec<Self::Item>>;
+    pub(super) fn consume(self) -> Result<Vec<T>> {
+        match self {
+            Scratch::Disk(disk) => disk.consume(),
+            Scratch::Memory(data) => Ok(data),
+        }
+    }
 }
 
 /// A scratch buffer in a temporary file.
 #[derive(Debug)]
-pub(super) struct DiskScratchBuffer<T: Int> {
+pub(super) struct DiskScratch<T: Int> {
     buf: Vec<T>,
     count: usize,
     path: Option<PathBuf>,
 }
 
-impl<T: Int> DiskScratchBuffer<T> {
+impl<T: Int> DiskScratch<T> {
     const FLUSH_AT: usize = 4096;
 
     fn open(&mut self) -> Result<File> {
@@ -52,20 +101,7 @@ impl<T: Int> DiskScratchBuffer<T> {
             .append(true)
             .open(self.path.as_ref().unwrap())?)
     }
-}
 
-impl<T: Int> Default for DiskScratchBuffer<T> {
-    fn default() -> Self {
-        Self {
-            buf: vec![],
-            count: 0,
-            path: None,
-        }
-    }
-}
-
-impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
-    type Item = T;
     fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
         self.buf.extend_from_slice(vals);
         if self.buf.len() >= Self::FLUSH_AT {
@@ -83,10 +119,6 @@ impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
             self.buf.shrink_to_fit();
         }
         Ok(())
-    }
-
-    fn count(&self) -> usize {
-        self.count + self.buf.len()
     }
 
     fn read(&self) -> Result<Cow<'_, [T]>> {
@@ -107,7 +139,7 @@ impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
         }
     }
 
-    fn consume(mut self) -> Result<Vec<Self::Item>> {
+    fn consume(mut self) -> Result<Vec<T>> {
         let buf = match self.read()? {
             Cow::Owned(b) => b,
             Cow::Borrowed(b) => b.to_vec(),
@@ -119,49 +151,12 @@ impl<T: Int> ScratchBuffer for DiskScratchBuffer<T> {
     }
 }
 
-impl<T: Int> Drop for DiskScratchBuffer<T> {
+impl<T: Int> Drop for DiskScratch<T> {
     fn drop(&mut self) {
         if let Some(path) = self.path.take() {
             // best effort, since this is Drop and consume()
             // may have removed the file already
             let _ = fs::remove_file(path);
         }
-    }
-}
-
-/// A scratch buffer in memory.
-#[derive(Debug)]
-pub(super) struct MemoryScratchBuffer<T: Int> {
-    data: Vec<T>,
-}
-
-impl<T: Int> Default for MemoryScratchBuffer<T> {
-    fn default() -> Self {
-        Self { data: vec![] }
-    }
-}
-
-impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
-    type Item = T;
-
-    fn extend_from_slice(&mut self, vals: &[T]) -> Result<()> {
-        self.data.extend_from_slice(vals);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    fn count(&self) -> usize {
-        self.data.len()
-    }
-
-    fn read(&self) -> Result<Cow<'_, [T]>> {
-        Ok(Cow::Borrowed(self.data.as_ref()))
-    }
-
-    fn consume(self) -> Result<Vec<Self::Item>> {
-        Ok(self.data)
     }
 }
