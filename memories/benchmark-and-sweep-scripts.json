@@ -1,0 +1,10 @@
+{
+  "slug": "benchmark-and-sweep-scripts",
+  "text": "The behaviour oracle for refactors is a differential sweep plus a create benchmark, both local and untracked under tmp-claude/2026-11-02-refactor-survey/: construct/sweep.sh runs ~7400 CLI invocations over every fixture, memory mode and flag against an old and a new binary and diffs stdout, exit codes and .sufr bytes; construct/bench.sh times create on synth.fa (50 MB DNA) and bytes.fa, 4 threads, interleaved runs. Baseline at 6df218d: create --dna --write-lcp ~2.45 s, peak RSS ~124 MB.",
+  "created_at": "2026-11-03T07:53:00.482384852Z",
+  "updated_at": "2026-11-03T07:53:00.482384852Z",
+  "stamp": {
+    "commit": "6df218d",
+    "branch": "refactor"
+  }
+}
