@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_queries, Hits, SeedMask, Storage, SuffixArray, SuffixArrayBuilder,
+    read_queries, Alphabet, Hits, SeedMask, Storage, SuffixArray, SuffixArrayBuilder,
     SuffixSortType,
 };
 use log::info;
@@ -86,11 +86,11 @@ pub struct CreateArgs {
     pub is_dna: bool,
 
     /// Allow suffixes starting with ambiguity codes
-    #[arg(short, long)]
+    #[arg(short, long, requires = "is_dna")]
     pub allow_ambiguity: bool,
 
     /// Ignore suffixes in soft-mask/lowercase regions
-    #[arg(short, long)]
+    #[arg(short, long, requires = "is_dna")]
     pub ignore_softmask: bool,
 
     /// Character to separate sequences
@@ -327,11 +327,19 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             .to_string_lossy()
     ));
 
+    let alphabet = if args.is_dna {
+        Alphabet::Dna {
+            allow_ambiguity: args.allow_ambiguity,
+            ignore_softmask: args.ignore_softmask,
+        }
+    } else {
+        Alphabet::Bytes
+    };
     let mut builder = SuffixArrayBuilder::from_sequence_file(
         &args.input,
         args.sequence_delimiter as u8,
     )?
-    .with_dna_options(args.is_dna, args.allow_ambiguity, args.ignore_softmask)
+    .with_alphabet(alphabet)
     .with_num_partitions(args.num_partitions);
 
     match (args.max_query_len, &args.seed_mask) {

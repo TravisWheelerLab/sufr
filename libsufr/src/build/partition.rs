@@ -9,28 +9,28 @@ const NUCLEIC_ACID: &[u8] = b"$%ACGNT";
 const AMINO_ACID: &[u8] = b"$%*-ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 /// The characters a suffix is placed by, ranked in sort order, and how
-/// many of them a partition key packs into a `u16`.
-pub(super) struct Alphabet {
+/// many of them a bucket number packs into a `u16`.
+pub(super) struct PrefixEncoder {
     /// The rank of each byte.
     table: [u16; 256],
 
-    /// The number of bits per character in a key.
+    /// The number of bits per character in a bucket number.
     bits: usize,
 
-    /// The number of leading characters in a key.
+    /// The number of leading characters in a bucket number.
     count: usize,
 }
 
-impl Alphabet {
-    pub(super) fn nucleic_acid() -> Self {
+impl PrefixEncoder {
+    fn nucleic_acid() -> Self {
         Self::ranked(NUCLEIC_ACID)
     }
 
-    pub(super) fn amino_acid() -> Self {
+    fn amino_acid() -> Self {
         Self::ranked(AMINO_ACID)
     }
 
-    pub(super) fn bytes() -> Self {
+    fn bytes() -> Self {
         let mut table = [0u16; 256];
         for (c, rank) in table.iter_mut().enumerate() {
             *rank = c as u16;
@@ -42,7 +42,7 @@ impl Alphabet {
         }
     }
 
-    /// The alphabet of `characters`, which are in ascending order.
+    /// The encoder for `characters`, which are in ascending order.
     fn ranked(characters: &[u8]) -> Self {
         let mut table = [0u16; 256];
         for (i, &c) in characters.iter().enumerate() {
@@ -56,21 +56,25 @@ impl Alphabet {
         }
     }
 
-    /// The nucleic acid alphabet when `occupancy` marks only its bytes,
-    /// else the amino acid alphabet when it marks only those, else bytes.
-    pub(super) fn for_occupancy(mut occupancy: [u8; 256]) -> Self {
-        for &c in NUCLEIC_ACID {
-            occupancy[c as usize] = 0;
+    /// The nucleic acid encoder when `text` holds only its bytes, else
+    /// the amino acid encoder when it holds only those, else bytes.
+    pub(super) fn sniff(text: &[u8]) -> Self {
+        let mut occupancy = [false; 256];
+        for &b in text {
+            occupancy[b as usize] = true;
         }
-        if occupancy.iter().all(|&b| b == 0) {
+        for &c in NUCLEIC_ACID {
+            occupancy[c as usize] = false;
+        }
+        if occupancy.iter().all(|&seen| !seen) {
             info!("Detected Nucleic Acid alphabet: using 5-character prefix for partitioning");
             return Self::nucleic_acid();
         }
 
         for &c in AMINO_ACID {
-            occupancy[c as usize] = 0;
+            occupancy[c as usize] = false;
         }
-        if occupancy.iter().all(|&b| b == 0) {
+        if occupancy.iter().all(|&seen| !seen) {
             info!("Detected Amino Acid alphabet: using 3-character prefix for partitioning");
             Self::amino_acid()
         } else {
@@ -79,13 +83,31 @@ impl Alphabet {
         }
     }
 
-    fn num_partitions(&self) -> usize {
+    /// The number of distinct bucket numbers.
+    pub(super) fn num_buckets(&self) -> usize {
         1 << (self.bits * self.count)
     }
 
+    /// The bucket number of the suffix at `i`: its first `count`
+    /// characters, or those at the care positions of `mask`.
     #[inline(always)]
-    fn lookup(&self, c: u8) -> u16 {
-        self.table[c as usize]
+    pub(super) fn encode(&self, text: &[u8], i: usize, mask: Option<&SeedMask>) -> u16 {
+        let (bits, count) = (self.bits, self.count);
+        let mut key = 0;
+        match mask {
+            Some(mask) => {
+                for (j, &off) in mask.positions.iter().enumerate().take(count) {
+                    let c = text.get(i + off).copied().unwrap_or(0);
+                    key |= self.table[c as usize] << ((count - j - 1) * bits);
+                }
+            }
+            None => {
+                for (j, &c) in text[i..].iter().enumerate().take(count) {
+                    key |= self.table[c as usize] << ((count - j - 1) * bits);
+                }
+            }
+        }
+        key
     }
 }
 
@@ -122,11 +144,10 @@ pub(super) struct PartitionedSuffixes<B: ScratchBuffer<Item: Int>> {
 }
 
 /// Place each suffix of `text` whose first byte `keep` marks in the
-/// scratch buffer for its `alphabet.count` character prefix, read at the
-/// care positions of `mask` when there is one.
+/// scratch buffer for its bucket number from `encoder`.
 pub(super) fn partition<T, B>(
     text: &[u8],
-    alphabet: &Alphabet,
+    encoder: &PrefixEncoder,
     keep: &[bool; 256],
     mask: Option<&SeedMask>,
 ) -> Result<PartitionedSuffixes<B>>
@@ -134,8 +155,7 @@ where
     T: Int,
     B: ScratchBuffer<Item = T> + Send + Sync,
 {
-    let num_partitions = alphabet.num_partitions();
-    let (bits, count) = (alphabet.bits, alphabet.count);
+    let num_partitions = encoder.num_buckets();
     let mut buffers: Vec<_> = vec![];
     for _ in 0..num_partitions {
         let buffer = B::default();
@@ -159,21 +179,7 @@ where
                     continue;
                 }
 
-                let mut key = 0;
-                match mask {
-                    Some(mask) => {
-                        for (j, &off) in mask.positions.iter().enumerate().take(count) {
-                            let c = text.get(i + off).copied().unwrap_or(0);
-                            key |= alphabet.lookup(c) << ((count - j - 1) * bits);
-                        }
-                    }
-                    None => {
-                        for (j, &c) in text[i..].iter().enumerate().take(count) {
-                            key |= alphabet.lookup(c) << ((count - j - 1) * bits);
-                        }
-                    }
-                }
-
+                let key = encoder.encode(text, i, mask);
                 keys.push(key);
                 counts[key as usize] += 1;
                 suffixes.push(T::from_usize(i));
@@ -281,16 +287,35 @@ pub(super) fn group_buffers<B: ScratchBuffer>(
 
 #[cfg(test)]
 mod test {
-    use super::Alphabet;
+    use super::PrefixEncoder;
+    use crate::format::SeedMask;
+    use anyhow::Result;
 
     #[test]
-    fn test_alphabet_properties() {
-        let nucleic_acid = Alphabet::nucleic_acid();
+    fn test_encoder_properties() {
+        let nucleic_acid = PrefixEncoder::nucleic_acid();
         assert_eq!(nucleic_acid.bits, 3);
         assert_eq!(nucleic_acid.count, 5);
 
-        let amino_acid = Alphabet::amino_acid();
+        let amino_acid = PrefixEncoder::amino_acid();
         assert_eq!(amino_acid.bits, 5);
         assert_eq!(amino_acid.count, 3);
+    }
+
+    #[test]
+    fn test_encode() -> Result<()> {
+        // ranks in $%ACGNT: $=0 %=1 A=2 C=3 G=4 N=5 T=6
+        let text = b"ACGTNA$";
+        let encoder = PrefixEncoder::sniff(text);
+        assert_eq!(encoder.num_buckets(), 1 << 15);
+        assert_eq!(encoder.encode(text, 0, None), 0o23465);
+
+        // a suffix shorter than 5 leaves the low places 0
+        assert_eq!(encoder.encode(text, 4, None), 0o52000);
+
+        let mask = SeedMask::new("1101")?;
+        assert_eq!(encoder.encode(text, 0, Some(&mask)), 0o23600);
+        assert_eq!(encoder.encode(text, 5, Some(&mask)), 0o20000);
+        Ok(())
     }
 }

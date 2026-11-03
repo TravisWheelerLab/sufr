@@ -1,12 +1,15 @@
 use anyhow::Result;
-use libsufr::{Index, Storage, SuffixArrayBuilder, SuffixSortType};
+use libsufr::{Alphabet, Index, Storage, SuffixArrayBuilder, SuffixSortType};
 use tempfile::NamedTempFile;
 
 fn build_and_read(write_lcp: bool) -> Result<Index<u32>> {
     let outfile = NamedTempFile::new()?;
     let outpath = outfile.path().to_string_lossy().to_string();
     SuffixArrayBuilder::from_sequence_file("../data/inputs/1.fa", b'%')?
-        .with_dna_options(true, false, false)
+        .with_alphabet(Alphabet::Dna {
+            allow_ambiguity: false,
+            ignore_softmask: false,
+        })
         .with_write_lcp(write_lcp)
         .build_to_file(&outpath, true)?;
     Index::open(&outpath, Storage::Memory, Storage::Disk, None)

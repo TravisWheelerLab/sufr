@@ -603,7 +603,7 @@ mod tests {
     use super::{Index, Storage, Suffixes, Text};
     use crate::{
         format::{SeedMask, SuffixSortType},
-        SuffixArrayBuilder,
+        Alphabet, SuffixArrayBuilder,
     };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -737,7 +737,10 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
         let mut builder =
             SuffixArrayBuilder::from_data(text.to_vec(), vec![(0, "s".to_string())])
-                .with_dna_options(true, false, false)
+                .with_alphabet(Alphabet::Dna {
+                    allow_ambiguity: false,
+                    ignore_softmask: false,
+                })
                 .with_num_partitions(3)
                 .with_write_lcp(write_lcp);
         if let Some(n) = max_query_len {

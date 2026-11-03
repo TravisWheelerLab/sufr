@@ -27,7 +27,7 @@ mod io;
 mod lcp;
 mod search;
 
-pub use build::SuffixArrayBuilder;
+pub use build::{Alphabet, SuffixArrayBuilder};
 pub use format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
 pub use index::{Index, Metadata, Storage};
 pub use io::Int;
@@ -163,8 +163,8 @@ impl SuffixArray {
 #[cfg(test)]
 mod tests {
     use super::{
-        Index, SeedMask, Storage, SuffixArray, SuffixArrayBuilder, SuffixSortType,
-        OUTFILE_VERSION,
+        Alphabet, Index, SeedMask, Storage, SuffixArray, SuffixArrayBuilder,
+        SuffixSortType, OUTFILE_VERSION,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -177,7 +177,10 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_alphabet(Alphabet::Dna {
+                allow_ambiguity: false,
+                ignore_softmask: false,
+            })
             .with_num_partitions(2)
             .with_write_lcp(true)
             .build_to_file(&outpath, true)?;
@@ -209,7 +212,10 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, true, false)
+            .with_alphabet(Alphabet::Dna {
+                allow_ambiguity: true,
+                ignore_softmask: false,
+            })
             .with_num_partitions(2)
             .with_force_64bit(true)
             .with_write_lcp(true)
@@ -240,7 +246,10 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_alphabet(Alphabet::Dna {
+                allow_ambiguity: false,
+                ignore_softmask: false,
+            })
             .with_num_partitions(2)
             .with_write_lcp(true)
             .build_to_file(&outpath, true)?;
@@ -316,7 +325,10 @@ mod tests {
         // 3 CAAA$
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_alphabet(Alphabet::Dna {
+                allow_ambiguity: false,
+                ignore_softmask: false,
+            })
             .with_num_partitions(1)
             .with_sort_type(SuffixSortType::Mask(SeedMask::new("101").unwrap()))
             .with_write_lcp(true)
@@ -358,7 +370,10 @@ mod tests {
         // 16  3 CAAACAAACAAAC$
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_alphabet(Alphabet::Dna {
+                allow_ambiguity: false,
+                ignore_softmask: false,
+            })
             .with_num_partitions(1)
             .with_sort_type(SuffixSortType::Mask(SeedMask::new("11011").unwrap()))
             .with_write_lcp(true)
@@ -384,7 +399,10 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_alphabet(Alphabet::Dna {
+                allow_ambiguity: false,
+                ignore_softmask: false,
+            })
             .with_num_partitions(1)
             .with_sort_type(SuffixSortType::Mask(SeedMask::new("11000111").unwrap()))
             .with_write_lcp(true)

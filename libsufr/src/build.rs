@@ -12,7 +12,7 @@ use crate::{
 use anyhow::Result;
 use log::info;
 use needletail::parse_fastx_file;
-use partition::{group_buffers, partition, Alphabet};
+use partition::{group_buffers, partition, PrefixEncoder};
 use scratch::{DiskScratchBuffer, MemoryScratchBuffer, ScratchBuffer};
 use sort::{first_lcps, sort_partitions};
 use std::{mem, ops::Range, path::Path, time::Instant};
@@ -22,6 +22,28 @@ use write::write;
 /// the text.
 const SENTINEL_CHARACTER: u8 = b'$';
 
+/// The kind of text a suffix array is built over.
+pub enum Alphabet {
+    /// Nucleotides.
+    Dna {
+        /// Whether to index suffixes starting with a byte other than `ACGT`.
+        allow_ambiguity: bool,
+
+        /// Whether to replace lowercase bytes with `N` rather than
+        /// upper-case them.
+        ignore_softmask: bool,
+    },
+
+    /// Amino acids.
+    Amino {
+        /// Whether to index suffixes starting with an unknown residue.
+        index_unknown: bool,
+    },
+
+    /// Any bytes.
+    Bytes,
+}
+
 /// Configuration and construction of a _.sufr_ file.
 ///
 /// Start from a sequence file with [`SuffixArrayBuilder::from_sequence_file`] or
@@ -30,9 +52,7 @@ const SENTINEL_CHARACTER: u8 = b'$';
 pub struct SuffixArrayBuilder {
     text: Vec<u8>,
     sequences: Vec<(usize, String)>,
-    is_dna: bool,
-    allow_ambiguity: bool,
-    ignore_softmask: bool,
+    alphabet: Alphabet,
 
     /// The seed mask the suffixes are sorted by, if any.
     seed_mask: Option<SeedMask>,
@@ -78,9 +98,7 @@ impl SuffixArrayBuilder {
         Self {
             text,
             sequences,
-            is_dna: false,
-            allow_ambiguity: false,
-            ignore_softmask: false,
+            alphabet: Alphabet::Bytes,
             seed_mask: None,
             max_query_len: 0,
             num_partitions: 1024,
@@ -90,19 +108,9 @@ impl SuffixArrayBuilder {
         }
     }
 
-    /// Set whether the text `is_dna`, and if so whether to index `N`s
-    /// (`allow_ambiguity`) and whether to replace softmasked (lowercase)
-    /// characters with `N` rather than upper-case them (`ignore_softmask`).
-    /// All three default to `false`.
-    pub fn with_dna_options(
-        mut self,
-        is_dna: bool,
-        allow_ambiguity: bool,
-        ignore_softmask: bool,
-    ) -> Self {
-        self.is_dna = is_dna;
-        self.allow_ambiguity = allow_ambiguity;
-        self.ignore_softmask = ignore_softmask;
+    /// Set the alphabet of the text (default: `Alphabet::Bytes`).
+    pub fn with_alphabet(mut self, alphabet: Alphabet) -> Self {
+        self.alphabet = alphabet;
         self
     }
 
@@ -162,28 +170,30 @@ impl SuffixArrayBuilder {
         low_memory: bool,
     ) -> Result<SuffixArray> {
         let path = path.as_ref();
-        let occupancy = normalize(&mut self.text, self.ignore_softmask);
-        let keep = keep_table(self.is_dna, self.allow_ambiguity);
-        let n_ranges = if self.allow_ambiguity {
-            find_n_ranges(&self.text)
-        } else {
-            vec![]
+        normalize(&mut self.text, &self.alphabet);
+        let keep = keep_table(&self.alphabet);
+        let n_ranges = match self.alphabet {
+            Alphabet::Dna {
+                allow_ambiguity: true,
+                ..
+            } => find_n_ranges(&self.text),
+            _ => vec![],
         };
-        let alphabet = Alphabet::for_occupancy(occupancy);
+        let encoder = PrefixEncoder::sniff(&self.text);
 
         let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
         match (fits_u32, self.memory_scratch) {
             (true, false) => sort_and_write::<u32, DiskScratchBuffer<u32>>(
-                &self, path, &alphabet, &keep, &n_ranges,
+                &self, path, &encoder, &keep, &n_ranges,
             )?,
             (true, true) => sort_and_write::<u32, MemoryScratchBuffer<u32>>(
-                &self, path, &alphabet, &keep, &n_ranges,
+                &self, path, &encoder, &keep, &n_ranges,
             )?,
             (false, false) => sort_and_write::<u64, DiskScratchBuffer<u64>>(
-                &self, path, &alphabet, &keep, &n_ranges,
+                &self, path, &encoder, &keep, &n_ranges,
             )?,
             (false, true) => sort_and_write::<u64, MemoryScratchBuffer<u64>>(
-                &self, path, &alphabet, &keep, &n_ranges,
+                &self, path, &encoder, &keep, &n_ranges,
             )?,
         }
 
@@ -201,7 +211,7 @@ impl SuffixArrayBuilder {
 fn sort_and_write<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
     builder: &SuffixArrayBuilder,
     path: &Path,
-    alphabet: &Alphabet,
+    encoder: &PrefixEncoder,
     keep: &[bool; 256],
     n_ranges: &[Range<usize>],
 ) -> Result<()> {
@@ -209,7 +219,7 @@ fn sort_and_write<T: Int, B: ScratchBuffer<Item = T> + Send + Sync>(
     let mask = builder.seed_mask.as_ref();
     let max_query_len = builder.max_query_len;
 
-    let partitioned = partition::<T, B>(text, alphabet, keep, mask)?;
+    let partitioned = partition::<T, B>(text, encoder, keep, mask)?;
     let num_suffixes = partitioned.num_suffixes;
     let groups = group_buffers(partitioned, builder.num_partitions)?;
     let partitions = sort_partitions(
@@ -236,11 +246,18 @@ fn header(
     int_size: usize,
     num_suffixes: usize,
 ) -> Header {
+    let (is_dna, allow_ambiguity, ignore_softmask) = match builder.alphabet {
+        Alphabet::Dna {
+            allow_ambiguity,
+            ignore_softmask,
+        } => (true, allow_ambiguity, ignore_softmask),
+        Alphabet::Amino { .. } | Alphabet::Bytes => (false, false, false),
+    };
     let mut header = Header {
         version: OUTFILE_VERSION,
-        is_dna: builder.is_dna,
-        allow_ambiguity: builder.allow_ambiguity,
-        ignore_softmask: builder.ignore_softmask,
+        is_dna,
+        allow_ambiguity,
+        ignore_softmask,
         text_len: builder.text.len(),
         num_suffixes,
         sort_type: match &builder.seed_mask {
@@ -262,10 +279,16 @@ fn header(
     header
 }
 
-/// Upper-case soft-masked characters (or replace them with `N` when
-/// `ignore_softmask` is set) and return which bytes occur in the text.
-fn normalize(text: &mut [u8], ignore_softmask: bool) -> [u8; 256] {
-    let mut occupancy = [0u8; 256];
+/// Upper-case soft-masked characters, or replace them with `N` when the
+/// alphabet is `Dna` with `ignore_softmask`.
+fn normalize(text: &mut [u8], alphabet: &Alphabet) {
+    let ignore_softmask = matches!(
+        alphabet,
+        Alphabet::Dna {
+            ignore_softmask: true,
+            ..
+        }
+    );
     for b in text.iter_mut() {
         if b.is_ascii_lowercase() {
             if ignore_softmask {
@@ -274,23 +297,28 @@ fn normalize(text: &mut [u8], ignore_softmask: bool) -> [u8; 256] {
                 *b = b.to_ascii_uppercase()
             }
         }
-        occupancy[*b as usize] |= 1;
     }
-    occupancy
 }
 
-/// The first bytes of the suffixes that are indexed: all of them unless
-/// the text `is_dna`, and then `ACGT` and the sentinel, plus every other
-/// byte with `allow_ambiguity`.
-fn keep_table(is_dna: bool, allow_ambiguity: bool) -> [bool; 256] {
-    let mut keep = [false; 256];
-    for (c, kept) in keep.iter_mut().enumerate() {
-        let c = c as u8;
-        *kept = c == SENTINEL_CHARACTER
-            || !is_dna
-            || (b"ACGT".contains(&c) || allow_ambiguity);
+/// The first bytes of the suffixes that are indexed: `ACGT` and the
+/// sentinel for `Dna` without `allow_ambiguity`, else every byte.
+fn keep_table(alphabet: &Alphabet) -> [bool; 256] {
+    match alphabet {
+        Alphabet::Dna {
+            allow_ambiguity: false,
+            ..
+        } => {
+            let mut keep = [false; 256];
+            for &c in b"ACGT" {
+                keep[c as usize] = true;
+            }
+            keep[SENTINEL_CHARACTER as usize] = true;
+            keep
+        }
+        // TODO: index_unknown is recorded but not acted on; dropping
+        // `*`, `-` and `X` is out of scope for now
+        Alphabet::Dna { .. } | Alphabet::Amino { .. } | Alphabet::Bytes => [true; 256],
     }
-    keep
 }
 
 /// The text and sequences read from a FASTA/FASTQ file.
@@ -367,7 +395,7 @@ fn find_n_ranges(text: &[u8]) -> Vec<Range<usize>> {
 
 #[cfg(test)]
 mod test {
-    use super::{read_sequence_file, SuffixArrayBuilder};
+    use super::{keep_table, read_sequence_file, Alphabet, SuffixArrayBuilder};
     use crate::SuffixArray;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -388,6 +416,42 @@ mod test {
     }
 
     #[test]
+    fn test_keep_table() {
+        let kept = |alphabet| -> Vec<u8> {
+            let keep = keep_table(&alphabet);
+            (0..=255u8).filter(|&c| keep[c as usize]).collect()
+        };
+        let every_byte: Vec<u8> = (0..=255).collect();
+        assert_eq!(
+            kept(Alphabet::Dna {
+                allow_ambiguity: false,
+                ignore_softmask: false,
+            }),
+            b"$ACGT"
+        );
+        assert_eq!(
+            kept(Alphabet::Dna {
+                allow_ambiguity: true,
+                ignore_softmask: false,
+            }),
+            every_byte
+        );
+        assert_eq!(
+            kept(Alphabet::Amino {
+                index_unknown: false
+            }),
+            every_byte
+        );
+        assert_eq!(
+            kept(Alphabet::Amino {
+                index_unknown: true
+            }),
+            every_byte
+        );
+        assert_eq!(kept(Alphabet::Bytes), every_byte);
+    }
+
+    #[test]
     fn test_memory_scratch_matches_disk() -> Result<()> {
         let build = |memory_scratch| -> Result<Vec<u8>> {
             let outfile = NamedTempFile::new()?;
@@ -405,7 +469,10 @@ mod test {
     fn test_write() -> Result<()> {
         let outfile = NamedTempFile::new()?;
         SuffixArrayBuilder::from_sequence_file("../data/inputs/3.fa", b'%')?
-            .with_dna_options(true, false, true)
+            .with_alphabet(Alphabet::Dna {
+                allow_ambiguity: false,
+                ignore_softmask: true,
+            })
             .build_to_file(outfile.path(), false)?;
         let suffix_array = SuffixArray::open(&outfile.path().to_string_lossy())?;
         let meta = suffix_array.metadata()?;
