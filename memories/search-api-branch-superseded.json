@@ -1,0 +1,10 @@
+{
+  "slug": "search-api-branch-superseded",
+  "text": "Branch search-api (6 commits off e8655c9's parent) was the first draft of the query-only API. It was never merged; the refactor rebuilt its ideas as Hits, Location, Extraction and search_all in libsufr/src/search.rs (8022b6a). It conflicts with dev in 5 files and can be deleted once nobody needs it for reference.",
+  "created_at": "2026-11-03T07:53:00.490386229Z",
+  "updated_at": "2026-11-03T07:53:00.490386229Z",
+  "stamp": {
+    "commit": "6df218d",
+    "branch": "refactor"
+  }
+}
