@@ -1,0 +1,28 @@
+{
+  "id": "sufr-d7008e",
+  "title": "The builder takes one Alphabet, and the partition table is a PrefixEncoder",
+  "body": "Two unrelated things in the builder are both called alphabet.\n\n`SuffixArrayBuilder::with_dna_options(is_dna, allow_ambiguity, ignore_softmask)` (`libsufr/src/build.rs`) sets three bools. `normalize(text, ignore_softmask)` rewrites lowercase bytes to uppercase or to `N`, `keep_table(is_dna, allow_ambiguity)` decides which first bytes start an indexed suffix, and `header` writes the three bools as bytes 1 to 3. `ignore_softmask` without `is_dna` indexes the `N`s it writes; nothing stops that combination.\n\n`Alphabet` in `build/partition.rs` is a byte-to-position table with `bits` and `count`, sniffed from the `[u8; 256]` occupancy that `normalize` returns. `partition` reads its fields and packs the first `count` positions of each suffix into a `u16` bucket number in a loop of its own.\n\n## Proposal\n\n- `pub enum Alphabet { Dna { allow_ambiguity: bool, ignore_softmask: bool }, Amino { index_unknown: bool }, Bytes }` on the builder through `with_alphabet`. `with_dna_options` goes. `normalize`, `keep_table` and `header` take `&Alphabet`. `Amino { index_unknown: true }` and `Bytes` behave as today's no-flag build, so results do not change. The CLI maps `--dna`, `-a` and `-i` onto `Dna`.\n- The partition table becomes `PrefixEncoder`, private to `build/partition.rs`, with `sniff(text)` doing the occupancy pass itself, `num_buckets()`, and `encode(text, i, mask) -> u16` holding the packing loop. `partition` calls `encode` and no longer reads `bits` or `count`. `normalize` stops returning occupancy.\n\nThe `.sufr` bytes do not change. The create benchmark on the 50 MB input runs before and after, since `encode` is in the partition loop.\n\n## Out of scope\n\nProtein-specific keep behaviour (dropping `*`, `-`, `X`), validation of the text against the declared alphabet, and an `Rna` variant.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-03T05:23:22.360847978Z",
+  "updated_at": "2026-11-03T05:23:22.360847978Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7cf3db1",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
