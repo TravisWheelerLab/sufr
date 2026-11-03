@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T07:14:29.326989187Z",
-  "updated_at": "2026-11-03T07:22:01.5970468Z",
+  "updated_at": "2026-11-03T07:46:57.882733178Z",
   "closed_at": "2026-11-03T07:22:01.5970468Z",
   "close_reason": "Landed in 4dd5769: SuffixArray::construct in lib.rs, build::construct::<T> as the pipeline, Index::new shared by open and construct, Scratch enum in place of the ScratchBuffer trait. Peak RSS down by the text's size; create 2-3% faster.",
   "resolution": "done",
-  "notes": [],
+  "notes": [
+    {
+      "id": "75581dc9",
+      "at": "2026-11-03T07:46:57.882732548Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "Follow-up in 6df218d: the width match moved back into build_to_file and SuffixArray::construct was removed. Jack preferred the builder deciding width over the hop into lib.rs and back; build::construct::<T> and Index::new are unchanged.",
+      "commit": "6df218d",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "0db4e9b",
