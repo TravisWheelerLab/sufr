@@ -56,13 +56,9 @@ impl PrefixEncoder {
         }
     }
 
-    /// The nucleic acid encoder when `text` holds only its bytes, else
-    /// the amino acid encoder when it holds only those, else bytes.
-    pub(super) fn sniff(text: &[u8]) -> Self {
-        let mut occupancy = [false; 256];
-        for &b in text {
-            occupancy[b as usize] = true;
-        }
+    /// The nucleic acid encoder when `occupancy` marks only its bytes,
+    /// else the amino acid encoder when it marks only those, else bytes.
+    pub(super) fn from_occupancy(mut occupancy: [bool; 256]) -> Self {
         for &c in NUCLEIC_ACID {
             occupancy[c as usize] = false;
         }
@@ -306,7 +302,11 @@ mod test {
     fn test_encode() -> Result<()> {
         // ranks in $%ACGNT: $=0 %=1 A=2 C=3 G=4 N=5 T=6
         let text = b"ACGTNA$";
-        let encoder = PrefixEncoder::sniff(text);
+        let mut occupancy = [false; 256];
+        for &b in text {
+            occupancy[b as usize] = true;
+        }
+        let encoder = PrefixEncoder::from_occupancy(occupancy);
         assert_eq!(encoder.num_buckets(), 1 << 15);
         assert_eq!(encoder.encode(text, 0, None), 0o23465);
 

@@ -170,7 +170,7 @@ impl SuffixArrayBuilder {
         low_memory: bool,
     ) -> Result<SuffixArray> {
         let path = path.as_ref();
-        normalize(&mut self.text, &self.alphabet);
+        let occupancy = normalize(&mut self.text, &self.alphabet);
         let keep = keep_table(&self.alphabet);
         let n_ranges = match self.alphabet {
             Alphabet::Dna {
@@ -179,7 +179,7 @@ impl SuffixArrayBuilder {
             } => find_n_ranges(&self.text),
             _ => vec![],
         };
-        let encoder = PrefixEncoder::sniff(&self.text);
+        let encoder = PrefixEncoder::from_occupancy(occupancy);
 
         let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
         match (fits_u32, self.memory_scratch) {
@@ -280,8 +280,8 @@ fn header(
 }
 
 /// Upper-case soft-masked characters, or replace them with `N` when the
-/// alphabet is `Dna` with `ignore_softmask`.
-fn normalize(text: &mut [u8], alphabet: &Alphabet) {
+/// alphabet is `Dna` with `ignore_softmask`, and return which bytes occur.
+fn normalize(text: &mut [u8], alphabet: &Alphabet) -> [bool; 256] {
     let ignore_softmask = matches!(
         alphabet,
         Alphabet::Dna {
@@ -289,6 +289,7 @@ fn normalize(text: &mut [u8], alphabet: &Alphabet) {
             ..
         }
     );
+    let mut occupancy = [false; 256];
     for b in text.iter_mut() {
         if b.is_ascii_lowercase() {
             if ignore_softmask {
@@ -297,7 +298,9 @@ fn normalize(text: &mut [u8], alphabet: &Alphabet) {
                 *b = b.to_ascii_uppercase()
             }
         }
+        occupancy[*b as usize] = true;
     }
+    occupancy
 }
 
 /// The first bytes of the suffixes that are indexed: `ACGT` and the
