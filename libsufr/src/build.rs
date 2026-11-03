@@ -169,26 +169,42 @@ impl SuffixArrayBuilder {
         path: impl AsRef<Path>,
         low_memory: bool,
     ) -> Result<SuffixArray> {
-        SuffixArray::construct(
-            path.as_ref(),
-            self.text,
-            self.sequences,
-            self.alphabet,
-            self.seed_mask,
-            self.max_query_len,
-            self.num_partitions,
-            self.write_lcp,
-            self.memory_scratch,
-            self.force_64bit,
-            low_memory,
-        )
+        let path = path.as_ref();
+        let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
+        if fits_u32 {
+            Ok(SuffixArray::U32(construct::<u32>(
+                path,
+                self.text,
+                self.sequences,
+                self.alphabet,
+                self.seed_mask,
+                self.max_query_len,
+                self.num_partitions,
+                self.write_lcp,
+                self.memory_scratch,
+                low_memory,
+            )?))
+        } else {
+            Ok(SuffixArray::U64(construct::<u64>(
+                path,
+                self.text,
+                self.sequences,
+                self.alphabet,
+                self.seed_mask,
+                self.max_query_len,
+                self.num_partitions,
+                self.write_lcp,
+                self.memory_scratch,
+                low_memory,
+            )?))
+        }
     }
 }
 
 /// Build the suffix array of `text` with `T` per suffix and LCP, write it
 /// to `path` and open the result.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn construct<T: Int>(
+fn construct<T: Int>(
     path: &Path,
     mut text: Vec<u8>,
     sequences: Vec<(usize, String)>,
