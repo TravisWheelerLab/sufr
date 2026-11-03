@@ -1,8 +1,8 @@
 {
   "slug": "benchmark-and-sweep-scripts",
-  "text": "The create benchmark is the cargo project benchmarks/ on branch bench at efaf30f: cargo run --release -- [WHICH] [-t N] [-r N] [-s MiB] [--compare-to label=path]. Groups normal, long-n, long-repeats, protein; default 10 MiB; rows append to runs/results.tsv. The differential sweep is still untracked: tmp-claude/2026-11-02-refactor-survey/construct/sweep.sh diffs stdout, exit codes and .sufr bytes of two binaries over every fixture, mode and flag.",
+  "text": "The differential sweep is local and untracked: tmp-claude/2026-11-02-refactor-survey/construct/sweep.sh runs ~7400 CLI invocations over every fixture, memory mode and flag against an old and a new binary and diffs stdout, exit codes and .sufr bytes. The benchmark suite is described in benchmark-suite-location.",
   "created_at": "2026-11-03T07:53:00.482384852Z",
-  "updated_at": "2026-11-03T22:40:25.090188905Z",
+  "updated_at": "2026-11-03T22:47:05.427311865Z",
   "stamp": {
     "commit": "efaf30f",
     "branch": "bench"
