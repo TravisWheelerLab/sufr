@@ -1,0 +1,28 @@
+{
+  "id": "sufr-bd7605",
+  "title": "locate orders hits by sequence name as text, not by file order",
+  "body": "`locate` in `libsufr/src/search.rs` (around line 325) sorts the hits by `sequence_name` compared as text, then by `position`. Names that are numbers come out in dictionary order: records named `1`, `2`, `10` in that file order are printed as `1`, `10`, `2`. The CLI prints the groups in that order.\n\nJack decided on 2026-11-03 that the groups come out in file order, the order the records had in the input, which `sequence_start` gives directly.\n\n## Proposal\n\nSort by `sequence_start`, then `position`. The expected `.out` files for the uniprot locate tests move if uniprot's accession names are not in file order already; the test run says which.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T06:02:22.649930401Z",
+  "updated_at": "2026-11-04T06:02:22.649930401Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9722e49",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
