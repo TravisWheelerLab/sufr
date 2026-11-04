@@ -514,6 +514,8 @@ mod test {
 
         // both suffixes inside a run of four N, max query len 2
         let text = b"NNNNA";
+        // from_ref, since clippy reads the array literal [0..4]
+        // as a typo for a range
         assert_eq!(
             find_lcp::<u32>(
                 text,
