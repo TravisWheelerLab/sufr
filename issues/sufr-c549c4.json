@@ -1,0 +1,28 @@
+{
+  "id": "sufr-c549c4",
+  "title": "open_with picks the integer width by text length and ignores the header's int_size",
+  "body": "`SuffixArray::open_with` (`libsufr/src/lib.rs`, around line 95) picks the integer width by text length: `read_text_length` under `u32::MAX` opens as `TypedSuffixArray<u32>`, otherwise `<u64>`. The file records its width in `Header::int_size` and the open path ignores it. A text under 4 GiB written as u64 opens as u32 and is misread.\n\nThe only way to write such a file is `SuffixArrayBuilder::with_force_64bit` (`build.rs:154`), which is `pub(crate)` under `cfg(test)` because of the above: only `TypedSuffixArray::<u64>::open` can read what it writes. The unit test at `lib.rs:270` uses that path. Both came in with the commit that restored the builder API from dev.\n\nThe construction oracle (sufr-a88738) is an integration test and so cannot build or open a u64 file. It covers u32 only until this is fixed.\n\n## Proposal\n\n- `open_with` reads the header and dispatches on `int_size`.\n- `with_force_64bit` becomes a public builder setting, without `cfg(test)`.\n- The oracle's table then runs every row at both widths.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T05:28:38.711716226Z",
+  "updated_at": "2026-11-04T05:28:38.711716226Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "86cf586",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
