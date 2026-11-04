@@ -436,7 +436,12 @@ fn find_lcp<T: Int>(
     if let (Some(end1), Some(end2)) =
         (find_n_run(n_ranges, start1), find_n_run(n_ranges, start2))
     {
-        return T::from_usize(min(end1 - start1, end2 - start2));
+        let run = min(end1 - start1, end2 - start2);
+        return T::from_usize(if max_query_len > 0 {
+            min(run, max_query_len)
+        } else {
+            run
+        });
     }
 
     // `len` counts bytes past `skip`, so the cap leaves
@@ -506,6 +511,10 @@ mod test {
 
         // skip 1 with max query len 3: one byte left, T == T
         assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 1, None, 3, &[], None), 3);
+
+        // both suffixes inside a run of four N, max query len 2
+        let text = b"NNNNA";
+        assert_eq!(find_lcp::<u32>(text, 0, 1, 5, 0, None, 2, &[0..4], None), 2);
 
         Ok(())
     }
