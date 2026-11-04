@@ -216,6 +216,21 @@ fn the_cap_at_search_time_bounds_the_comparison() -> Result<()> {
 }
 
 #[test]
+fn a_cap_of_zero_at_search_time_means_the_files_cap() -> Result<()> {
+    // built on the first 2 bytes, so no search may compare more
+    let outfile = NamedTempFile::new()?;
+    SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
+        .with_alphabet(DNA)
+        .with_max_query_len(2)
+        .build_to_file(outfile.path(), false)?;
+    for max_query_len in [None, Some(0), Some(9)] {
+        let sa = open(&outfile, Storage::Memory, Storage::Memory, max_query_len)?;
+        assert_eq!(sa.search(b"ACGTX")?.count(), 4, "{max_query_len:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn a_seed_mask_skips_its_dont_care_positions() -> Result<()> {
     // mask 101 reads bytes 0 and 2 of the query and the suffix
     let file = build("2", DNA, Some("101"))?;

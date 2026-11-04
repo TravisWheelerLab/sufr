@@ -575,9 +575,9 @@ impl<T: Int> TypedSuffixArray<T> {
 /// file sorted by its first `built` characters.
 fn searched_len(built: usize, max_query_len: Option<usize>) -> usize {
     match max_query_len {
+        Some(0) | None => built,
         Some(mql) if built > 0 => min(built, mql),
         Some(mql) => mql,
-        None => built,
     }
 }
 
