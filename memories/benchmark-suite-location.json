@@ -1,10 +1,10 @@
 {
   "slug": "benchmark-suite-location",
-  "text": "The benchmark suite is the cargo project benchmarks/ on branch bench (1e4005e..efaf30f) and no other branch until the branches are collapsed. Run from benchmarks/: cargo run --release -- [WHICH] [-t N] [-r N] [-s MiB] [--compare-to label=path]. Groups normal, long-n, long-repeats, protein; default 10 MiB; rows append to runs/results.tsv. On other branches benchmarks/ shows as untracked: its ignored runs/ and target/ stay behind.",
+  "text": "The benchmark suite is the cargo project benchmarks/ on branch bench only; a worktree of bench is at tmp-claude/2026-11-03-lcp-cap/bench. From its benchmarks/: cargo run --release -- [GROUP] -t 4 -r 5 --bin before=PATH --bin after=PATH -o /home/jack/projects/sufr/benchmarks/runs, at most one group of normal, long-n, long-repeats, protein; default 10 MiB. It fingerprints a first run and refuses two binaries whose output differs, so a change that moves the bytes is timed by hand. Checked 2026-11-03.",
   "created_at": "2026-11-03T22:47:05.419363109Z",
-  "updated_at": "2026-11-04T01:53:47.202220692Z",
+  "updated_at": "2026-11-04T06:58:36.56947159Z",
   "stamp": {
-    "commit": "6edc011",
+    "commit": "fc5db36",
     "branch": "refactor"
   }
 }
