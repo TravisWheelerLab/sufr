@@ -164,63 +164,60 @@ impl SuffixArrayBuilder {
         let path = path.as_ref();
         let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
         match (fits_u32, self.memory_scratch) {
-            (true, true) => construct::<u32, Memory<u32>>(self, path),
-            (true, false) => construct::<u32, Disk<u32>>(self, path),
-            (false, true) => construct::<u64, Memory<u64>>(self, path),
-            (false, false) => construct::<u64, Disk<u64>>(self, path),
+            (true, true) => self.construct::<u32, Memory<u32>>(path),
+            (true, false) => self.construct::<u32, Disk<u32>>(path),
+            (false, true) => self.construct::<u64, Memory<u64>>(path),
+            (false, false) => self.construct::<u64, Disk<u64>>(path),
         }
     }
-}
 
-/// Build the suffix array of the builder's text with `W` per suffix and
-/// LCP and the unsorted and sorted suffixes held in `S`, and write it to
-/// `path`.
-fn construct<W: Int, S: Buffer<W>>(
-    builder: SuffixArrayBuilder,
-    path: &Path,
-) -> Result<()> {
-    let SuffixArrayBuilder {
-        mut text,
-        sequences,
-        alphabet,
-        seed_mask: mask,
-        max_query_len,
-        num_partitions,
-        write_lcp,
-        ..
-    } = builder;
-    let occupancy = normalize(&mut text, &alphabet);
-    let keep = keep_table(&alphabet);
-    let n_ranges = match alphabet {
-        Alphabet::Dna {
-            allow_ambiguity: true,
+    /// Build the suffix array of the text with `W` per suffix and LCP and
+    /// the unsorted and sorted suffixes held in `S`, and write it to
+    /// `path`.
+    fn construct<W: Int, S: Buffer<W>>(self, path: &Path) -> Result<()> {
+        let SuffixArrayBuilder {
+            mut text,
+            sequences,
+            alphabet,
+            seed_mask: mask,
+            max_query_len,
+            num_partitions,
+            write_lcp,
             ..
-        } => find_n_ranges(&text),
-        _ => vec![],
-    };
-    let encoder = PrefixEncoder::from_occupancy(occupancy);
-    let mask = mask.as_ref();
+        } = self;
+        let occupancy = normalize(&mut text, &alphabet);
+        let keep = keep_table(&alphabet);
+        let n_ranges = match alphabet {
+            Alphabet::Dna {
+                allow_ambiguity: true,
+                ..
+            } => find_n_ranges(&text),
+            _ => vec![],
+        };
+        let encoder = PrefixEncoder::from_occupancy(occupancy);
+        let mask = mask.as_ref();
 
-    let partitioned = partition::<W, S>(&text, &encoder, &keep, mask)?;
-    let header = header(
-        &alphabet,
-        &sequences,
-        text.len(),
-        partitioned.num_suffixes,
-        mask,
-        max_query_len,
-        write_lcp,
-        mem::size_of::<W>(),
-    );
-    let groups = group_buffers(partitioned, num_partitions)?;
-    let partitions =
-        sort_partitions(&text, groups, mask, max_query_len, &n_ranges, write_lcp)?;
-    let first_lcps = if write_lcp {
-        first_lcps(&text, &partitions, mask, max_query_len, &n_ranges)
-    } else {
-        vec![]
-    };
-    write(path, &header, &text, partitions, &first_lcps)
+        let partitioned = partition::<W, S>(&text, &encoder, &keep, mask)?;
+        let header = header(
+            &alphabet,
+            &sequences,
+            text.len(),
+            partitioned.num_suffixes,
+            mask,
+            max_query_len,
+            write_lcp,
+            mem::size_of::<W>(),
+        );
+        let groups = group_buffers(partitioned, num_partitions)?;
+        let partitions =
+            sort_partitions(&text, groups, mask, max_query_len, &n_ranges, write_lcp)?;
+        let first_lcps = if write_lcp {
+            first_lcps(&text, &partitions, mask, max_query_len, &n_ranges)
+        } else {
+            vec![]
+        };
+        write(path, &header, &text, partitions, &first_lcps)
+    }
 }
 
 /// The header of the output file, with `int_size` bytes per
