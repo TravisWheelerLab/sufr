@@ -3,11 +3,10 @@
 use anyhow::{bail, Result};
 use rayon::prelude::*;
 use std::{
-    fmt::{Debug, Display},
+    fmt::Debug,
     fs::File,
-    hash::Hash,
     io,
-    ops::{Add, AddAssign, Sub},
+    ops::{Add, Sub},
     slice,
 };
 
@@ -24,52 +23,40 @@ mod sealed {
 /// The trait is sealed because the byte casts in this module rely on
 /// `u8`, `u32` and `u64` having no padding and no invalid bit patterns.
 pub trait Int:
-    Debug
-    + AddAssign
-    + Add<Output = Self>
-    + Sub<Output = Self>
-    + Copy
+    Copy
     + Default
-    + Display
     + Ord
-    + Hash
+    + Debug
     + Send
     + Sync
     + 'static
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Into<u64>
     + sealed::Sealed
 {
     /// The value as a `usize`.
-    fn to_usize(&self) -> usize;
+    fn to_usize(self) -> usize {
+        self.into() as usize
+    }
 
     /// The value of `val`, truncated to `Self`.
     fn from_usize(val: usize) -> Self;
 }
 
 impl Int for u8 {
-    fn to_usize(&self) -> usize {
-        *self as usize
-    }
-
     fn from_usize(val: usize) -> Self {
         val as Self
     }
 }
 
 impl Int for u32 {
-    fn to_usize(&self) -> usize {
-        *self as usize
-    }
-
     fn from_usize(val: usize) -> Self {
         val as Self
     }
 }
 
 impl Int for u64 {
-    fn to_usize(&self) -> usize {
-        *self as usize
-    }
-
     fn from_usize(val: usize) -> Self {
         val as Self
     }

@@ -272,7 +272,7 @@ impl<W: Int, T: Buffer<u8>, S: Buffer<W>> TypedSuffixArray<W, T, S> {
             .suffixes
             .range(ranks)?
             .iter()
-            .map(Int::to_usize)
+            .map(|&v| v.to_usize())
             .collect())
     }
 
@@ -280,7 +280,9 @@ impl<W: Int, T: Buffer<u8>, S: Buffer<W>> TypedSuffixArray<W, T, S> {
     /// error when the file has no LCP array.
     pub(crate) fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
         match &self.lcps {
-            Some(lcps) => Ok(lcps.range(ranks)?.iter().map(Int::to_usize).collect()),
+            Some(lcps) => {
+                Ok(lcps.range(ranks)?.iter().map(|&v| v.to_usize()).collect())
+            }
             None => bail!("{} has no LCP array", self.filename),
         }
     }
