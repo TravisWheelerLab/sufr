@@ -3,7 +3,7 @@
   "title": "mk_test_files.py rebuilds the fixtures without the LCP array they contain",
   "body": "The files in `data/expected/*.sufr` contain an LCP array. A fresh `sufr create` run with the flags recorded in `mk_test_files.py` writes no LCP array, so its output differs from the fixture at byte 29 and is shorter. With `--write-lcp` added, all eight fixture inputs rebuild byte-identical to the fixtures. I checked this on branch `refactor` at e8655c9 with a debug build, at `-n 3` and at the default partition count.\n\n`mk_test_files.py` does not pass `--write-lcp`, so running it today would replace the fixtures with files that have no LCP array.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:50.418157215Z",
-  "updated_at": "2026-11-02T19:59:04.513682445Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-04T06:32:17.762953672Z",
+  "closed_at": "2026-11-04T06:32:17.762953672Z",
+  "close_reason": "mk_test_files.py is deleted in 56db6ff.",
+  "resolution": "dropped",
   "notes": [
     {
       "id": "78c9a799",
@@ -32,6 +32,9 @@
       "commit": "e8655c9",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "56db6ff",
+      "branch": "refactor"
+    }
   }
 }
