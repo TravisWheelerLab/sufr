@@ -324,11 +324,7 @@ impl<T: Int> TypedSuffixArray<T> {
                 }
             })
             .collect();
-        locations.sort_by(|a, b| {
-            a.sequence_name
-                .cmp(b.sequence_name)
-                .then(a.position.cmp(&b.position))
-        });
+        locations.sort_by_key(|l| (l.sequence_start, l.position));
         Ok(locations)
     }
 
