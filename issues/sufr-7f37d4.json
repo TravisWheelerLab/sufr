@@ -3,7 +3,7 @@
   "title": "What level of differential check does a behaviour-preserving change need?",
   "body": "`CLAUDE.md` says a behaviour-preserving change is checked with the differential sweep. The sweep is `tmp-claude/2026-11-02-refactor-survey/alphabet/sweep.sh`. It makes 7,376 CLI runs over every fixture, mode and flag, and we diff the outputs against the same runs from a before binary built in a worktree of the old commit. The rule has one level. Moving a `collect` in `sufr/src/lib.rs` gets the same check as changing `merge_sort`.\n\nFor sufr-e1ec81 Jack skipped the sweep in conversation. `cargo test` and a spot check of `count`, `locate` and `extract` on one fixture stood in for it. No rule says when that is enough.\n\n## Proposal\n\nAdd a heuristic to the rule that picks the check from the kind of change. Candidate levels, cheapest first.\n\n| level | check | kind of change |\n|---|---|---|\n| tests | `cargo test` | a change that moves a call in the CLI and leaves the library's search code alone |\n| spot | tests, plus one fixture through each touched subcommand against the before binary | a change in how a subcommand assembles its output |\n| sweep | the full differential sweep | a change under `build/`, in the `.sufr` writer or reader, or in a search path |\n\n## Open\n\n- Whether three levels are right, and what test places a change in one.\n- Whether the sweep script gets checked in. The rule depends on it and it is untracked.\n\nJack asked for this review after sufr-e1ec81 lands and before the next code change.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T02:01:47.880673388Z",
-  "updated_at": "2026-11-04T02:01:47.880673388Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-04T02:45:51.078921598Z",
+  "closed_at": "2026-11-04T02:45:51.078921598Z",
+  "close_reason": "Jack decided on 2026-11-03 to drop the differential sweep rather than grade it. sufr-25f57e moves what the sweep checked into sufr/tests/cli.rs and rewrites the CLAUDE.md sentence.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "6edc011",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "4e04a02",
+      "branch": "refactor"
+    }
   }
 }
