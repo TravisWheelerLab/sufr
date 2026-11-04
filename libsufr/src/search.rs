@@ -355,21 +355,21 @@ impl<T: Int> TypedSuffixArray<T> {
         let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
         let sequence_start = seq_starts[i];
 
-        // TODO: seq_end is a position in the text but is compared
-        //       with positions relative to the sequence start, so
-        //       context past the first sequence runs past its end
-        let seq_end = if i == seq_starts.len() - 1 {
-            text_len
+        // the delimiter sits before the next sequence's start, and
+        // the sentinel before the text's end; neither is sequence
+        // content
+        let sequence_len = if i == seq_starts.len() - 1 {
+            text_len - 1
         } else {
-            seq_starts[i + 1]
-        };
+            seq_starts[i + 1] - 1
+        } - sequence_start;
         let relative_suffix_start = suffix - sequence_start;
         let context_start = relative_suffix_start.saturating_sub(context.before);
         let context_end = min(
             context
                 .after
-                .map_or(seq_end, |len| relative_suffix_start + len),
-            seq_end,
+                .map_or(sequence_len, |len| relative_suffix_start + len),
+            sequence_len,
         );
         Extraction {
             location: Location {
@@ -489,11 +489,11 @@ mod tests {
             extractions,
             [
                 vec![extraction(6, 1, 5..9, 1), extraction(0, 2, 0..3, 0)],
-                vec![extraction(8, 5, 7..11, 1), extraction(2, 6, 1..5, 1)],
+                vec![extraction(8, 5, 7..10, 1), extraction(2, 6, 1..5, 1)],
                 vec![],
             ]
         );
-        assert_eq!(window(&sa, &extractions[1][0])?, b"CGT$");
+        assert_eq!(window(&sa, &extractions[1][0])?, b"CGT");
         assert_eq!(window(&sa, &extractions[1][1])?, b"CGTN");
         Ok(())
     }
@@ -507,10 +507,10 @@ mod tests {
         })?;
         assert_eq!(
             extractions,
-            [extraction(7, 3, 6..11, 1), extraction(1, 4, 0..11, 1)]
+            [extraction(7, 3, 6..10, 1), extraction(1, 4, 0..10, 1)]
         );
-        assert_eq!(window(&sa, &extractions[0])?, b"ACGT$");
-        assert_eq!(window(&sa, &extractions[1])?, b"ACGTNNACGT$");
+        assert_eq!(window(&sa, &extractions[0])?, b"ACGT");
+        assert_eq!(window(&sa, &extractions[1])?, b"ACGTNNACGT");
         Ok(())
     }
 
