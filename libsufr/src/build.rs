@@ -5,9 +5,9 @@ mod write;
 
 use crate::{
     format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION},
-    index::{Index, Storage, Text},
     io::Int,
-    SuffixArray,
+    typed::{Storage, Text, TypedSuffixArray},
+    SuffixArray, SuffixArrayKind,
 };
 use anyhow::Result;
 use log::info;
@@ -148,7 +148,7 @@ impl SuffixArrayBuilder {
         self
     }
 
-    // only Index::<u64> can read a small text written this
+    // only TypedSuffixArray::<u64> can read a small text written this
     // way, so this is for tests
     #[cfg(test)]
     pub(crate) fn with_force_64bit(mut self, force_64bit: bool) -> Self {
@@ -171,8 +171,8 @@ impl SuffixArrayBuilder {
     ) -> Result<SuffixArray> {
         let path = path.as_ref();
         let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
-        if fits_u32 {
-            Ok(SuffixArray::U32(construct::<u32>(
+        let inner = if fits_u32 {
+            SuffixArrayKind::U32(construct::<u32>(
                 path,
                 self.text,
                 self.sequences,
@@ -183,9 +183,9 @@ impl SuffixArrayBuilder {
                 self.write_lcp,
                 self.memory_scratch,
                 low_memory,
-            )?))
+            )?)
         } else {
-            Ok(SuffixArray::U64(construct::<u64>(
+            SuffixArrayKind::U64(construct::<u64>(
                 path,
                 self.text,
                 self.sequences,
@@ -196,8 +196,9 @@ impl SuffixArrayBuilder {
                 self.write_lcp,
                 self.memory_scratch,
                 low_memory,
-            )?))
-        }
+            )?)
+        };
+        Ok(SuffixArray { inner })
     }
 }
 
@@ -215,7 +216,7 @@ fn construct<T: Int>(
     write_lcp: bool,
     memory_scratch: bool,
     low_memory: bool,
-) -> Result<Index<T>> {
+) -> Result<TypedSuffixArray<T>> {
     let occupancy = normalize(&mut text, &alphabet);
     let keep = keep_table(&alphabet);
     let n_ranges = match alphabet {
@@ -259,7 +260,7 @@ fn construct<T: Int>(
     } else {
         Storage::Memory
     };
-    Index::new(
+    TypedSuffixArray::new(
         &path.to_string_lossy(),
         header,
         Text::Memory(text),

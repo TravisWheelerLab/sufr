@@ -1,6 +1,6 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::{Index, SeedMask, Storage, OUTFILE_VERSION};
+use libsufr::{SeedMask, Storage, SuffixArray, OUTFILE_VERSION};
 use pretty_assertions::assert_eq;
 use regex::Regex;
 use std::{
@@ -86,13 +86,12 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
     assert!(output.status.success());
     assert!(outfile.path().exists());
 
-    let actual: Index<u32> =
-        Index::open(outpath, Storage::Memory, Storage::Disk, None)?;
-    let expected: Index<u32> =
-        Index::open(expected_file, Storage::Memory, Storage::Disk, None)?;
+    let actual = SuffixArray::open_with(outpath, Storage::Memory, Storage::Disk, None)?;
+    let expected =
+        SuffixArray::open_with(expected_file, Storage::Memory, Storage::Disk, None)?;
 
-    let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
-    let expected_sa: Vec<_> = expected.suffix_array_file.iter().collect();
+    let actual_sa: Vec<_> = actual.suffixes().collect();
+    let expected_sa: Vec<_> = expected.suffixes().collect();
     assert_eq!(actual_sa, expected_sa);
 
     Ok(())
@@ -1329,9 +1328,9 @@ fn create_max_query_len() -> Result<()> {
     let outpath = outfile.path().to_string_lossy().to_string();
     run_stdout(&["create", "--dna", "-m", "3", "-o", &outpath, SEQ1])?;
 
-    let actual: Index<u32> =
-        Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
-    let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
+    let actual =
+        SuffixArray::open_with(&outpath, Storage::Memory, Storage::Disk, None)?;
+    let actual_sa: Vec<_> = actual.suffixes().collect();
     assert_eq!(actual_sa, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
     Ok(())
 }

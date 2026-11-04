@@ -1,8 +1,8 @@
 use anyhow::Result;
-use libsufr::{Alphabet, Index, Storage, SuffixArrayBuilder, SuffixSortType};
+use libsufr::{Alphabet, Storage, SuffixArray, SuffixArrayBuilder, SuffixSortType};
 use tempfile::NamedTempFile;
 
-fn build_and_read(write_lcp: bool) -> Result<Index<u32>> {
+fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
     let outfile = NamedTempFile::new()?;
     let outpath = outfile.path().to_string_lossy().to_string();
     SuffixArrayBuilder::from_sequence_file("../data/inputs/1.fa", b'%')?
@@ -12,11 +12,10 @@ fn build_and_read(write_lcp: bool) -> Result<Index<u32>> {
         })
         .with_write_lcp(write_lcp)
         .build_to_file(&outpath, true)?;
-    Index::open(&outpath, Storage::Memory, Storage::Disk, None)
+    SuffixArray::open_with(&outpath, Storage::Memory, Storage::Disk, None)
 }
-
-fn check_common(sufr: &Index<u32>) {
-    let header = &sufr.header;
+fn check_common(sufr: &SuffixArray) {
+    let header = sufr.header();
     assert_eq!(header.version, 6);
     assert!(header.is_dna);
     assert!(!header.allow_ambiguity);
@@ -26,7 +25,7 @@ fn check_common(sufr: &Index<u32>) {
     assert_eq!(header.sequence_starts, [0]);
     assert_eq!(header.sequence_names, ["1"]);
     assert_eq!(header.sort_type, SuffixSortType::MaxQueryLen(0));
-    assert_eq!(sufr.text_range(0..11).unwrap(), b"ACGTNNACGT$");
+    assert_eq!(sufr.string_at(0, Some(11)).unwrap(), "ACGTNNACGT$");
     assert_eq!(header.text_pos, 72);
     assert_eq!(header.suffix_array_pos, 83);
 }
@@ -35,8 +34,8 @@ fn check_common(sufr: &Index<u32>) {
 fn header_with_lcp() -> Result<()> {
     let sufr = build_and_read(true)?;
     check_common(&sufr);
-    assert!(sufr.lcp_file.is_some());
-    assert_eq!(sufr.header.lcp_pos, Some(119));
+    assert!(sufr.lcp_at(0).is_some());
+    assert_eq!(sufr.header().lcp_pos, Some(119));
     Ok(())
 }
 
@@ -44,7 +43,7 @@ fn header_with_lcp() -> Result<()> {
 fn header_without_lcp() -> Result<()> {
     let sufr = build_and_read(false)?;
     check_common(&sufr);
-    assert!(sufr.lcp_file.is_none());
-    assert_eq!(sufr.header.lcp_pos, None);
+    assert!(sufr.lcp_at(0).is_none());
+    assert_eq!(sufr.header().lcp_pos, None);
     Ok(())
 }

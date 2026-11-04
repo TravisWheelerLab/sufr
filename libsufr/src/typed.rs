@@ -21,7 +21,7 @@ use std::{
     time::Instant,
 };
 
-/// Where [`Index::open`] puts the text or the suffix array.
+/// Where [`TypedSuffixArray::open`] puts the text or the suffix array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Storage {
     /// Read into memory when the file is opened.
@@ -55,7 +55,7 @@ pub(crate) enum Suffixes<T> {
 #[derive(Debug, PartialEq)]
 pub struct Metadata {
     /// The file's name.
-    pub filename: String,
+    pub(crate) filename: String,
 
     /// When the file was last modified.
     pub modified: DateTime<Local>,
@@ -147,20 +147,20 @@ impl Metadata {
 }
 
 /// A _.sufr_ file opened for queries, with its text and suffixes in
-/// memory or on disk as chosen by [`Index::open`].
+/// memory or on disk as chosen by [`TypedSuffixArray::open`].
 #[derive(Debug)]
-pub struct Index<T: Int> {
+pub(crate) struct TypedSuffixArray<T: Int> {
     /// The _.sufr_ filename.
-    pub filename: String,
+    pub(crate) filename: String,
 
     /// The file's header.
-    pub header: Header,
+    pub(crate) header: Header,
 
     /// The suffix array on disk.
-    pub suffix_array_file: FileAccess<T>,
+    pub(crate) suffix_array_file: FileAccess<T>,
 
     /// The LCP array on disk, if the file has one.
-    pub lcp_file: Option<FileAccess<T>>,
+    pub(crate) lcp_file: Option<FileAccess<T>>,
 
     text: Text,
 
@@ -173,17 +173,17 @@ pub struct Index<T: Int> {
     pub(crate) max_query_len: usize,
 }
 
-impl<T: Int> Index<T> {
+impl<T: Int> TypedSuffixArray<T> {
     /// Open a _.sufr_ file whose arrays hold `T` values, with its
     /// `text` and `suffixes` stored as given. `max_query_len` limits how
     /// many characters of a query are compared, and when it is shorter
     /// than the sort, suffixes in memory are a subsample.
-    pub fn open(
+    pub(crate) fn open(
         filename: &str,
         text: Storage,
         suffixes: Storage,
         max_query_len: Option<usize>,
-    ) -> Result<Index<T>> {
+    ) -> Result<TypedSuffixArray<T>> {
         let header = Header::read(filename, mem::size_of::<T>())?;
         let text_file: FileAccess<u8> =
             FileAccess::new(filename, header.text_pos as u64, header.text_len)?;
@@ -202,7 +202,7 @@ impl<T: Int> Index<T> {
         text: Text,
         suffixes: Storage,
         max_query_len: Option<usize>,
-    ) -> Result<Index<T>> {
+    ) -> Result<TypedSuffixArray<T>> {
         let suffix_array_file = FileAccess::new(
             filename,
             header.suffix_array_pos as u64,
@@ -226,7 +226,7 @@ impl<T: Int> Index<T> {
             }
         };
 
-        let mut index = Index {
+        let mut index = TypedSuffixArray {
             filename: filename.to_string(),
             header,
             suffix_array_file,
@@ -470,7 +470,7 @@ impl<T: Int> Index<T> {
     }
 
     /// The text byte at `pos`.
-    pub fn text_byte(&self, pos: usize) -> Option<u8> {
+    pub(crate) fn text_byte(&self, pos: usize) -> Option<u8> {
         match &self.text {
             Text::Memory(text) => text.get(pos).copied(),
             Text::Disk(text_file) => text_file.get(pos),
@@ -478,7 +478,7 @@ impl<T: Int> Index<T> {
     }
 
     /// The text bytes in `range`.
-    pub fn text_range(&self, range: Range<usize>) -> Result<Vec<u8>> {
+    pub(crate) fn text_range(&self, range: Range<usize>) -> Result<Vec<u8>> {
         match &self.text {
             Text::Memory(text) => Ok(text[range].to_vec()),
             Text::Disk(text_file) => text_file.get_range(range),
@@ -544,7 +544,7 @@ impl<T: Int> Index<T> {
 
     /// The text from `pos`, of at most `len` bytes when given, and
     /// otherwise to the end of the text.
-    pub fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
+    pub(crate) fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
         let text_len = self.header.text_len;
         let end = len.map_or(text_len, |n| min(pos + n, text_len));
         let bytes = self.text_range(pos..end)?;
@@ -552,7 +552,7 @@ impl<T: Int> Index<T> {
     }
 
     /// The file's metadata.
-    pub fn metadata(&self) -> Result<Metadata> {
+    pub(crate) fn metadata(&self) -> Result<Metadata> {
         let fs_meta = fs::metadata(&self.filename)?;
         let modified: DateTime<Local> = DateTime::from(fs_meta.modified()?);
 
@@ -612,7 +612,7 @@ fn write_cache<T: Int>(cache_path: &Path, suffixes: &[T], ranks: &[T]) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::{Index, Storage, Suffixes, Text};
+    use super::{Storage, Suffixes, Text, TypedSuffixArray};
     use crate::{
         format::{SeedMask, SuffixSortType},
         Alphabet, SuffixArrayBuilder,
@@ -624,7 +624,7 @@ mod tests {
     #[test]
     fn test_text_byte() -> Result<()> {
         for very_low_memory in [true, false] {
-            let index = Index::<u32>::open(
+            let index = TypedSuffixArray::<u32>::open(
                 "../data/inputs/1.sufr",
                 if very_low_memory {
                     Storage::Disk
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn test_text_range() -> Result<()> {
         for very_low_memory in [true, false] {
-            let index = Index::<u32>::open(
+            let index = TypedSuffixArray::<u32>::open(
                 "../data/inputs/1.sufr",
                 if very_low_memory {
                     Storage::Disk
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn test_string_at() -> Result<()> {
-        let index = Index::<u32>::open(
+        let index = TypedSuffixArray::<u32>::open(
             "../data/inputs/1.sufr",
             Storage::Disk,
             Storage::Disk,
@@ -678,16 +678,22 @@ mod tests {
     #[test]
     fn test_open_modes() -> Result<()> {
         let file = "../data/inputs/1.sufr";
-        let index = Index::<u32>::open(file, Storage::Disk, Storage::Disk, Some(2))?;
+        let index =
+            TypedSuffixArray::<u32>::open(file, Storage::Disk, Storage::Disk, Some(2))?;
         assert!(matches!(index.text, Text::Disk(_)));
         assert!(matches!(index.suffixes, Suffixes::Disk));
 
-        let index = Index::<u32>::open(file, Storage::Memory, Storage::Disk, Some(2))?;
+        let index = TypedSuffixArray::<u32>::open(
+            file,
+            Storage::Memory,
+            Storage::Disk,
+            Some(2),
+        )?;
         assert!(matches!(index.text, Text::Memory(_)));
         assert!(matches!(index.suffixes, Suffixes::Disk));
 
         for max_query_len in [None, Some(0), Some(11), Some(20)] {
-            let index = Index::<u32>::open(
+            let index = TypedSuffixArray::<u32>::open(
                 file,
                 Storage::Memory,
                 Storage::Memory,
@@ -696,7 +702,8 @@ mod tests {
             assert!(matches!(index.suffixes, Suffixes::Memory(_)));
         }
 
-        let index = Index::<u32>::open(file, Storage::Disk, Storage::Memory, None)?;
+        let index =
+            TypedSuffixArray::<u32>::open(file, Storage::Disk, Storage::Memory, None)?;
         assert!(matches!(index.text, Text::Disk(_)));
         assert!(matches!(index.suffixes, Suffixes::Memory(_)));
         Ok(())
@@ -744,7 +751,7 @@ mod tests {
         seed_mask: Option<&str>,
         max_query_len: Option<usize>,
         write_lcp: bool,
-    ) -> Result<(NamedTempFile, Index<u32>)> {
+    ) -> Result<(NamedTempFile, TypedSuffixArray<u32>)> {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
         let mut builder =
@@ -763,8 +770,8 @@ mod tests {
                 builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?));
         }
         builder.build_to_file(&outpath, true)?;
-        let index: Index<u32> =
-            Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index: TypedSuffixArray<u32> =
+            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         Ok((outfile, index))
     }
 

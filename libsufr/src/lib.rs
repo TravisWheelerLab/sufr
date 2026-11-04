@@ -8,12 +8,9 @@
 //!
 //! [^patro]: <https://doi.org/10.4230/LIPIcs.WABI.2023.16>
 //!
-//! Most readers should use [SuffixArrayBuilder] to create and
-//! [SuffixArray] to read suffix arrays.
-//!
-//! If you want to choose between 32-bit and 64-bit values yourself,
-//! use [Index] to read an existing suffix array/_.sufr_ file
-//!
+//! Use [SuffixArrayBuilder] to create a suffix array and [SuffixArray] to
+//! read one. A file holds 32-bit or 64-bit values depending on the length
+//! of its text, and [SuffixArray] reads either.
 //!
 //! ## Authors
 //! * Ken Youens-Clark <kyclark@gmail.com>
@@ -22,31 +19,36 @@
 
 mod build;
 mod format;
-mod index;
 mod io;
 mod lcp;
 mod search;
+mod typed;
 
 pub use build::{Alphabet, SuffixArrayBuilder};
 pub use format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
-pub use index::{Index, Metadata, Storage};
-pub use io::Int;
 pub use search::{read_queries, Extraction, Hits, Location};
+pub use typed::{Metadata, Storage};
+
+use io::Int;
+use std::ops::Range;
+use typed::TypedSuffixArray;
 
 use anyhow::Result;
 use log::info;
 use rayon::prelude::*;
 use std::time::Instant;
 
-/// A suffix array read from a _.sufr_ file, whose arrays hold `u32` or
-/// `u64` values depending on the length of the text.
+/// A suffix array read from a _.sufr_ file.
 #[derive(Debug)]
-pub enum SuffixArray {
-    /// A file whose arrays hold `u32` values.
-    U32(Index<u32>),
+pub struct SuffixArray {
+    inner: SuffixArrayKind,
+}
 
-    /// A file whose arrays hold `u64` values.
-    U64(Index<u64>),
+/// A suffix array at whichever int size its file was written with.
+#[derive(Debug)]
+pub(crate) enum SuffixArrayKind {
+    U32(TypedSuffixArray<u32>),
+    U64(TypedSuffixArray<u64>),
 }
 
 impl SuffixArray {
@@ -55,7 +57,8 @@ impl SuffixArray {
         SuffixArray::open_with(filename, Storage::Memory, Storage::Memory, None)
     }
 
-    /// Open a _.sufr_ file, as [`Index::open`] does.
+    /// Open a _.sufr_ file, keeping its text and its suffixes in memory
+    /// or on disk, and searching at most `max_query_len` bytes when given.
     pub fn open_with(
         filename: &str,
         text: Storage,
@@ -63,20 +66,29 @@ impl SuffixArray {
         max_query_len: Option<usize>,
     ) -> Result<SuffixArray> {
         let text_len = format::read_text_length(filename)? as u64;
-        if text_len < u32::MAX as u64 {
-            let index = Index::open(filename, text, suffixes, max_query_len)?;
-            Ok(SuffixArray::U32(index))
+        let inner = if text_len < u32::MAX as u64 {
+            SuffixArrayKind::U32(TypedSuffixArray::open(
+                filename,
+                text,
+                suffixes,
+                max_query_len,
+            )?)
         } else {
-            let index = Index::open(filename, text, suffixes, max_query_len)?;
-            Ok(SuffixArray::U64(index))
-        }
+            SuffixArrayKind::U64(TypedSuffixArray::open(
+                filename,
+                text,
+                suffixes,
+                max_query_len,
+            )?)
+        };
+        Ok(SuffixArray { inner })
     }
 
     /// Find the suffixes matching `query`.
     pub fn search(&self, query: &[u8]) -> Hits<'_> {
-        let ranks = match self {
-            SuffixArray::U32(index) => index.matching_ranks(query),
-            SuffixArray::U64(index) => index.matching_ranks(query),
+        let ranks = match &self.inner {
+            SuffixArrayKind::U32(sa) => sa.matching_ranks(query),
+            SuffixArrayKind::U64(sa) => sa.matching_ranks(query),
         };
         Hits::new(self, ranks)
     }
@@ -99,49 +111,49 @@ impl SuffixArray {
 
     /// The file's header.
     pub fn header(&self) -> &Header {
-        match self {
-            SuffixArray::U32(index) => &index.header,
-            SuffixArray::U64(index) => &index.header,
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => &sa.header,
+            SuffixArrayKind::U64(sa) => &sa.header,
         }
     }
 
     /// The file's metadata.
     pub fn metadata(&self) -> Result<Metadata> {
-        match self {
-            SuffixArray::U32(index) => index.metadata(),
-            SuffixArray::U64(index) => index.metadata(),
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => sa.metadata(),
+            SuffixArrayKind::U64(sa) => sa.metadata(),
         }
     }
 
     /// The text from `pos`, of at most `len` bytes when given, and
     /// otherwise to the end of the text.
     pub fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
-        match self {
-            SuffixArray::U32(index) => index.string_at(pos, len),
-            SuffixArray::U64(index) => index.string_at(pos, len),
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => sa.string_at(pos, len),
+            SuffixArrayKind::U64(sa) => sa.string_at(pos, len),
         }
     }
 
     /// Every suffix in rank order, read from the file.
     pub fn suffixes(&self) -> Box<dyn Iterator<Item = usize> + '_> {
-        match self {
-            SuffixArray::U32(index) => {
-                Box::new(index.suffix_array_file.iter().map(|v| v.to_usize()))
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => {
+                Box::new(sa.suffix_array_file.iter().map(|v| v.to_usize()))
             }
-            SuffixArray::U64(index) => {
-                Box::new(index.suffix_array_file.iter().map(|v| v.to_usize()))
+            SuffixArrayKind::U64(sa) => {
+                Box::new(sa.suffix_array_file.iter().map(|v| v.to_usize()))
             }
         }
     }
 
     /// The suffix at `rank`, read from the file.
     pub fn suffix_at(&self, rank: usize) -> Option<usize> {
-        match self {
-            SuffixArray::U32(index) => {
-                index.suffix_array_file.get(rank).map(|v| v.to_usize())
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => {
+                sa.suffix_array_file.get(rank).map(|v| v.to_usize())
             }
-            SuffixArray::U64(index) => {
-                index.suffix_array_file.get(rank).map(|v| v.to_usize())
+            SuffixArrayKind::U64(sa) => {
+                sa.suffix_array_file.get(rank).map(|v| v.to_usize())
             }
         }
     }
@@ -149,22 +161,55 @@ impl SuffixArray {
     /// The LCP of the suffix at `rank` with the one before it, read from
     /// the file, or `None` when the file has no LCP array.
     pub fn lcp_at(&self, rank: usize) -> Option<usize> {
-        match self {
-            SuffixArray::U32(index) => {
-                index.lcp_file.as_ref()?.get(rank).map(|v| v.to_usize())
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => {
+                sa.lcp_file.as_ref()?.get(rank).map(|v| v.to_usize())
             }
-            SuffixArray::U64(index) => {
-                index.lcp_file.as_ref()?.get(rank).map(|v| v.to_usize())
+            SuffixArrayKind::U64(sa) => {
+                sa.lcp_file.as_ref()?.get(rank).map(|v| v.to_usize())
             }
         }
     }
+
+    /// The positions of the suffixes at `ranks`, in rank order.
+    pub(crate) fn suffixes_at(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => Ok(to_usize(sa.suffixes_at(ranks)?)),
+            SuffixArrayKind::U64(sa) => Ok(to_usize(sa.suffixes_at(ranks)?)),
+        }
+    }
+
+    /// The suffixes at `ranks` within their sequences.
+    pub(crate) fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => sa.locate(ranks),
+            SuffixArrayKind::U64(sa) => sa.locate(ranks),
+        }
+    }
+
+    /// The suffixes at `ranks` with `before` and `after` bytes of context.
+    pub(crate) fn extract(
+        &self,
+        ranks: Range<usize>,
+        before: Option<usize>,
+        after: Option<usize>,
+    ) -> Result<Vec<Extraction<'_>>> {
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => sa.extract(ranks, before, after),
+            SuffixArrayKind::U64(sa) => sa.extract(ranks, before, after),
+        }
+    }
+}
+
+fn to_usize<T: Int>(values: Vec<T>) -> Vec<usize> {
+    values.into_iter().map(|v| v.to_usize()).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Alphabet, Index, SeedMask, Storage, SuffixArray, SuffixArrayBuilder,
-        SuffixSortType, OUTFILE_VERSION,
+        Alphabet, SeedMask, Storage, SuffixArray, SuffixArrayBuilder, SuffixArrayKind,
+        SuffixSortType, TypedSuffixArray, OUTFILE_VERSION,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -186,8 +231,8 @@ mod tests {
             .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
-        let index: Index<u32> =
-            Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index: TypedSuffixArray<u32> =
+            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         assert_eq!(index.header.version, OUTFILE_VERSION);
         assert!(index.header.is_dna);
         assert_eq!(index.header.text_len, 18);
@@ -222,8 +267,8 @@ mod tests {
             .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
-        let index: Index<u64> =
-            Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index: TypedSuffixArray<u64> =
+            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         assert_eq!(index.header.version, OUTFILE_VERSION);
         assert!(index.header.is_dna);
         assert_eq!(index.header.text_len, 11);
@@ -255,8 +300,8 @@ mod tests {
             .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
-        let index: Index<u32> =
-            Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index: TypedSuffixArray<u32> =
+            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         assert_eq!(index.header.num_suffixes, 364);
         let full_sa: Vec<_> = index.suffix_array_file.iter().collect();
         let full_lcp: Vec<_> = index.lcp_file.as_ref().unwrap().iter().collect();
@@ -335,8 +380,8 @@ mod tests {
             .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
-        let index: Index<u32> =
-            Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index: TypedSuffixArray<u32> =
+            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         assert_eq!(index.header.num_suffixes, 8);
         let suffix_array: Vec<_> = index.suffix_array_file.iter().collect();
         assert_eq!(suffix_array.len(), 8);
@@ -380,7 +425,12 @@ mod tests {
             .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
-        let index = Index::<u32>::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index = TypedSuffixArray::<u32>::open(
+            &outpath,
+            Storage::Memory,
+            Storage::Disk,
+            None,
+        )?;
         assert_eq!(index.header.num_suffixes, 17);
         let suffix_array: Vec<_> = index.suffix_array_file.iter().collect();
         assert_eq!(suffix_array.len(), 17);
@@ -409,8 +459,8 @@ mod tests {
             .build_to_file(&outpath, true)?;
         assert!(outfile.path().exists());
 
-        let index: Index<u32> =
-            Index::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index: TypedSuffixArray<u32> =
+            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
         assert_eq!(index.header.num_suffixes, 43);
         let suffix_array: Vec<_> = index.suffix_array_file.iter().collect();
         assert_eq!(suffix_array.len(), 43);
@@ -516,7 +566,7 @@ mod tests {
             Storage::Disk,
             None,
         )?;
-        assert!(matches!(suffix_array, SuffixArray::U32(_)));
+        assert!(matches!(suffix_array.inner, SuffixArrayKind::U32(_)));
         assert_eq!(suffix_array.string_at(0, None)?, "ACGTNNACGT$".to_string());
         assert_eq!(suffix_array.string_at(6, Some(3))?, "ACG".to_string());
         Ok(())

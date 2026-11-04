@@ -26,7 +26,7 @@ mod sealed {
 ///
 /// The trait is sealed because the byte casts in this module rely on
 /// `u8`, `u32` and `u64` having no padding and no invalid bit patterns.
-pub trait Int:
+pub(crate) trait Int:
     Debug
     + AddAssign
     + Add<Output = Self>
@@ -80,11 +80,8 @@ impl Int for u64 {
 /// Read access to one array of a _.sufr_ file: the text, the suffix
 /// array, or the LCP array.
 #[derive(Debug)]
-pub struct FileAccess<T: Int> {
+pub(crate) struct FileAccess<T: Int> {
     file: File,
-
-    /// The size of the array in bytes.
-    pub size: usize,
 
     start_position: u64,
 
@@ -101,7 +98,6 @@ impl<T: Int> FileAccess<T> {
         let size = num_elements * mem::size_of::<T>();
         Ok(FileAccess {
             file,
-            size,
             start_position: start,
             end_position: start + size as u64,
             _marker: PhantomData,
@@ -161,7 +157,7 @@ impl<T: Int> FileAccess<T> {
 
 /// An iterator over the values of a [`FileAccess`].
 #[derive(Debug)]
-pub struct FileAccessIter<'a, T: Int> {
+pub(crate) struct FileAccessIter<'a, T: Int> {
     file_access: &'a FileAccess<T>,
     buffer: Vec<T>,
     buffer_pos: usize,

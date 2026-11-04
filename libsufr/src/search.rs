@@ -1,9 +1,9 @@
 //! Search a suffix array
 
 use crate::{
-    index::Index,
     io::Int,
     lcp::{lcp, mask_offset, masked_lcp},
+    typed::TypedSuffixArray,
     SuffixArray,
 };
 use anyhow::Result;
@@ -82,21 +82,13 @@ impl<'a> Hits<'a> {
 
     /// The positions of the hits in the text, in rank order.
     pub fn suffixes(&self) -> Result<Vec<usize>> {
-        let ranks = self.ranks();
-        let suffixes = match self.suffix_array {
-            SuffixArray::U32(index) => to_usize(index.suffixes_at(ranks)?),
-            SuffixArray::U64(index) => to_usize(index.suffixes_at(ranks)?),
-        };
-        Ok(suffixes)
+        self.suffix_array.suffixes_at(self.ranks())
     }
 
     /// The hits within their sequences, sorted by sequence name and then
     /// by position.
     pub fn locate(&self) -> Result<Vec<Location<'a>>> {
-        match self.suffix_array {
-            SuffixArray::U32(index) => index.locate(self.ranks()),
-            SuffixArray::U64(index) => index.locate(self.ranks()),
-        }
+        self.suffix_array.locate(self.ranks())
     }
 
     /// The hits in rank order, each with up to `before` characters of its
@@ -107,15 +99,8 @@ impl<'a> Hits<'a> {
         before: Option<usize>,
         after: Option<usize>,
     ) -> Result<Vec<Extraction<'a>>> {
-        match self.suffix_array {
-            SuffixArray::U32(index) => index.extract(self.ranks(), before, after),
-            SuffixArray::U64(index) => index.extract(self.ranks(), before, after),
-        }
+        self.suffix_array.extract(self.ranks(), before, after)
     }
-}
-
-fn to_usize<T: Int>(values: Vec<T>) -> Vec<usize> {
-    values.into_iter().map(|v| v.to_usize()).collect()
 }
 
 /// The queries, with each one that names an existing file replaced by
@@ -150,7 +135,7 @@ struct Comparison {
     lcp: usize,
 }
 
-impl<T: Int> Index<T> {
+impl<T: Int> TypedSuffixArray<T> {
     /// The ranks of the suffixes matching `query`, empty when none match.
     pub(crate) fn matching_ranks(&self, query: &[u8]) -> Range<usize> {
         let n = self.num_searched();
@@ -299,7 +284,7 @@ impl<T: Int> Index<T> {
         }
     }
 
-    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
+    pub(crate) fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
         let seq_starts = &self.header.sequence_starts;
         let suffixes = self.suffixes_at(ranks.clone())?;
         let mut locations: Vec<Location> = ranks
@@ -323,7 +308,7 @@ impl<T: Int> Index<T> {
         Ok(locations)
     }
 
-    fn extract(
+    pub(crate) fn extract(
         &self,
         ranks: Range<usize>,
         before: Option<usize>,
