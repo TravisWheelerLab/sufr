@@ -3,7 +3,7 @@
   "title": "Every .sufr fixture is read by a test and reproduced by mk_test_files.py",
   "body": "Batch 2 of sufr-25f57e. create_bytes_match_fixtures covers 13 of 16 fixtures in data/expected. 1d.sufr is version 4 and unreadable, 1m.sufr fails to open, 1s.sufr has no reader: each is covered or deleted. mk_test_files.py passes --write-lcp so a regeneration reproduces the committed bytes (sufr-c9b319). A fixture built with -m so the LCP under -m is pinned by bytes. The decision on the 12 create_* tests is on the parent.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "sufr-25f57e",
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T03:56:09.354302606Z",
-  "updated_at": "2026-11-04T06:32:37.218724277Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-04T06:32:37.226864258Z",
+  "closed_at": "2026-11-04T06:32:37.226864258Z",
+  "close_reason": "Superseded by sufr-bf8c3b after the rebuild scripts were deleted in 56db6ff. The bytes test is the one record of each fixture's flags.",
+  "resolution": "done",
   "notes": [
     {
       "id": "455692c7",
@@ -40,6 +40,9 @@
       "commit": "4e04a02",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "56db6ff",
+      "branch": "refactor"
+    }
   }
 }
