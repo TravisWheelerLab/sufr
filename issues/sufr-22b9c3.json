@@ -1,0 +1,28 @@
+{
+  "id": "sufr-22b9c3",
+  "title": "sufr writes to the home directory and the system temp directory without being asked",
+  "body": "Every place the two crates write a file, outside tests, at 6629ab0:\n\n| site | what | where | asked for? |\n|---|---|---|---|\n| `libsufr/src/build/write.rs:23` | the `.sufr` output | the path given to `build_to_file` | yes |\n| `libsufr/src/build/scratch.rs:95` | merge scratch during a build, unless `with_memory_scratch` | `NamedTempFile::new()`, so the system temp directory, `$TMPDIR` or `/tmp` | no; removed at the end, `scratch.rs:148` and `:159` |\n| `libsufr/src/typed.rs:592` and `:599` | the subsample cache | `~/.sufr/locate-<m>-<basename>`, the directory created if absent | no; never removed |\n| `sufr/src/lib.rs:303` | search output under `-o` | the path given | yes |\n| `sufr/src/main.rs:23` | the log under `--log-file` | the path given | yes |\n\nThe cache is the one Jack asked about on 2026-11-03. `load_suffixes` (`typed.rs:245`) builds a subsample when a file is opened with suffixes in memory and a `max_query_len` smaller than the file's own cap, and `subsample_with_cache` (`typed.rs:277`) writes it to the home directory and reads it back on later runs. Ken added it in ea9415c (2024-11-07). Its problems:\n\n- The key is the file's basename and `m` alone, so two files with one name share a cache entry; the stale check is by mtime only, so an older file with the same name reads the other's subsample.\n- Nothing removes an entry. Jack's `~/.sufr` held 43 files from the tests and the sweep.\n- `home_dir()` is unwrapped with `expect`, so no home directory is a panic.\n- The library writes to the user's home on a read operation, from inside `SuffixArray::open_with`, with no option to decline.\n- `read_cache` reads the bytes back as `T` without regard to alignment or byte order, sufr-bc4784.\n\nThe scratch file is the other write nobody asked for. `origin/dev` added a `--tmp-dir` option for it in db9b5a9; porting that is sufr-f5785e.\n\n## Proposal\n\nDecide, for each of the two unrequested writes, one of: remove it, keep it next to the `.sufr` file, or take an explicit directory from the caller with no default outside the output path. The tests then stop depending on the home directory for free. Until decided, the four `-m` tests in `sufr/tests/cli.rs` run with `HOME` set to a temp dir, which is the last item of sufr-f5ec10.\n\n## Open\n\n- Whether the subsample is worth caching at all. It is one linear pass over the suffix array and LCP arrays; for the fixtures it is microseconds, and for a genome it is the same read `-l` makes on every query.\n- Whether the scratch file's directory and the cache's directory should be one setting.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T05:50:39.895361974Z",
+  "updated_at": "2026-11-04T05:50:39.895361974Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "6629ab0",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
