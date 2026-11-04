@@ -3,7 +3,7 @@
   "title": "The N-run LCP shortcut stops short when two suffixes have equal N remaining",
   "body": "With `--allow-ambiguity`, `find_lcp` in `libsufr/src/build/sort.rs` takes a shortcut when both suffixes start inside a run of N that `find_n_ranges` listed, 1,000 N or more:\n\n```rust\nif let (Some(end1), Some(end2)) = (find_n_run(n_ranges, start1), find_n_run(n_ranges, start2)) {\n    return T::from_usize(min(end1 - start1, end2 - start2));\n}\n```\n\nThat is the LCP only when the two remaining runs differ in length. When they are equal, the match continues past the runs into whatever follows, and the shortcut stops short.\n\nA record of `ACGT`, 1,200 N, `GATTACATTTT`, 1,200 N, `GATTACA` shows it. `sufr create --dna -a --write-lcp` followed by `sufr list -r -p -s` gives rank 15 (`NGATTACATTTT…`) an LCP of 1 against its neighbour `NGATTACA$`, where the LCP is 8. Ranks 17, 19, 21 and 23 are short by the same 7. A build with the shortcut removed (`n_ranges` left empty) writes the correct values, and the same order: the merge's byte compare at the short LCP sees equal bytes and the order comes out right regardless.\n\nFound by the dry-run fingerprint check in `benchmarks/`, which refused to put the two builds on one board.\n\n## Open\n\n- Whether the shortcut should fall through to a byte compare from `min(end1, end2)` when the remaining runs are equal, which keeps the saving on every unequal pair.\n- Whether the search side reads these LCPs anywhere that the short value changes a result.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T20:26:12.804937494Z",
-  "updated_at": "2026-11-04T05:24:49.260239729Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-04T06:43:58.008007438Z",
+  "closed_at": "2026-11-04T06:43:58.008007438Z",
+  "close_reason": "Fixed in 73ac557: equal runs advance the skip and the compare goes on past them. The oracle's crafted record pins it; the long-n fixture's suffix array is unchanged and only its LCP array moves.",
+  "resolution": "done",
   "notes": [
     {
       "id": "75572b1e",
@@ -48,6 +48,9 @@
       "commit": "069d033",
       "branch": "bench"
     },
-    "closed": null
+    "closed": {
+      "commit": "73ac557",
+      "branch": "refactor"
+    }
   }
 }
