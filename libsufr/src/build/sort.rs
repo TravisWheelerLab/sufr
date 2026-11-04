@@ -439,12 +439,10 @@ fn find_lcp<T: Int>(
         return T::from_usize(min(end1 - start1, end2 - start2));
     }
 
-    // TODO: a nonzero max_query_len replaces `len` rather than
-    // capping it, so past a nonzero `skip` the comparison runs
-    // beyond max_query_len and the LCP array can hold values
-    // above it
+    // `len` counts bytes past `skip`, so the cap leaves
+    // max_query_len - skip of them
     let len = if max_query_len > 0 {
-        max_query_len
+        max_query_len - skip
     } else {
         len.to_usize()
     };
@@ -500,7 +498,14 @@ mod test {
         // 6: len of text
         assert_eq!(find_lcp::<u32>(text, 0, 3, 6, 0, None, 0, &[], None), 0);
 
-        // TODO: Add a test with skip
+        // 0: TTTTAG
+        // 1:  TTTAG
+        // skip 2 with max query len 2: nothing left to compare
+        let text = b"TTTTAG";
+        assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 2, None, 2, &[], None), 2);
+
+        // skip 1 with max query len 3: one byte left, T == T
+        assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 1, None, 3, &[], None), 3);
 
         Ok(())
     }
