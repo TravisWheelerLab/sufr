@@ -16,7 +16,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T03:56:09.346397407Z",
-  "updated_at": "2026-11-04T05:23:55.502441521Z",
+  "updated_at": "2026-11-04T05:24:49.251435353Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -27,7 +27,8 @@
       "author": "Jack Roddy/1ddc0e5b",
       "text": "sufr-cba493 was closed as not a bug on 2026-11-03, so the LCP of two suffixes inside runs of 1000 or more N is by definition the shorter remaining run, capped at max_query_len. The reference LCP in this oracle computes matched bytes, which is longer when two such runs have equal remaining length and the bytes after them match. No input in the table has two runs of 1000 N, so the two agree on it. An input with such runs needs the shortcut's rule in the reference, not the byte count.",
       "commit": "86cf586",
-      "branch": "refactor"
+      "branch": "refactor",
+      "deleted_at": "2026-11-04T05:24:49.251435003Z"
     }
   ],
   "stamps": {
