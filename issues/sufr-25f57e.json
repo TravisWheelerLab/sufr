@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T02:45:51.07068387Z",
-  "updated_at": "2026-11-04T02:48:31.186248574Z",
+  "updated_at": "2026-11-04T02:48:31.194788661Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "65423c55",
+      "at": "2026-11-04T02:48:31.194788151Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Jack decided on 2026-11-03 that this runs after the code changes already on the board, not before. A ranked list of the gaps that matter is being drawn up in conversation; the rows Jack picks from it become the scope, and the table in the body is the full inventory, not the plan.",
+      "commit": "4e04a02",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4e04a02",
