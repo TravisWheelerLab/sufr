@@ -112,10 +112,19 @@ fn check(case: &Case) -> Result<()> {
         partitions,
     } = *case;
     let label = format!(
-        "{input} dna={dna:?} delimiter={} max_query_len={max_query_len} mask={mask:?} partitions={partitions:?}",
+        "{} dna={dna:?} delimiter={} max_query_len={max_query_len} mask={mask:?} partitions={partitions:?}",
+        if input.starts_with('>') { "inline" } else { input },
         delimiter as char
     );
-    let path = format!("../data/inputs/{input}.fa");
+    // an input starting with > is a FASTA string, not a file name
+    let inline;
+    let path = if input.starts_with('>') {
+        inline = NamedTempFile::new()?;
+        fs::write(inline.path(), input)?;
+        inline.path().to_string_lossy().to_string()
+    } else {
+        format!("../data/inputs/{input}.fa")
+    };
     let mask = mask.map(SeedMask::new).transpose()?;
     let positions = mask.as_ref().map(|m| m.positions.clone());
 
@@ -283,6 +292,22 @@ fn table() -> Vec<Case> {
             ..dna("2", false, false)
         });
     }
+    // two runs of 1200 N with equal remaining lengths, whose LCP is
+    // the run plus what follows it
+    let n_runs = format!(
+        ">r\nACGT{n}\nGATTACATTTT\n{n}\nGATTACA\n",
+        n = "N".repeat(1200)
+    );
+    let n_runs: &'static str = Box::leak(n_runs.into_boxed_str());
+    cases.push(dna(n_runs, true, false));
+    cases.push(Case {
+        max_query_len: 3,
+        ..dna(n_runs, true, false)
+    });
+    cases.push(Case {
+        max_query_len: 1500,
+        ..dna(n_runs, true, false)
+    });
     cases.push(bytes("abba"));
     cases.push(Case {
         max_query_len: 2,

@@ -433,15 +433,25 @@ fn find_lcp<T: Int>(
         );
     }
 
+    let mut skip = skip;
     if let (Some(end1), Some(end2)) =
         (find_n_run(n_ranges, start1), find_n_run(n_ranges, start2))
     {
-        let run = min(end1 - start1, end2 - start2);
-        return T::from_usize(if max_query_len > 0 {
-            min(run, max_query_len)
-        } else {
-            run
-        });
+        let (run1, run2) = (end1 - start1, end2 - start2);
+        if run1 != run2 {
+            // the byte after the shorter run is N against not N
+            let run = min(run1, run2);
+            return T::from_usize(if max_query_len > 0 {
+                min(run, max_query_len)
+            } else {
+                run
+            });
+        }
+        // equal runs end together, so compare on from there
+        skip = max(skip, run1);
+    }
+    if max_query_len > 0 && skip >= max_query_len {
+        return T::from_usize(max_query_len);
     }
 
     // `len` counts bytes past `skip`, so the cap leaves
@@ -511,6 +521,28 @@ mod test {
 
         // skip 1 with max query len 3: one byte left, T == T
         assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 1, None, 3, &[], None), 3);
+
+        // two runs of four N with the same remaining length: the
+        // match goes on past them, GA against GAT
+        let text = b"NNNNGA%NNNNGAT";
+        let n_ranges = [0..4, 7..11];
+        assert_eq!(
+            find_lcp::<u32>(text, 0, 7, 14, 0, None, 0, &n_ranges, None),
+            6
+        );
+        assert_eq!(
+            find_lcp::<u32>(text, 0, 7, 14, 0, None, 5, &n_ranges, None),
+            5
+        );
+        assert_eq!(
+            find_lcp::<u32>(text, 0, 7, 14, 0, None, 3, &n_ranges, None),
+            3
+        );
+        // runs of different remaining length end at the shorter
+        assert_eq!(
+            find_lcp::<u32>(text, 1, 7, 14, 0, None, 0, &n_ranges, None),
+            3
+        );
 
         // both suffixes inside a run of four N, max query len 2
         let text = b"NNNNA";
