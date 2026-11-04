@@ -851,9 +851,14 @@ fn summarize(filename: &str, expected: Vec<(&str, &str)>) -> Result<()> {
     for (row_name, value) in expected {
         let pattern = format!(r#"[|] {}\s+[|] ([^|]+)"#, row_name);
         let regex = Regex::new(&pattern).unwrap();
-        if let Some(caps) = regex.captures(&stdout) {
-            assert_eq!(caps.get(1).unwrap().as_str().trim(), value);
-        }
+        let caps = regex
+            .captures(&stdout)
+            .unwrap_or_else(|| panic!("no row {row_name} in:\n{stdout}"));
+        assert_eq!(
+            caps.get(1).unwrap().as_str().trim(),
+            value,
+            "row {row_name}"
+        );
     }
 
     Ok(())
@@ -871,9 +876,8 @@ fn summarize_sufr1() -> Result<()> {
             ("Allow Ambiguity", "false"),
             ("Ignore Softmask", "false"),
             ("Text Length", "11"),
-            ("Num Suffixes", "9"),
+            ("Len Suffixes", "9"),
             ("Max query len", "0"),
-            ("Seed mask", "None"),
             ("Num sequences", "1"),
             ("Sequence starts", "0"),
             ("Sequence names", "1"),
