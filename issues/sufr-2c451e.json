@@ -1,0 +1,28 @@
+{
+  "id": "sufr-2c451e",
+  "title": "typed.rs and TypedSuffixArray name the type parameter, not the job",
+  "body": "`libsufr/src/typed.rs` holds the `.sufr` file after `open`, at one integer width: the public `Storage` enum, the crate enums `Text` and `Suffixes` (Memory, Disk, or Subsampled for the suffixes) that record where each part lives, the struct `TypedSuffixArray<T>` with `open`, `load_suffixes`, the subsample and its cache, `suffixes_at`, `lcps_at`, `text_byte` and `searched_ranks`, the public `Metadata` that `summarize` prints, and three helpers. `search.rs` adds the queries as a second `impl` on the same struct. The public `SuffixArray` in `lib.rs` wraps one of these at u32 or u64.\n\n\"Typed\" names the type parameter, which the file name does not need to say, and says nothing about the job. Jack called it a 1/10 name on 2026-11-03. The file was `sufr_file.rs` with `SufrFile<T>` on dev, then `index.rs` with `Index<T>` (ad1a659), then this (c6c9b53); all three names came from refactor commits with a Claude line, so none is a person's decision.\n\n## Options\n\n| module, struct | reads as | against |\n|---|---|---|\n| `reader.rs`, `Reader<T>` | a reader of a `.sufr` file at width T: `Reader::open`, `reader.suffixes_at`, `reader.search` | |\n| `storage.rs`, `Loaded<T>` | the module owns the Storage decision | the struct name is weak, and `Storage` the enum already has the word |\n| `opened.rs`, `Opened<T>` | an opened file | `Opened::open` |\n| fold into `search.rs` | one module | 1,400 lines, two jobs |\n\n## Cost\n\nA rename and nothing else, one commit. About 40 mentions of the struct in `lib.rs`, `search.rs`, `typed.rs` and their tests, all crate-private. `Storage` and `Metadata` keep their names and re-exports.",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T06:19:23.317315961Z",
+  "updated_at": "2026-11-04T06:19:23.317315961Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "d7f219c",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
