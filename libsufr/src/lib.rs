@@ -29,6 +29,33 @@ pub use format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
 pub use search::{read_queries, Extraction, Hits, Location};
 pub use typed::{Metadata, Storage};
 
+/// How [`SuffixArray::open_with`] opens a file. The default reads the text
+/// and the suffix array from disk as needed and searches to the length
+/// the file was sorted with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenOptions {
+    /// Where the text is read from.
+    pub text: Storage,
+
+    /// Where the suffix array is read from.
+    pub suffixes: Storage,
+
+    /// The number of leading query bytes a suffix must match to be a hit.
+    /// `None` uses the length the file was sorted to, and a longer value
+    /// is lowered to it.
+    pub max_query_len: Option<usize>,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        OpenOptions {
+            text: Storage::Disk,
+            suffixes: Storage::Disk,
+            max_query_len: None,
+        }
+    }
+}
+
 use io::Int;
 use std::ops::Range;
 use typed::TypedSuffixArray;
@@ -52,19 +79,19 @@ pub(crate) enum SuffixArrayKind {
 }
 
 impl SuffixArray {
-    /// Open a _.sufr_ file with its text and suffix array in memory.
+    /// Open a _.sufr_ file with the default [`OpenOptions`]: the text and
+    /// the suffix array stay on disk.
     pub fn open(filename: &str) -> Result<SuffixArray> {
-        SuffixArray::open_with(filename, Storage::Memory, Storage::Memory, None)
+        SuffixArray::open_with(filename, &OpenOptions::default())
     }
 
-    /// Open a _.sufr_ file, keeping its text and its suffixes in memory
-    /// or on disk, and searching at most `max_query_len` bytes when given.
-    pub fn open_with(
-        filename: &str,
-        text: Storage,
-        suffixes: Storage,
-        max_query_len: Option<usize>,
-    ) -> Result<SuffixArray> {
+    /// Open a _.sufr_ file.
+    pub fn open_with(filename: &str, options: &OpenOptions) -> Result<SuffixArray> {
+        let OpenOptions {
+            text,
+            suffixes,
+            max_query_len,
+        } = *options;
         let text_len = format::read_text_length(filename)? as u64;
         let inner = if text_len < u32::MAX as u64 {
             SuffixArrayKind::U32(TypedSuffixArray::open(
@@ -491,12 +518,7 @@ mod tests {
 
     #[test]
     fn test_suffix_array_list() -> Result<()> {
-        let suffix_array = SuffixArray::open_with(
-            "../data/inputs/1.sufr",
-            Storage::Disk,
-            Storage::Disk,
-            None,
-        )?;
+        let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
         let suffixes: Vec<_> = suffix_array.suffixes().collect();
         assert_eq!(suffixes, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
         let lcps: Vec<_> = (0..9).map(|rank| suffix_array.lcp_at(rank)).collect();
@@ -510,12 +532,7 @@ mod tests {
 
     #[test]
     fn test_suffix_array_metadata() -> Result<()> {
-        let suffix_array = SuffixArray::open_with(
-            "../data/inputs/1.sufr",
-            Storage::Disk,
-            Storage::Disk,
-            None,
-        )?;
+        let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
         let meta = suffix_array.metadata()?;
         assert_eq!(meta.filename, "../data/inputs/1.sufr".to_string());
         assert_eq!(meta.file_size, 172);
@@ -560,12 +577,7 @@ mod tests {
 
     #[test]
     fn test_suffix_array_string_at() -> Result<()> {
-        let suffix_array = SuffixArray::open_with(
-            "../data/inputs/1.sufr",
-            Storage::Disk,
-            Storage::Disk,
-            None,
-        )?;
+        let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
         assert!(matches!(suffix_array.inner, SuffixArrayKind::U32(_)));
         assert_eq!(suffix_array.string_at(0, None)?, "ACGTNNACGT$".to_string());
         assert_eq!(suffix_array.string_at(6, Some(3))?, "ACG".to_string());

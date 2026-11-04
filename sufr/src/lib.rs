@@ -2,8 +2,8 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_queries, Alphabet, Hits, SeedMask, Storage, SuffixArray, SuffixArrayBuilder,
-    SuffixSortType,
+    read_queries, Alphabet, Hits, OpenOptions, SeedMask, Storage, SuffixArray,
+    SuffixArrayBuilder, SuffixSortType,
 };
 use log::info;
 use rayon::prelude::*;
@@ -287,7 +287,14 @@ fn open_for_search(
     } else {
         Storage::Memory
     };
-    SuffixArray::open_with(file, text, suffixes, max_query_len)
+    SuffixArray::open_with(
+        file,
+        &OpenOptions {
+            text,
+            suffixes,
+            max_query_len,
+        },
+    )
 }
 
 /// The named output file, or stdout.
@@ -416,7 +423,13 @@ pub fn list(args: &ListArgs) -> Result<()> {
     } else {
         Storage::Memory
     };
-    let suffix_array = SuffixArray::open_with(&args.file, text, Storage::Disk, None)?;
+    let suffix_array = SuffixArray::open_with(
+        &args.file,
+        &OpenOptions {
+            text,
+            ..OpenOptions::default()
+        },
+    )?;
     let ranks = parse_ranks(&args.ranks)?;
 
     if args.show_lcp && suffix_array.header().lcp_pos.is_none() {
@@ -595,8 +608,7 @@ fn parse_pos(range: &str) -> Result<PositionList> {
 }
 
 pub fn summarize(args: &SummarizeArgs) -> Result<()> {
-    let suffix_array =
-        SuffixArray::open_with(&args.file, Storage::Disk, Storage::Disk, None)?;
+    let suffix_array = SuffixArray::open(&args.file)?;
     let rows = suffix_array.metadata()?.summary();
     let table = Table::from_iter(
         rows.into_iter()

@@ -21,7 +21,7 @@ use std::{
     time::Instant,
 };
 
-/// Where [`TypedSuffixArray::open`] puts the text or the suffix array.
+/// Where [`crate::SuffixArray::open_with`] puts the text or the suffix array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Storage {
     /// Read into memory when the file is opened.

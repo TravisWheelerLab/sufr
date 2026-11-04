@@ -1,5 +1,7 @@
 use anyhow::Result;
-use libsufr::{Alphabet, Storage, SuffixArray, SuffixArrayBuilder, SuffixSortType};
+use libsufr::{
+    Alphabet, OpenOptions, Storage, SuffixArray, SuffixArrayBuilder, SuffixSortType,
+};
 use tempfile::NamedTempFile;
 
 fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
@@ -12,7 +14,14 @@ fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
         })
         .with_write_lcp(write_lcp)
         .build_to_file(&outpath, true)?;
-    SuffixArray::open_with(&outpath, Storage::Memory, Storage::Disk, None)
+    SuffixArray::open_with(
+        &outpath,
+        &OpenOptions {
+            text: Storage::Memory,
+            suffixes: Storage::Disk,
+            max_query_len: None,
+        },
+    )
 }
 fn check_common(sufr: &SuffixArray) {
     let header = sufr.header();

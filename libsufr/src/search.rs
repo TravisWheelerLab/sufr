@@ -365,14 +365,21 @@ impl<T: Int> TypedSuffixArray<T> {
 #[cfg(test)]
 mod tests {
     use super::{read_queries, Extraction, Location};
-    use crate::{Storage, SuffixArray};
+    use crate::{OpenOptions, Storage, SuffixArray};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
     fn open(file: &str, text: Storage, suffixes: Storage) -> Result<SuffixArray> {
-        SuffixArray::open_with(file, text, suffixes, None)
+        SuffixArray::open_with(
+            file,
+            &OpenOptions {
+                text,
+                suffixes,
+                max_query_len: None,
+            },
+        )
     }
 
     fn extraction(
