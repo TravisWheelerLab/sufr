@@ -4,7 +4,7 @@ use crate::{
     format::{Header, SeedMask, SuffixSortType},
     io::{as_bytes, as_bytes_mut, FileAccess, Int},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
 use format_num::NumberFormat;
 use home::home_dir;
@@ -542,13 +542,12 @@ impl<T: Int> TypedSuffixArray<T> {
         }
     }
 
-    /// The text from `pos`, of at most `len` bytes when given, and
-    /// otherwise to the end of the text.
-    pub(crate) fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
-        let text_len = self.header.text_len;
-        let end = len.map_or(text_len, |n| min(pos + n, text_len));
-        let bytes = self.text_range(pos..end)?;
-        Ok(String::from_utf8(bytes)?)
+    /// The LCPs at `ranks`, read from the file.
+    pub(crate) fn lcps_at(&self, ranks: Range<usize>) -> Result<Vec<T>> {
+        match &self.lcp_file {
+            Some(lcp_file) => lcp_file.get_range(ranks),
+            None => bail!("{} has no LCP array", self.filename),
+        }
     }
 
     /// The file's metadata.
@@ -655,20 +654,6 @@ mod tests {
             )?;
             assert_eq!(index.text_range(0..5)?, b"ACGTN");
         }
-        Ok(())
-    }
-
-    #[test]
-    fn test_string_at() -> Result<()> {
-        let index = TypedSuffixArray::<u32>::open(
-            "../data/inputs/1.sufr",
-            Storage::Disk,
-            Storage::Disk,
-            None,
-        )?;
-        assert_eq!(index.string_at(0, None)?, "ACGTNNACGT$");
-        assert_eq!(index.string_at(0, Some(5))?, "ACGTN");
-        assert_eq!(index.string_at(8, Some(5))?, "GT$");
         Ok(())
     }
 

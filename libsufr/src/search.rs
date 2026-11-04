@@ -82,7 +82,7 @@ impl<'a> Hits<'a> {
 
     /// The positions of the hits in the text, in rank order.
     pub fn suffixes(&self) -> Result<Vec<usize>> {
-        self.suffix_array.suffixes_at(self.ranks())
+        self.suffix_array.suffixes(self.ranks())
     }
 
     /// The hits within their sequences, sorted by sequence name and then

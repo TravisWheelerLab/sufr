@@ -34,7 +34,7 @@ fn check_common(sufr: &SuffixArray) {
     assert_eq!(header.sequence_starts, [0]);
     assert_eq!(header.sequence_names, ["1"]);
     assert_eq!(header.sort_type, SuffixSortType::MaxQueryLen(0));
-    assert_eq!(sufr.string_at(0, Some(11)).unwrap(), "ACGTNNACGT$");
+    assert_eq!(sufr.text(0..11).unwrap(), b"ACGTNNACGT$");
     assert_eq!(header.text_pos, 72);
     assert_eq!(header.suffix_array_pos, 83);
 }
@@ -43,7 +43,7 @@ fn check_common(sufr: &SuffixArray) {
 fn header_with_lcp() -> Result<()> {
     let sufr = build_and_read(true)?;
     check_common(&sufr);
-    assert!(sufr.lcp_at(0).is_some());
+    assert!(sufr.lcps(0..1).is_ok());
     assert_eq!(sufr.header().lcp_pos, Some(119));
     Ok(())
 }
@@ -52,7 +52,7 @@ fn header_with_lcp() -> Result<()> {
 fn header_without_lcp() -> Result<()> {
     let sufr = build_and_read(false)?;
     check_common(&sufr);
-    assert!(sufr.lcp_at(0).is_none());
+    assert!(sufr.lcps(0..1).is_err());
     assert_eq!(sufr.header().lcp_pos, None);
     Ok(())
 }

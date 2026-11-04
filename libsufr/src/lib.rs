@@ -60,7 +60,7 @@ use io::Int;
 use std::ops::Range;
 use typed::TypedSuffixArray;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use log::info;
 use rayon::prelude::*;
 use std::time::Instant;
@@ -152,57 +152,33 @@ impl SuffixArray {
         }
     }
 
-    /// The text from `pos`, of at most `len` bytes when given, and
-    /// otherwise to the end of the text.
-    pub fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => sa.string_at(pos, len),
-            SuffixArrayKind::U64(sa) => sa.string_at(pos, len),
-        }
-    }
-
-    /// Every suffix in rank order, read from the file.
-    pub fn suffixes(&self) -> Box<dyn Iterator<Item = usize> + '_> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => {
-                Box::new(sa.suffix_array_file.iter().map(|v| v.to_usize()))
-            }
-            SuffixArrayKind::U64(sa) => {
-                Box::new(sa.suffix_array_file.iter().map(|v| v.to_usize()))
-            }
-        }
-    }
-
-    /// The suffix at `rank`, read from the file.
-    pub fn suffix_at(&self, rank: usize) -> Option<usize> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => {
-                sa.suffix_array_file.get(rank).map(|v| v.to_usize())
-            }
-            SuffixArrayKind::U64(sa) => {
-                sa.suffix_array_file.get(rank).map(|v| v.to_usize())
-            }
-        }
-    }
-
-    /// The LCP of the suffix at `rank` with the one before it, read from
-    /// the file, or `None` when the file has no LCP array.
-    pub fn lcp_at(&self, rank: usize) -> Option<usize> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => {
-                sa.lcp_file.as_ref()?.get(rank).map(|v| v.to_usize())
-            }
-            SuffixArrayKind::U64(sa) => {
-                sa.lcp_file.as_ref()?.get(rank).map(|v| v.to_usize())
-            }
-        }
-    }
-
-    /// The positions of the suffixes at `ranks`, in rank order.
-    pub(crate) fn suffixes_at(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+    /// The positions in the text of the suffixes at `ranks`, in rank
+    /// order.
+    pub fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
         match &self.inner {
             SuffixArrayKind::U32(sa) => Ok(to_usize(sa.suffixes_at(ranks)?)),
             SuffixArrayKind::U64(sa) => Ok(to_usize(sa.suffixes_at(ranks)?)),
+        }
+    }
+
+    /// The LCP of each suffix at `ranks` with the suffix before it, in
+    /// rank order. An error when the file has no LCP array.
+    pub fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => Ok(to_usize(sa.lcps_at(ranks)?)),
+            SuffixArrayKind::U64(sa) => Ok(to_usize(sa.lcps_at(ranks)?)),
+        }
+    }
+
+    /// The text in `range`, clipped to the end of the text.
+    pub fn text(&self, range: Range<usize>) -> Result<Vec<u8>> {
+        let end = range.end.min(self.header().text_len);
+        if range.start > end {
+            bail!("Invalid range: {range:?}");
+        }
+        match &self.inner {
+            SuffixArrayKind::U32(sa) => sa.text_range(range.start..end),
+            SuffixArrayKind::U64(sa) => sa.text_range(range.start..end),
         }
     }
 
@@ -519,14 +495,11 @@ mod tests {
     #[test]
     fn test_suffix_array_list() -> Result<()> {
         let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-        let suffixes: Vec<_> = suffix_array.suffixes().collect();
-        assert_eq!(suffixes, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
-        let lcps: Vec<_> = (0..9).map(|rank| suffix_array.lcp_at(rank)).collect();
-        let expected = [0, 0, 4, 0, 3, 0, 2, 0, 1].map(Some);
-        assert_eq!(lcps, expected);
-        assert_eq!(suffix_array.suffix_at(4), Some(1));
-        assert_eq!(suffix_array.suffix_at(9), None);
-        assert_eq!(suffix_array.lcp_at(9), None);
+        assert_eq!(suffix_array.suffixes(0..9)?, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
+        assert_eq!(suffix_array.lcps(0..9)?, [0, 0, 4, 0, 3, 0, 2, 0, 1]);
+        assert_eq!(suffix_array.suffixes(4..5)?, [1]);
+        assert!(suffix_array.suffixes(9..10).is_err());
+        assert!(suffix_array.lcps(9..10).is_err());
         Ok(())
     }
 
@@ -576,11 +549,13 @@ mod tests {
     }
 
     #[test]
-    fn test_suffix_array_string_at() -> Result<()> {
+    fn test_suffix_array_text() -> Result<()> {
         let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
         assert!(matches!(suffix_array.inner, SuffixArrayKind::U32(_)));
-        assert_eq!(suffix_array.string_at(0, None)?, "ACGTNNACGT$".to_string());
-        assert_eq!(suffix_array.string_at(6, Some(3))?, "ACG".to_string());
+        assert_eq!(suffix_array.text(0..11)?, b"ACGTNNACGT$");
+        assert_eq!(suffix_array.text(6..9)?, b"ACG");
+        assert_eq!(suffix_array.text(8..20)?, b"GT$");
+        assert!(suffix_array.text(12..13).is_err());
         Ok(())
     }
 }

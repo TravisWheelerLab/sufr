@@ -441,8 +441,10 @@ pub fn list(args: &ListArgs) -> Result<()> {
 
     // TODO: list -o is accepted and ignored
     let mut output = io::stdout();
-    let width = suffix_array.header().text_len.to_string().len();
-    let row = |rank: usize, suffix: usize| -> Result<String> {
+    let text_len = suffix_array.header().text_len;
+    let num_suffixes = suffix_array.header().num_suffixes;
+    let width = text_len.to_string().len();
+    let row = |rank: usize, suffix: usize, lcp: Option<usize>| -> Result<String> {
         let mut row = String::new();
         if args.show_rank {
             row += &format!("{rank:width$} ");
@@ -450,28 +452,48 @@ pub fn list(args: &ListArgs) -> Result<()> {
         if args.show_suffix {
             row += &format!("{suffix:width$} ");
         }
-        if args.show_lcp {
-            let lcp = suffix_array.lcp_at(rank).unwrap();
+        if let Some(lcp) = lcp {
             row += &format!("{lcp:width$} ");
         }
-        row += &suffix_array.string_at(suffix, args.len)?;
+        let end = args.len.map_or(text_len, |len| suffix + len);
+        row += &String::from_utf8(suffix_array.text(suffix..end)?)?;
         Ok(row)
     };
 
     if ranks.is_empty() {
-        let number = args.number.unwrap_or(0);
-        for (rank, suffix) in suffix_array.suffixes().enumerate() {
-            writeln!(output, "{}", row(rank, suffix)?)?;
-            if number > 0 && rank == number - 1 {
-                break;
+        let end = match args.number {
+            Some(number) if number > 0 => number.min(num_suffixes),
+            _ => num_suffixes,
+        };
+
+        // a chunk of ranks at a time, so a file of billions of
+        // suffixes is never read whole
+        const CHUNK: usize = 1 << 16;
+        for start in (0..end).step_by(CHUNK) {
+            let ranks = start..(start + CHUNK).min(end);
+            let suffixes = suffix_array.suffixes(ranks.clone())?;
+            let lcps = if args.show_lcp {
+                suffix_array.lcps(ranks.clone())?
+            } else {
+                vec![]
+            };
+            for (i, rank) in ranks.enumerate() {
+                writeln!(output, "{}", row(rank, suffixes[i], lcps.get(i).copied())?)?;
             }
         }
     } else {
         for rank in ranks {
-            match suffix_array.suffix_at(rank) {
-                Some(suffix) => writeln!(output, "{}", row(rank, suffix)?)?,
-                None => eprintln!("Invalid rank: {rank}"),
+            if rank >= num_suffixes {
+                eprintln!("Invalid rank: {rank}");
+                continue;
             }
+            let suffix = suffix_array.suffixes(rank..rank + 1)?[0];
+            let lcp = if args.show_lcp {
+                Some(suffix_array.lcps(rank..rank + 1)?[0])
+            } else {
+                None
+            };
+            writeln!(output, "{}", row(rank, suffix, lcp)?)?;
         }
     }
 

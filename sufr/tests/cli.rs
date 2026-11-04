@@ -103,8 +103,8 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
         },
     )?;
 
-    let actual_sa: Vec<_> = actual.suffixes().collect();
-    let expected_sa: Vec<_> = expected.suffixes().collect();
+    let actual_sa = actual.suffixes(0..actual.header().num_suffixes)?;
+    let expected_sa = expected.suffixes(0..expected.header().num_suffixes)?;
     assert_eq!(actual_sa, expected_sa);
 
     Ok(())
@@ -1349,7 +1349,7 @@ fn create_max_query_len() -> Result<()> {
             max_query_len: None,
         },
     )?;
-    let actual_sa: Vec<_> = actual.suffixes().collect();
+    let actual_sa = actual.suffixes(0..actual.header().num_suffixes)?;
     assert_eq!(actual_sa, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
     Ok(())
 }
