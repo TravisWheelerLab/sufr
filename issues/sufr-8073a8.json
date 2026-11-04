@@ -3,7 +3,7 @@
   "title": "create is about 3% slower after the LCP unification, from code layout",
   "body": "After the LCP unification (sufr-caa3f2, commit noted in its close reason), `sufr -t 4 create --dna --write-lcp` on a 50 MB synthetic DNA input takes 2.440 s against 2.361 s before (+3.3%), and `create --dna -m 20` takes 2.615 s against 2.552 s (+2.5%). Medians of 5 interleaved release runs. `locate` is 9% faster and `locate -l` 2% faster.\n\nThe new build executes 6% fewer instructions (126.4G against 134.8G) but 2-4% more cycles. Placing the previous builder and util code unchanged into the new tree gives a byte-identical `merge_sort` and the same instruction count, and still costs +4% cycles. Adding the new lcp.rs functions to the old tree unused costs nothing. So the slowdown follows from where the code sits in the binary, not from the routine. Forcing 64-byte loop alignment did not recover it.\n\nThe scripts, input generator and timings are in `tmp-claude/2026-11-02-refactor-survey/step4/`.\n\n## Open\n\nWhether to chase the layout with PGO or BOLT, or accept the cost.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T18:59:02.054512764Z",
-  "updated_at": "2026-11-03T05:45:04.027547518Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-04T05:25:43.541318285Z",
+  "closed_at": "2026-11-04T05:25:43.541318285Z",
+  "close_reason": "Closed by Jack on 2026-11-03 without action. The 3% delta is code placement, per the memory merge-sort-layout-sensitivity, and is not worth chasing.",
+  "resolution": "dropped",
   "notes": [
     {
       "id": "c2acb528",
@@ -40,6 +40,9 @@
       "commit": "dc7dd45",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "86cf586",
+      "branch": "refactor"
+    }
   }
 }
