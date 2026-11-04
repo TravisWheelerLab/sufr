@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T03:56:09.354302606Z",
-  "updated_at": "2026-11-04T04:22:35.626830933Z",
+  "updated_at": "2026-11-04T06:32:37.218724277Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/1ddc0e5b",
       "text": "Open item three decided on 2026-11-03: the twelve create_* tests are deleted in c9c880d. create_bytes_match_fixtures and libsufr/tests/header.rs cover what they checked. The bytes test still stops at the first differing fixture; reporting every differing fixture is a separate change under this issue.",
       "commit": "c9c880d",
+      "branch": "refactor"
+    },
+    {
+      "id": "3986ff94",
+      "at": "2026-11-04T06:32:37.218723687Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "mk_test_files.py and the Makefile were deleted in 56db6ff on Jack's instruction. The fixture review is sufr-bf8c3b, which replaces this issue's remaining scope.",
+      "commit": "56db6ff",
       "branch": "refactor"
     }
   ],
