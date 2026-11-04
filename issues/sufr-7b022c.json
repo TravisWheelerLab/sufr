@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T04:15:42.533720784Z",
-  "updated_at": "2026-11-04T04:15:42.533720784Z",
+  "updated_at": "2026-11-04T06:58:30.816305872Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "1bc71330",
+      "at": "2026-11-04T06:58:30.816305352Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "query_kinds in libsufr/tests/search.rs (87f49b6) pins the current behaviour: on fixture 1, $ counts 1 and ACGTNNACGT$ finds position 0 in every storage mode. A decision for reject or bound moves those asserts.",
+      "commit": "fc5db36",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4e04a02",
