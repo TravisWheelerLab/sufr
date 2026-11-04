@@ -15,7 +15,7 @@ use std::{fs::File, io::Read, path::Path, slice};
 /// Args:
 /// * `lcp`: the LCP (probably from LCP array on disk)
 /// * `sort_type`: the suffixes are fully sorted or masked
-pub fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
+pub(crate) fn find_lcp_full_offset(lcp: usize, sort_type: &SuffixSortType) -> usize {
     match sort_type {
         SuffixSortType::Mask(seed_mask) => {
             if lcp == 0 || lcp > seed_mask.bytes.len() {

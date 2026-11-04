@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   memory during construction instead of in temporary files
 - Add `SuffixArrayBuilder::with_temp_dir` and `sufr create --tmp-dir`/`-T` to
   set the directory for temporary files during construction
-- Re-export `SuffixArray` at the crate root as `libsufr::SuffixArray`
+- Re-export `SuffixArray`, `SufrFile`, `read_sequence_file`, and
+  `read_text_length` at the crate root (e.g. `libsufr::SufrFile`)
 - Implement vectorized LCP calculation (AVX2 on x86-64), significantly
   improving build time on some inputs
 - Implement an LCP cache, significantly improving build time on some inputs with very long
@@ -56,10 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - (breaking) Remove the `sufr_builder` module, `SufrBuilder`,
   `SufrBuilderArgs`, `SuffixArray::new`, and `SuffixArray::write`. Use
   `libsufr::SuffixArrayBuilder` instead.
+- (breaking) Make the `suffix_array`, `sufr_file`, and `util` modules
+  private. Use the crate-root re-exports instead: `libsufr::SuffixArray`,
+  `libsufr::SufrFile`, `libsufr::read_sequence_file`, and
+  `libsufr::read_text_length`.
+- (breaking) Remove or make private the other `libsufr::util` functions:
+  `find_lcp_full_offset` and the `unsafe` byte-reading utilities
+  `slice_u8_to_vec`, `usize_to_bytes`, and `vec_to_slice_u8`.
 - Remove `sufr create -r,--random-seed`,
   which is not used for the prefix-based partitioning
-- Remove and make private the `unsafe` byte-reading utilities
-  `slice_u8_to_vec`, `usize_to_bytes`, `vec_to_slice_u8`.
 
 ### Fixed
 

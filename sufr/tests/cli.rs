@@ -1,7 +1,7 @@
 use anyhow::Result;
 use assert_cmd::Command;
 use libsufr::{
-    sufr_file::SufrFile,
+    SufrFile,
     types::{SeedMask, OUTFILE_VERSION},
 };
 use pretty_assertions::assert_eq;

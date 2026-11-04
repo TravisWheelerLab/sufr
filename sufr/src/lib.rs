@@ -2,12 +2,11 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    suffix_array::SuffixArray,
     types::{
         CountOptions, ExtractOptions, ListOptions, LocateOptions, SeedMask,
         SuffixSortType,
     },
-    SuffixArrayBuilder,
+    SuffixArray, SuffixArrayBuilder,
 };
 use log::info;
 use regex::Regex;

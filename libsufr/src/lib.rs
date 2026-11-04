@@ -12,7 +12,7 @@
 //! [SuffixArray] to read suffix arrays.
 //!
 //! If you want lower-level access to Sufr's internals, use
-//! [sufr_file] to interact with and query an existing suffix array/_.sufr_ file
+//! [SufrFile] to interact with and query an existing suffix array/_.sufr_ file
 //!
 //!
 //! ## Authors
@@ -24,18 +24,24 @@ mod file_access;
 mod lcp;
 #[cfg(test)]
 mod subsample_tests;
-pub mod suffix_array;
+mod suffix_array;
 mod sufr_builder;
-pub mod sufr_file;
+mod sufr_file;
 mod sufr_search;
 pub mod types;
-pub mod util;
+mod util;
 
 #[doc(inline)]
 pub use sufr_builder::SuffixArrayBuilder;
 
 #[doc(inline)]
 pub use suffix_array::SuffixArray;
+
+#[doc(inline)]
+pub use sufr_file::SufrFile;
+
+#[doc(inline)]
+pub use util::{read_sequence_file, read_text_length};
 
 // --------------------------------------------------
 #[cfg(test)]

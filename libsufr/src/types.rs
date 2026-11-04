@@ -263,7 +263,7 @@ pub struct Comparison {
 }
 
 // --------------------------------------------------
-/// This struct is returned by `libsufr::utils::read_sequence_file`
+/// This struct is returned by [read_sequence_file](crate::read_sequence_file)
 /// for reading sequences from a FASTA/Q file.
 #[derive(Debug)]
 pub struct SequenceFileData {

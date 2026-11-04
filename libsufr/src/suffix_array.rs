@@ -94,7 +94,7 @@ impl SuffixArray {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{
-    ///     suffix_array::SuffixArray,
+    ///     SuffixArray,
     ///     types::{CountOptions, CountResult}
     /// };
     ///
@@ -139,7 +139,7 @@ impl SuffixArray {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{
-    ///     suffix_array::SuffixArray,
+    ///     SuffixArray,
     ///     types::{ExtractOptions, ExtractResult, ExtractSequence}
     /// };
     ///
@@ -197,7 +197,7 @@ impl SuffixArray {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{suffix_array::SuffixArray, types::ListOptions};
+    /// use libsufr::{SuffixArray, types::ListOptions};
     /// use std::fs;
     /// use tempfile::NamedTempFile;
     ///
@@ -246,7 +246,7 @@ impl SuffixArray {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{
-    ///     suffix_array::SuffixArray,
+    ///     SuffixArray,
     ///     types::{LocateOptions, LocatePosition, LocateResult},
     /// };
     ///
@@ -297,7 +297,7 @@ impl SuffixArray {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{suffix_array::SuffixArray, types::SuffixSortType};
+    /// use libsufr::{SuffixArray, types::SuffixSortType};
     ///
     /// fn main() -> Result<()> {
     ///     let mut suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;
@@ -330,7 +330,7 @@ impl SuffixArray {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::suffix_array::SuffixArray;
+    /// use libsufr::SuffixArray;
     ///
     /// fn main() -> Result<()> {
     ///     let suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;
@@ -357,7 +357,7 @@ impl SuffixArray {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::suffix_array::SuffixArray;
+    /// use libsufr::SuffixArray;
     ///
     /// fn main() -> Result<()> {
     ///     let mut suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;

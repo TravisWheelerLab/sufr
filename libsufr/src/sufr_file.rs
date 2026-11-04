@@ -2,7 +2,7 @@
 //!
 //! This is a low-level interface that you should use if you want
 //! fine-grained control over whether Sufr uses 32-bit or 64-bit
-//! integers. Most likely, you should use [libsufr::suffix_array](super::suffix_array).
+//! integers. Most likely, you should use [SuffixArray](crate::SuffixArray).
 use crate::{
     file_access::FileAccess,
     sufr_search::{SufrSearch, SufrSearchArgs},
@@ -70,7 +70,7 @@ pub struct SufrFile<T: Int> {
     pub sort_type: SuffixSortType,
 
     /// The length of the text. Needed for parameterization of the struct
-    /// as `u32` or `u64`. Cf. [util::read_text_length](super::util::read_text_length)
+    /// as `u32` or `u64`. Cf. [read_text_length](crate::read_text_length)
     pub text_len: T,
 
     /// The length of the suffix array.
@@ -117,13 +117,13 @@ impl<T: Int> SufrFile<T> {
     /// * `low_memory`: When `false`, the `text` will be loaded into memory.
     ///   When `true`, the `text` will be read from disk as needed.
     ///
-    /// You can use [util::read_text_length](super::util::read_text_length)
+    /// You can use [read_text_length](crate::read_text_length)
     /// to get the length of the text to parameterize the `SufrFile` with
     /// the correct integer size.
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{sufr_file::SufrFile, util::read_text_length};
+    /// use libsufr::{SufrFile, read_text_length};
     ///
     /// fn main() -> Result<()> {
     ///     let filename = "../data/inputs/1.sufr";
@@ -279,7 +279,7 @@ impl<T: Int> SufrFile<T> {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::sufr_file::SufrFile;
+    /// use libsufr::SufrFile;
     ///
     /// fn main() -> Result<()> {
     ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
@@ -311,7 +311,7 @@ impl<T: Int> SufrFile<T> {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::sufr_file::SufrFile;
+    /// use libsufr::SufrFile;
     ///
     /// fn main() -> Result<()> {
     ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
@@ -349,7 +349,7 @@ impl<T: Int> SufrFile<T> {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{types::Int, sufr_file::SufrFile};
+    /// use libsufr::{types::Int, SufrFile};
     ///
     /// fn main() -> Result<()> {
     ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
@@ -380,7 +380,7 @@ impl<T: Int> SufrFile<T> {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::sufr_file::SufrFile;
+    /// use libsufr::SufrFile;
     ///
     /// fn main() -> Result<()> {
     ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
@@ -562,7 +562,7 @@ impl<T: Int> SufrFile<T> {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{sufr_file::SufrFile, types::SuffixSortType};
+    /// use libsufr::{SufrFile, types::SuffixSortType};
     ///
     /// fn main() -> Result<()> {
     ///     let sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
@@ -747,7 +747,7 @@ impl<T: Int> SufrFile<T> {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{types::{CountOptions, CountResult}, sufr_file::SufrFile};
+    /// use libsufr::{types::{CountOptions, CountResult}, SufrFile};
     ///
     /// fn main() -> Result<()> {
     ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", false)?;
@@ -812,7 +812,7 @@ impl<T: Int> SufrFile<T> {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{
-    ///     sufr_file::SufrFile,
+    ///     SufrFile,
     ///     types::{SearchOptions, SearchResult, SearchResultLocations}
     /// };
     ///
@@ -914,7 +914,7 @@ impl<T: Int> SufrFile<T> {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{
-    ///     sufr_file::SufrFile,
+    ///     SufrFile,
     ///     types::{ExtractOptions, ExtractResult, ExtractSequence}
     /// };
     ///
@@ -1039,7 +1039,7 @@ impl<T: Int> SufrFile<T> {
     ///
     /// ```
     /// use anyhow::Result;
-    /// use libsufr::{sufr_file::SufrFile, types::ListOptions};
+    /// use libsufr::{SufrFile, types::ListOptions};
     /// use std::fs;
     /// use tempfile::NamedTempFile;
     ///
@@ -1171,7 +1171,7 @@ impl<T: Int> SufrFile<T> {
     /// ```
     /// use anyhow::Result;
     /// use libsufr::{
-    ///     sufr_file::SufrFile,
+    ///     SufrFile,
     ///     types::{LocateOptions, LocatePosition, LocateResult},
     /// };
     ///
