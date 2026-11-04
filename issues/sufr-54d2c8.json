@@ -3,7 +3,7 @@
   "title": "Searching a suffix array with no suffixes underflows n - 1",
   "body": "`SufrSearch::search` in `libsufr/src/sufr_search.rs` starts with:\n\n```rust\nlet n = self.len_suffixes;\nif let Some(start) = self.suffix_search_first(qry, 0, n - 1, 0, 0) {\n```\n\n`n - 1` underflows when `len_suffixes` is 0. Debug builds panic. Release builds pass `usize::MAX` as `high`. It is unclear whether the builder can produce a `.sufr` file with no suffixes, since every text ends in a sentinel. A hand-made or truncated file could still reach this.\n\nFound by reading the code. Not reproduced.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.796336502Z",
-  "updated_at": "2026-11-02T19:59:04.440869972Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-04T06:27:43.478211264Z",
+  "closed_at": "2026-11-04T06:27:43.478211264Z",
+  "close_reason": "Unreachable: the sentinel suffix is always indexed, so every file has at least one suffix, and an empty input does not build. Closed by Jack on 2026-11-03.",
+  "resolution": "dropped",
   "notes": [
     {
       "id": "8b8ca293",
@@ -32,6 +32,9 @@
       "commit": "b4a924a",
       "branch": "search-api"
     },
-    "closed": null
+    "closed": {
+      "commit": "87f49b6",
+      "branch": "refactor"
+    }
   }
 }
