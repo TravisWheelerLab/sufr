@@ -1075,15 +1075,15 @@ fn list_out_of_range_rank_warns_and_succeeds() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn list_output_flag_is_ignored() -> Result<()> {
+fn list_output_flag_writes_the_file() -> Result<()> {
     let (expected, _) = run_stdout(&["list", SUFR1, "0", "1"])?;
 
     let outfile = NamedTempFile::new()?;
     let outpath = outfile.path().to_string_lossy().to_string();
     let (stdout, _) = run_stdout(&["list", "-o", &outpath, SUFR1, "0", "1"])?;
 
-    assert_eq!(stdout, expected);
-    assert_eq!(fs::read_to_string(&outpath)?, "");
+    assert_eq!(stdout, "");
+    assert_eq!(fs::read_to_string(&outpath)?, expected);
     Ok(())
 }
 

@@ -442,8 +442,7 @@ pub fn list(args: &ListArgs) -> Result<()> {
         );
     }
 
-    // TODO: list -o is accepted and ignored
-    let mut output = io::stdout();
+    let mut output = create_output(&args.output)?;
     let text_len = suffix_array.header().text_len;
     let num_suffixes = suffix_array.header().num_suffixes;
     let width = text_len.to_string().len();
