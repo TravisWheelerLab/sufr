@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T20:26:12.804937494Z",
-  "updated_at": "2026-11-04T05:24:42.824342205Z",
+  "updated_at": "2026-11-04T05:24:49.260239729Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -33,6 +33,14 @@
       "text": "The shortcut also costs time on a fixture with many runs. On the 10 MiB long-n fixture, 1,330 runs of 999 to 100,000 N, head takes 0.44 s and the build with the shortcut off 0.27 s, the same as normal DNA. With one run of 300,000 or 1,000,000 N head takes 0.27 s either way, so the overhead is per range, from the binary search in find_n_run on every find_lcp call, not per N.",
       "commit": "069d033",
       "branch": "bench"
+    },
+    {
+      "id": "389bdced",
+      "at": "2026-11-04T05:24:49.260239109Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Closed by mistake on 2026-11-03 and reopened the same day; the close reason above is wrong. The oracle in sufr-a88738 counts matched bytes, which is the correct LCP here, so an input with two equal runs of 1000 N would show this bug. No input in its table has such runs.",
+      "commit": "86cf586",
+      "branch": "refactor"
     }
   ],
   "stamps": {
