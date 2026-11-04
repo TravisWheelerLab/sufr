@@ -101,6 +101,10 @@ impl Header {
 
         let mut fixed = [0u8; SEQUENCE_STARTS];
         file.read_exact(&mut fixed)?;
+        let version = fixed[VERSION];
+        if version != OUTFILE_VERSION {
+            bail!("Unknown sufr version {version}");
+        }
         let u64_at =
             |pos: usize| u64::from_le_bytes(fixed[pos..pos + 8].try_into().unwrap());
 
@@ -403,6 +407,14 @@ mod tests {
 
             let path = outfile.path().to_string_lossy().to_string();
             assert_eq!(Header::read(&path, int_size)?, header);
+
+            // the same file with the next version in its first byte
+            crate::io::write_all_at(outfile.as_file(), &[OUTFILE_VERSION + 1], 0)?;
+            let err = Header::read(&path, int_size).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("Unknown sufr version {}", OUTFILE_VERSION + 1)
+            );
         }
         Ok(())
     }
