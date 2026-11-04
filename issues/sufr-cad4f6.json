@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-04T20:46:05.828081822Z",
   "defer_until": null,
   "created_at": "2026-11-04T20:31:00.867626509Z",
-  "updated_at": "2026-11-04T22:35:45.975439951Z",
+  "updated_at": "2026-11-04T22:35:45.985066565Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-04T20:44:49.797996503Z",
       "author": "Jack Roddy/707e7014",
       "text": "Built on branch `buffer`, uncommitted, for review. Every test passes: 48 unit, the oracle, 8 search and 43 CLI, with `create_bytes_match_fixtures` among them.\n\nThree things differ from the body as first written, and the body now says so: `Memory<T>` is a newtype, `flush` stays on the trait, and `Disk::empty` creates its temp file at the first flush. The first version created it in `empty`, and the suite put that at 1.18x, 1.15x and 1.15x on normal, long-n and protein with CPU use down from 369% to 323%. With the lazy file the three rows are 1.01x, 1.00x and 0.99x at 10 MiB, 4 threads, median of 5. The suite's fingerprint check passed, so the output bytes match.\n\n`count` over 20000 queries on the 10 MiB DNA build, median of 3, before and after: default 0.025 s and 0.010 s, `-l` 0.071 s and 0.072 s, `-v` 0.085 s and 0.085 s. The default mode is faster because the whole suffix array is now read with one positioned read where `FileAccessIter` collected it a value at a time.\n\nThe before binary is a worktree at `tmp-claude/2026-11-04-buffer/before`, and the fixtures, queries and index are in `tmp-claude/2026-11-04-buffer/runs`.",
+      "commit": "fc5db36",
+      "branch": "buffer"
+    },
+    {
+      "id": "b90e7d96",
+      "at": "2026-11-04T22:35:45.985065675Z",
+      "author": "Jack Roddy/707e7014",
+      "text": "Second version, after Jack's review of the first: the query side is redesigned so that no impl block fixes a type parameter. The first version typed the searched suffixes as `S` and kept the whole array as a concrete `Disk` field, with a constructor inherent on the `Memory` instantiation for the subsample. Now `S` is the whole suffix array, the subsample is an `Option` field, and `open` is the one constructor. The type parameters are renamed `W`, `T`, `S`.\n\nOne regression found and fixed on the way: `open` opened the file once and gave each region a `try_clone`, and `count -v` over 20000 queries went from 0.085 s to 0.137 s with equal user instructions, the extra all kernel time. Every rayon thread's pread hit one file object. Each region now opens its own handle, as `FileAccess` did, and the row is back at 0.086 s.\n\nEvery test passes, 104 of them. Create at 10 MiB, 4 threads, median of 5, before and after: normal 0.44 and 0.44 s, long-n 0.55 and 0.54 s, protein 0.43 and 0.42 s. `count` over 20000 queries, median of 3, before and after: default 0.027 and 0.011 s, `-l` 0.073 and 0.072 s, `-v` 0.089 and 0.086 s, `-m 12` 0.016 and 0.014 s. Output identical in every mode.",
       "commit": "fc5db36",
       "branch": "buffer"
     }
