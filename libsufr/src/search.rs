@@ -186,8 +186,10 @@ impl<T: Int> TypedSuffixArray<T> {
                 Ok(Some(mid))
             } else if mid_cmp.cmp == Ordering::Greater {
                 self.first_match(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
+            } else if mid == 0 {
+                // nothing sorts below rank 0
+                Ok(None)
             } else {
-                // Ordering::Less
                 self.first_match(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
             }
         } else {
@@ -226,6 +228,9 @@ impl<T: Int> TypedSuffixArray<T> {
                     || self.compare(qry, mid_plus_one, 0)?.cmp == Ordering::Less)
             {
                 Ok(Some(mid))
+            } else if mid_cmp.cmp == Ordering::Less && mid == 0 {
+                // nothing sorts below rank 0
+                Ok(None)
             } else if mid_cmp.cmp == Ordering::Less {
                 self.last_match(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
             } else {
