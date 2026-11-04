@@ -22,6 +22,7 @@
 
 mod file_access;
 mod lcp;
+mod memory;
 mod radix;
 #[cfg(test)]
 mod radix_tests;

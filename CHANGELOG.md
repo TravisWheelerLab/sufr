@@ -39,12 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   several partitions it buckets positions by the top 16 key bits into
   scratch buffers (temporary files, or memory with `with_memory_scratch`)
   and sorts one partition at a time; with one partition it sorts
-  everything in memory. Radix defaults to one partition per 16 MiB of
-  input (about 512 MiB of sort memory per partition), because radix is
-  slower with many small partitions. The suffix order matches `merge`,
-  which remains the default, except among equal keys: radix always puts
-  the shorter suffix (larger position) first, while the merge sort's
-  order of equal keys can vary with the thread and partition counts.
+  everything in memory. Radix is the default when a seed mask or max
+  query length gives a key that fits in 64 bits, and `merge` otherwise.
+  Radix uses one partition if 32 bytes per suffix is under 4 GiB and
+  under the available memory (on Linux, the smaller of `MemAvailable`
+  and any cgroup limit), and otherwise one partition per 16 MiB of input
+  (about 512 MiB of sort memory per partition), because radix is slower
+  with many small partitions. The suffix order matches `merge` except
+  among equal keys: radix always puts the shorter suffix (larger
+  position) first, while the merge sort's order of equal keys can vary
+  with the thread and partition counts.
 
 ### Changed
 
@@ -55,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Change the default for `sufr create --num-partitions` from 16 to 1024
   (for `merge`), which should reduce memory usage on most machines with
   minimal change to build time
+- `sufr create --max-query-len` and `--seed-mask` now sort with `radix`
+  by default (see above); pass `--sort-strategy merge` for the previous
+  algorithm. The order of suffixes with equal keys can differ.
 - During construction, sufr now writes temporary files to a randomly named
   `sufr-*` directory *inside* the temporary directory (and removes it afterwards)
 - Reduce some unnecessary internal allocations

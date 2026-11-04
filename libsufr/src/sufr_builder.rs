@@ -1,6 +1,7 @@
 use crate::{
     file_access::write_at,
     lcp::{lcp, LcpCache},
+    memory,
     radix::{lsd_radix_sort, Item, KeyEncoder},
     suffix_array::SuffixArray,
     types::{
@@ -37,6 +38,15 @@ const DEFAULT_MERGE_PARTITIONS: usize = 1024;
 // smaller partitions saved little memory, and 1024
 // partitions took 1.4 to 2.6 times as long as one
 const RADIX_SUFFIXES_PER_PARTITION: usize = 1 << 24;
+
+/// The radix sort's memory per suffix with one partition, in bytes.
+//
+// an `Item` (16 bytes for u32 and u64 positions) in the
+// input and another in the sort's scratch copy
+const RADIX_BYTES_PER_SUFFIX: u64 = 32;
+
+/// The most memory, in bytes, a default radix sort uses for one partition.
+const RADIX_ONE_PARTITION_LIMIT: u64 = 4 << 30;
 
 /// Configuration and construction of [`SuffixArray`]s.
 ///
@@ -82,7 +92,7 @@ pub struct SuffixArrayBuilder {
 
     // PROCESSING OPTIONS
     sort_type: SuffixSortType,
-    sort_strategy: SortStrategy,
+    sort_strategy: Option<SortStrategy>,
     num_partitions: Option<usize>,
     memory_scratch: bool,
     temp_dir: Option<PathBuf>,
@@ -132,8 +142,12 @@ impl SuffixArrayBuilder {
             allow_ambiguity: false,
             ignore_softmask: false,
             sort_type: SuffixSortType::MaxQueryLen(0),
-            sort_strategy: SortStrategy::Merge,
+            sort_strategy: None,
             num_partitions: None,
+            // note: memory scratch made merge builds of 100 and
+            //       250 MB of DNA 10 to 15% slower than files
+            //       that stayed in the page cache, with 3 times
+            //       the peak memory
             memory_scratch: false,
             temp_dir: None,
             force_64bit: false,
@@ -171,32 +185,21 @@ impl SuffixArrayBuilder {
     pub fn with_seed_mask(self, mask: SeedMask) -> Self {
         self.with_sort_type(SuffixSortType::Mask(mask))
     }
-    /// Sets how suffixes are sorted (default: [`SortStrategy::Merge`]).
-    /// [`SortStrategy::Radix`] requires a seed mask or a nonzero max query
-    /// length whose packed key fits in 64 bits; `build_to_file` fails
-    /// otherwise.
+    /// Sets how suffixes are sorted (default: [`SortStrategy::Radix`] when
+    /// a seed mask or max query length gives a key that fits in 64 bits,
+    /// otherwise [`SortStrategy::Merge`]). [`SortStrategy::Radix`] requires
+    /// such a key; `build_to_file` fails otherwise.
     pub fn with_sort_strategy(mut self, sort_strategy: SortStrategy) -> Self {
-        self.sort_strategy = sort_strategy;
+        self.sort_strategy = Some(sort_strategy);
         self
     }
     /// Sets the number of partitions used during construction (default:
-    /// `1024` for [`SortStrategy::Merge`], one per 16 MiB of text for
-    /// [`SortStrategy::Radix`]).
+    /// `1024` for [`SortStrategy::Merge`]; for [`SortStrategy::Radix`], one
+    /// if its predicted 32 bytes per suffix is under 4 GiB and under the
+    /// available memory, otherwise one per 16 MiB of text).
     pub fn with_num_partitions(mut self, num_partitions: usize) -> Self {
         self.num_partitions = Some(num_partitions);
         self
-    }
-
-    /// The configured number of partitions, or the strategy's default.
-    fn num_partitions(&self) -> usize {
-        self.num_partitions.unwrap_or(match self.sort_strategy {
-            SortStrategy::Merge => DEFAULT_MERGE_PARTITIONS,
-            // the text length stands in for the suffix count,
-            // which is not known until the suffixes are scanned
-            SortStrategy::Radix => {
-                self.text.len().div_ceil(RADIX_SUFFIXES_PER_PARTITION)
-            }
-        })
     }
     /// Sets whether to keep the partitions in memory during construction
     /// instead of in temporary files (default: `false`).
@@ -224,6 +227,41 @@ impl SuffixArrayBuilder {
         self
     }
 
+    /// The build settings, with defaults for those not configured.
+    fn plan(&self, available_memory: Option<u64>) -> BuildPlan {
+        let sort_strategy = self.sort_strategy.unwrap_or_else(|| {
+            // radix_key_encoder fails without a seed mask or
+            // max query length, or with a key over 64 bits
+            if self.radix_key_encoder().is_ok() {
+                SortStrategy::Radix
+            } else {
+                SortStrategy::Merge
+            }
+        });
+
+        let num_partitions = self.num_partitions.unwrap_or(match sort_strategy {
+            SortStrategy::Merge => DEFAULT_MERGE_PARTITIONS,
+            SortStrategy::Radix => {
+                // the text length stands in for the suffix count,
+                // which is not known until the suffixes are scanned
+                let one_partition_bytes =
+                    self.text.len() as u64 * RADIX_BYTES_PER_SUFFIX;
+                if one_partition_bytes < RADIX_ONE_PARTITION_LIMIT
+                    && available_memory.map_or(true, |a| one_partition_bytes < a)
+                {
+                    1
+                } else {
+                    self.text.len().div_ceil(RADIX_SUFFIXES_PER_PARTITION)
+                }
+            }
+        });
+
+        BuildPlan {
+            sort_strategy,
+            num_partitions,
+        }
+    }
+
     /// Builds the suffix array, writing it to `path` and loading it into memory.
     pub fn build_to_file(
         mut self,
@@ -235,6 +273,14 @@ impl SuffixArrayBuilder {
         if self.allow_ambiguity {
             self.n_ranges = find_n_ranges(&self.text);
         }
+
+        let plan = self.plan(memory::available_memory());
+        info!(
+            "Sorting with {:?} in {} partition{}",
+            plan.sort_strategy,
+            plan.num_partitions,
+            if plan.num_partitions == 1 { "" } else { "s" },
+        );
 
         let scratch_dir = if self.memory_scratch {
             None
@@ -259,21 +305,25 @@ impl SuffixArrayBuilder {
                 path,
                 occupancy,
                 scratch_path,
+                &plan,
             )?,
             (true, true) => self.build::<u32, MemoryScratchBuffer<u32>>(
                 path,
                 occupancy,
                 scratch_path,
+                &plan,
             )?,
             (false, false) => self.build::<u64, DiskScratchBuffer<u64>>(
                 path,
                 occupancy,
                 scratch_path,
+                &plan,
             )?,
             (false, true) => self.build::<u64, MemoryScratchBuffer<u64>>(
                 path,
                 occupancy,
                 scratch_path,
+                &plan,
             )?,
         }
         drop(scratch_dir);
@@ -302,19 +352,23 @@ impl SuffixArrayBuilder {
         path: &Path,
         occupancy: [u8; 256],
         scratch_dir: Option<&Path>,
+        plan: &BuildPlan,
     ) -> Result<()> {
-        match self.sort_strategy {
+        match plan.sort_strategy {
             SortStrategy::Merge => {
-                let partitions = self.sort::<T, B>(occupancy, scratch_dir)?;
+                let partitions =
+                    self.sort::<T, B>(occupancy, scratch_dir, plan.num_partitions)?;
                 self.write::<T, B>(path, partitions)?;
             }
             // the same output, without the bucketing passes
-            SortStrategy::Radix if self.num_partitions() <= 1 => {
+            SortStrategy::Radix if plan.num_partitions <= 1 => {
                 self.sort_radix_in_memory::<T>(path)?
             }
-            SortStrategy::Radix => {
-                self.sort_radix_partitioned::<T, B>(path, scratch_dir)?
-            }
+            SortStrategy::Radix => self.sort_radix_partitioned::<T, B>(
+                path,
+                scratch_dir,
+                plan.num_partitions,
+            )?,
         }
         Ok(())
     }
@@ -493,10 +547,11 @@ impl SuffixArrayBuilder {
         &self,
         path: &Path,
         scratch_dir: Option<&Path>,
+        num_partitions: usize,
     ) -> Result<()> {
         let total_time = Instant::now();
         let encoder = self.radix_key_encoder()?;
-        let num_partitions = self.num_partitions().max(1);
+        let num_partitions = num_partitions.max(1);
         let digit_bits = encoder.total_bits.min(16);
         let shift = encoder.total_bits - digit_bits;
         let num_buckets = 1usize << digit_bits;
@@ -895,8 +950,8 @@ impl SuffixArrayBuilder {
         &self,
         mut occupancy: [u8; 256],
         scratch_dir: Option<&Path>,
+        num_partitions: usize,
     ) -> Result<Vec<Partition<B>>> {
-        let num_partitions = self.num_partitions();
         // ... and if there are none outside of the nucleic alphabet then use it.
         for &c in NucleicAcidAlphabet::ALPHABET.iter() {
             occupancy[c as usize] = 0;
@@ -1538,6 +1593,14 @@ impl PartitioningAlphabet for BytesAlphabet {
 }
 
 // --------------------------------------------------
+/// The settings for one build, with defaults filled in.
+#[derive(Debug, PartialEq, Eq)]
+struct BuildPlan {
+    sort_strategy: SortStrategy,
+    num_partitions: usize,
+}
+
+// --------------------------------------------------
 /// Represents the partition values written to disk
 #[derive(Debug)]
 struct Partition<B: ScratchBuffer> {
@@ -1736,7 +1799,7 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
 // --------------------------------------------------
 #[cfg(test)]
 mod test {
-    use super::SuffixArrayBuilder;
+    use super::{BuildPlan, SuffixArrayBuilder};
     use crate::types::{SeedMask, SortStrategy};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -1744,20 +1807,104 @@ mod test {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_default_num_partitions() {
+    fn test_plan_defaults() {
         let builder = |len: usize| {
             SuffixArrayBuilder::from_data(vec![b'A'; len], vec![(0, "s".to_string())])
         };
-        let radix = |len: usize| builder(len).with_sort_strategy(SortStrategy::Radix);
+        // the strategy follows the sort type
+        assert_eq!(
+            builder(1000).plan(None),
+            BuildPlan {
+                sort_strategy: SortStrategy::Merge,
+                num_partitions: 1024
+            }
+        );
+        assert_eq!(
+            builder(1000).with_max_query_len(5).plan(None),
+            BuildPlan {
+                sort_strategy: SortStrategy::Radix,
+                num_partitions: 1
+            }
+        );
+        assert_eq!(
+            builder(1000)
+                .with_seed_mask(SeedMask::new("101").unwrap())
+                .plan(None),
+            BuildPlan {
+                sort_strategy: SortStrategy::Radix,
+                num_partitions: 1
+            }
+        );
+        // one symbol takes one bit, so 65 positions are too many
+        assert_eq!(
+            builder(1000).with_max_query_len(65).plan(None),
+            BuildPlan {
+                sort_strategy: SortStrategy::Merge,
+                num_partitions: 1024
+            }
+        );
 
-        assert_eq!(builder(1000).num_partitions(), 1024);
-        assert_eq!(builder(1000).with_num_partitions(7).num_partitions(), 7);
+        // radix sorts in one partition while 32 bytes per
+        // suffix is under the available memory and 4 GiB
+        let len = (1 << 24) + 1;
+        assert_eq!(
+            builder(len)
+                .with_sort_strategy(SortStrategy::Radix)
+                .plan(Some(32 * len as u64 + 1)),
+            BuildPlan {
+                sort_strategy: SortStrategy::Radix,
+                num_partitions: 1
+            }
+        );
+        assert_eq!(
+            builder(len)
+                .with_sort_strategy(SortStrategy::Radix)
+                .plan(Some(32 * len as u64)),
+            BuildPlan {
+                sort_strategy: SortStrategy::Radix,
+                num_partitions: 2
+            }
+        );
+        assert_eq!(
+            builder((1 << 27) - 1)
+                .with_sort_strategy(SortStrategy::Radix)
+                .plan(None),
+            BuildPlan {
+                sort_strategy: SortStrategy::Radix,
+                num_partitions: 1
+            }
+        );
+        assert_eq!(
+            builder(1 << 27)
+                .with_sort_strategy(SortStrategy::Radix)
+                .plan(None),
+            BuildPlan {
+                sort_strategy: SortStrategy::Radix,
+                num_partitions: 8
+            }
+        );
 
-        assert_eq!(radix(1000).num_partitions(), 1);
-        assert_eq!(radix(1 << 24).num_partitions(), 1);
-        assert_eq!(radix((1 << 24) + 1).num_partitions(), 2);
-        assert_eq!(radix(40_000_000).num_partitions(), 3);
-        assert_eq!(radix(1000).with_num_partitions(7).num_partitions(), 7);
+        // explicit settings override the defaults
+        assert_eq!(
+            builder(1000)
+                .with_max_query_len(5)
+                .with_sort_strategy(SortStrategy::Merge)
+                .plan(None),
+            BuildPlan {
+                sort_strategy: SortStrategy::Merge,
+                num_partitions: 1024
+            }
+        );
+        assert_eq!(
+            builder(1 << 27)
+                .with_sort_strategy(SortStrategy::Radix)
+                .with_num_partitions(7)
+                .plan(None),
+            BuildPlan {
+                sort_strategy: SortStrategy::Radix,
+                num_partitions: 7
+            }
+        );
     }
 
     #[test]

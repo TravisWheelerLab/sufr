@@ -86,8 +86,8 @@ pub struct CreateArgs {
     #[arg(value_name = "INPUT")]
     pub input: String,
 
-    /// Subproblem count [default: 1024 for merge, 1 per 16 MiB of input
-    /// for radix]
+    /// Subproblem count [default: 1024 for merge; 1 for radix if it fits in 4
+    /// GiB of memory, otherwise 1 per 16 MiB of input]
     #[arg(short, long, value_name = "NUM_PARTS")]
     pub num_partitions: Option<usize>,
 
@@ -119,9 +119,10 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "MASK")]
     pub seed_mask: Option<String>,
 
-    /// Sort strategy ("radix" needs a seed mask or max query length)
-    #[arg(long, value_name = "STRATEGY", default_value = "merge")]
-    pub sort_strategy: SortStrategyArg,
+    /// Sort strategy ("radix" needs a seed mask or max query length) [default:
+    /// radix if its key fits in 64 bits, otherwise merge]
+    #[arg(long, value_name = "STRATEGY")]
+    pub sort_strategy: Option<SortStrategyArg>,
 
     /// Also write the LCP array (needed by "list --show-lcp"; speeds up
     /// query-time max query lengths shorter than the build-time value)
@@ -136,7 +137,7 @@ pub struct CreateArgs {
 /// CLI name for a `libsufr::types::SortStrategy`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SortStrategyArg {
-    /// Partition on prefixes, then merge sort with LCP (default)
+    /// Partition on prefixes, then merge sort with LCP
     Merge,
 
     /// Radix sort of packed keys, one partition at a time
@@ -372,9 +373,10 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         (None, None) => (),
     }
 
-    builder = builder
-        .with_sort_strategy(args.sort_strategy.into())
-        .with_write_lcp(args.write_lcp);
+    if let Some(sort_strategy) = args.sort_strategy {
+        builder = builder.with_sort_strategy(sort_strategy.into());
+    }
+    builder = builder.with_write_lcp(args.write_lcp);
     if let Some(tmp_dir) = &args.tmp_dir {
         builder = builder.with_temp_dir(tmp_dir);
     }
