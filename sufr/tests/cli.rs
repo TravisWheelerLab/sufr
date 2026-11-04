@@ -1102,6 +1102,40 @@ fn count_query_file() -> Result<()> {
 }
 
 // --------------------------------------------------
+// a cap changes which suffixes a search can tell apart, never how
+// many match a query shorter than it
+#[test]
+fn count_under_a_cap_matches_count_without_one() -> Result<()> {
+    // TODO: as in extract, HOME points at a temp dir until sufr-22b9c3
+    let home = TempDir::new()?;
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    Command::cargo_bin(PRG)?
+        .args(["create", "--dna", "-o", &outpath, "../data/inputs/smol.fa"])
+        .assert()
+        .success();
+
+    for cap in ["", "-m 2", "-m 3"] {
+        let mut args = vec!["count", &outpath, "A", "AC"];
+        args.extend(cap.split_whitespace());
+        let output = Command::cargo_bin(PRG)?
+            .env("HOME", home.path())
+            .args(&args)
+            .output()?;
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout)?, "A 93\nAC 11\n", "{cap}");
+    }
+
+    // the T group is the last one under -m 1
+    let output = Command::cargo_bin(PRG)?
+        .env("HOME", home.path())
+        .args(["count", "-m", "1", SUFR1, "T"])
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout)?, "T 2\n");
+    Ok(())
+}
+// --------------------------------------------------
 #[test]
 fn locate_query_file() -> Result<()> {
     let queries = NamedTempFile::new()?;

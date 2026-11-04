@@ -520,14 +520,11 @@ impl<T: Int> TypedSuffixArray<T> {
             return first..last + 1;
         };
 
-        // TODO: the last group ends at the subsample's length,
-        //       not the suffix array's; should it be num_suffixes?
-        let end = if first != last {
-            ranks[last].to_usize() + 1
-        } else if first == ranks.len() - 1 {
-            ranks.len()
-        } else {
-            ranks[first + 1].to_usize()
+        // the hit ends where the group after the last matched
+        // one begins
+        let end = match ranks.get(last + 1) {
+            Some(next) => next.to_usize(),
+            None => self.header.num_suffixes,
         };
         ranks[first].to_usize()..end
     }
