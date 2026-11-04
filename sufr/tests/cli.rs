@@ -119,6 +119,10 @@ fn extract(
     expected: &str,
     error: Option<&str>,
 ) -> Result<()> {
+    // TODO: a search with -m writes a subsample cache under ~/.sufr;
+    //       HOME points at a temp dir until sufr-22b9c3 decides
+    //       where, or whether, that cache lives
+    let home = TempDir::new()?;
     for memory in &["", "-l", "-v"] {
         let mut args = vec!["extract".to_string(), filename.to_string()];
 
@@ -145,7 +149,11 @@ fn extract(
             args.push(query.to_string());
         }
 
-        let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+        let output = Command::cargo_bin(PRG)?
+            .env("HOME", home.path())
+            .args(&args)
+            .output()
+            .expect("fail");
         assert!(output.status.success());
 
         let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
@@ -589,6 +597,8 @@ fn list_sufr1_limit_3() -> Result<()> {
 
 // --------------------------------------------------
 fn locate(filename: &str, opts: LocateOptions, expected_file: &str) -> Result<()> {
+    // TODO: as in extract, HOME points at a temp dir until sufr-22b9c3
+    let home = TempDir::new()?;
     for memory in ["", "-l", "-v"] {
         let mut args = vec!["locate".to_string(), filename.to_string()];
 
@@ -609,7 +619,11 @@ fn locate(filename: &str, opts: LocateOptions, expected_file: &str) -> Result<()
             args.push(query.to_string());
         }
 
-        let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+        let output = Command::cargo_bin(PRG)?
+            .env("HOME", home.path())
+            .args(&args)
+            .output()
+            .expect("fail");
         assert!(output.status.success());
 
         let actual = String::from_utf8(output.stdout).expect("invalid UTF-8");
