@@ -1,0 +1,28 @@
+{
+  "id": "sufr-a88738",
+  "title": "An independent reference sort and LCP check every small input across the build flags",
+  "body": "Batch 1 of sufr-25f57e. A naive reference sort in the libsufr tests, comparing suffixes byte by byte under the seed mask, max_query_len, dropped N suffixes, softmask and the delimiter, plus a reference LCP by direct comparison of neighbours. Run over 1, 2, 3, abba, smol, mostlya1, mostlya2 and spaced_input in data/inputs under -a, -i, -D, masks 101 11011 1101 10111011, -m 1 3 5 and -n 1 2 3, and once with with_force_64bit. Assert the built suffix array and LCP equal the reference. Replaces the four vacuous *_is_sorted tests in sufr/tests/cli.rs. The open question on LCP above m (sufr-2b76b5) is on the parent.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "sufr-25f57e",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T03:56:09.346397407Z",
+  "updated_at": "2026-11-04T03:56:09.346397407Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4e04a02",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
