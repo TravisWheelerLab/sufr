@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-04T20:46:05.828081822Z",
   "defer_until": null,
   "created_at": "2026-11-04T20:31:00.867626509Z",
-  "updated_at": "2026-11-04T22:48:58.673327464Z",
+  "updated_at": "2026-11-04T23:11:02.797194803Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -39,6 +39,14 @@
       "at": "2026-11-04T22:48:58.673326794Z",
       "author": "Jack Roddy/707e7014",
       "text": "`TypedSuffixArray`, `Buffer`, `Memory`, `Disk` and `Int` are exported only under the cargo feature `typed`, off by default, so the default surface is `SuffixArray`, `OpenOptions`, `Storage`, `Metadata`, `Header`, the builder and the search result types. docs.rs builds with every feature on and the five carry the \"crate feature `typed`\" banner, through `[package.metadata.docs.rs]` and `doc(cfg)` under the `docsrs` cfg. The eight-arm `open_with` match moved into `typed.rs` as `typed::open`, and the `Queryable` impl sits under the struct, so `lib.rs` imports none of the gated names and the re-exports cannot collide. Checked both ways: clippy, `cargo doc` and the tests with the feature off and on.",
+      "commit": "fc5db36",
+      "branch": "buffer"
+    },
+    {
+      "id": "c6be2e18",
+      "at": "2026-11-04T23:11:02.797194193Z",
+      "author": "Jack Roddy/707e7014",
+      "text": "Int is trimmed on the same branch: AddAssign, Display and Hash were unused, found by stripping the trait to Copy and reading the compiler's list. to_usize is a default method over a new Into<u64> bound, so both methods take and return values, and the three impls hold only from_usize, which stays an infallible as. Create at 10 MiB, 4 threads, median of 5, before and after: normal 0.44 and 0.45 s, long-n 0.55 and 0.54 s, protein 0.43 and 0.42 s. 104 tests pass.",
       "commit": "fc5db36",
       "branch": "buffer"
     }
