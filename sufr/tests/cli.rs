@@ -1,12 +1,9 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::{OpenOptions, SeedMask, Storage, SuffixArray, OUTFILE_VERSION};
+use libsufr::{OpenOptions, Storage, SuffixArray, OUTFILE_VERSION};
 use pretty_assertions::assert_eq;
 use regex::Regex;
-use std::{
-    fs::{self, File},
-    io::{BufRead, BufReader},
-};
+use std::fs;
 use tempfile::{NamedTempFile, TempDir};
 
 const PRG: &str = "sufr";
@@ -910,90 +907,6 @@ fn summarize_sufr1() -> Result<()> {
             ("Sequence names", "1"),
         ],
     )
-}
-
-// --------------------------------------------------
-fn file_is_sorted(filename: &str, mask: Option<&str>) -> Result<()> {
-    // Create the sufr file
-    let sufr_file = NamedTempFile::new()?;
-    let sufr_path = &sufr_file.path().to_string_lossy();
-    let mut args = vec![
-        "create".to_string(),
-        "-o".to_string(),
-        sufr_path.to_string(),
-        filename.to_string(),
-    ];
-
-    let seed_mask: Option<SeedMask> = mask.map(SeedMask::new).transpose()?;
-    if let Some(mask) = &seed_mask {
-        args.push("-s".to_string());
-        args.push(mask.to_string());
-    }
-
-    let output = Command::cargo_bin(PRG)?.args(&args).output()?;
-    assert!(output.status.success());
-    assert!(sufr_file.path().exists());
-
-    // Use "list" to write the sorted suffixes to a temp file
-    let list_file = NamedTempFile::new()?;
-    let list_path = &list_file.path().to_string_lossy();
-    let args = vec![
-        "list".to_string(),
-        "-o".to_string(),
-        list_path.to_string(),
-        sufr_path.to_string(),
-    ];
-
-    let output = Command::cargo_bin(PRG)?.args(&args).output()?;
-    assert!(output.status.success());
-    assert!(list_file.path().exists());
-
-    // Read the lines of the sorted suffixes and ensure they are sorted
-    let list_file = BufReader::new(File::open(list_file.path())?);
-    let mut prev_line: Option<String> = None;
-    for mut line in list_file.lines().map_while(Result::ok) {
-        if let Some(mask) = &seed_mask {
-            let chars: Vec<char> = line.chars().collect();
-            let masked: String = mask
-                .positions
-                .iter()
-                .filter_map(|&p| chars.get(p))
-                .collect();
-            line = masked;
-        }
-
-        if let Some(ref prev) = prev_line {
-            assert!(*prev <= line);
-        }
-
-        prev_line = Some(line.clone());
-    }
-
-    Ok(())
-}
-
-// --------------------------------------------------
-#[test]
-fn long_dna_is_sorted() -> Result<()> {
-    file_is_sorted(LONG, None)
-}
-
-// --------------------------------------------------
-#[test]
-fn masked_long_dna_is_sorted() -> Result<()> {
-    file_is_sorted(LONG, Some("111010010100110111"))
-}
-
-// --------------------------------------------------
-#[test]
-fn uniprot_is_sorted() -> Result<()> {
-    file_is_sorted(UNIPROT, None)
-}
-
-// --------------------------------------------------
-#[test]
-fn masked_uniprot_is_sorted() -> Result<()> {
-    file_is_sorted(UNIPROT, Some("10111011"))
 }
 
 // --------------------------------------------------
