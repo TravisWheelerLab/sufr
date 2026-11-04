@@ -47,7 +47,7 @@ fn build(fasta: &str, alphabet: Alphabet, mask: Option<&str>) -> Result<NamedTem
         builder = builder.with_seed_mask(SeedMask::new(mask)?);
     }
     let outfile = NamedTempFile::new()?;
-    builder.build_to_file(outfile.path(), false)?;
+    builder.build_to_file(outfile.path())?;
     Ok(outfile)
 }
 
@@ -222,7 +222,7 @@ fn a_cap_of_zero_at_search_time_means_the_files_cap() -> Result<()> {
     SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
         .with_alphabet(DNA)
         .with_max_query_len(2)
-        .build_to_file(outfile.path(), false)?;
+        .build_to_file(outfile.path())?;
     for max_query_len in [None, Some(0), Some(9)] {
         let sa = open(&outfile, Storage::Memory, Storage::Memory, max_query_len)?;
         assert_eq!(sa.search(b"ACGTX")?.count(), 4, "{max_query_len:?}");

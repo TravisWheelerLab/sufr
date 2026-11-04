@@ -363,7 +363,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     builder = builder.with_write_lcp(args.write_lcp);
 
     let now = Instant::now();
-    builder.build_to_file(outfile, true)?;
+    builder.build_to_file(outfile)?;
 
     let meta = fs::metadata(outfile)?;
     let bytes_written = meta.len();

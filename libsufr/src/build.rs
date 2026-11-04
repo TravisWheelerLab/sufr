@@ -1,19 +1,16 @@
 mod partition;
-mod scratch;
 mod sort;
 mod write;
 
 use crate::{
+    buffer::{Buffer, Disk, Memory},
     format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION},
     io::Int,
-    typed::{Storage, Text, TypedSuffixArray},
-    SuffixArray, SuffixArrayKind,
 };
 use anyhow::Result;
 use log::info;
 use needletail::parse_fastx_file;
 use partition::{group_buffers, partition, PrefixEncoder};
-use scratch::ScratchKind;
 use sort::{first_lcps, sort_partitions};
 use std::{mem, ops::Range, path::Path, time::Instant};
 use write::write;
@@ -162,61 +159,36 @@ impl SuffixArrayBuilder {
         self
     }
 
-    /// Build the suffix array, write it to `path` and open the result.
-    /// With `low_memory`, the suffixes stay on disk.
-    pub fn build_to_file(
-        self,
-        path: impl AsRef<Path>,
-        low_memory: bool,
-    ) -> Result<SuffixArray> {
+    /// Build the suffix array and write it to `path`.
+    pub fn build_to_file(self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
-        let inner = if fits_u32 {
-            SuffixArrayKind::U32(construct::<u32>(
-                path,
-                self.text,
-                self.sequences,
-                self.alphabet,
-                self.seed_mask,
-                self.max_query_len,
-                self.num_partitions,
-                self.write_lcp,
-                self.memory_scratch,
-                low_memory,
-            )?)
-        } else {
-            SuffixArrayKind::U64(construct::<u64>(
-                path,
-                self.text,
-                self.sequences,
-                self.alphabet,
-                self.seed_mask,
-                self.max_query_len,
-                self.num_partitions,
-                self.write_lcp,
-                self.memory_scratch,
-                low_memory,
-            )?)
-        };
-        Ok(SuffixArray { inner })
+        match (fits_u32, self.memory_scratch) {
+            (true, true) => construct::<u32, Memory<u32>>(self, path),
+            (true, false) => construct::<u32, Disk<u32>>(self, path),
+            (false, true) => construct::<u64, Memory<u64>>(self, path),
+            (false, false) => construct::<u64, Disk<u64>>(self, path),
+        }
     }
 }
 
-/// Build the suffix array of `text` with `T` per suffix and LCP, write it
-/// to `path` and open the result.
-#[allow(clippy::too_many_arguments)]
-fn construct<T: Int>(
+/// Build the suffix array of the builder's text with `W` per suffix and
+/// LCP and the unsorted and sorted suffixes held in `S`, and write it to
+/// `path`.
+fn construct<W: Int, S: Buffer<W>>(
+    builder: SuffixArrayBuilder,
     path: &Path,
-    mut text: Vec<u8>,
-    sequences: Vec<(usize, String)>,
-    alphabet: Alphabet,
-    mask: Option<SeedMask>,
-    max_query_len: usize,
-    num_partitions: usize,
-    write_lcp: bool,
-    memory_scratch: bool,
-    low_memory: bool,
-) -> Result<TypedSuffixArray<T>> {
+) -> Result<()> {
+    let SuffixArrayBuilder {
+        mut text,
+        sequences,
+        alphabet,
+        seed_mask: mask,
+        max_query_len,
+        num_partitions,
+        write_lcp,
+        ..
+    } = builder;
     let occupancy = normalize(&mut text, &alphabet);
     let keep = keep_table(&alphabet);
     let n_ranges = match alphabet {
@@ -228,13 +200,8 @@ fn construct<T: Int>(
     };
     let encoder = PrefixEncoder::from_occupancy(occupancy);
     let mask = mask.as_ref();
-    let scratch = if memory_scratch {
-        ScratchKind::Memory
-    } else {
-        ScratchKind::Disk
-    };
 
-    let partitioned = partition::<T>(&text, &encoder, &keep, mask, scratch)?;
+    let partitioned = partition::<W, S>(&text, &encoder, &keep, mask)?;
     let header = header(
         &alphabet,
         &sequences,
@@ -243,7 +210,7 @@ fn construct<T: Int>(
         mask,
         max_query_len,
         write_lcp,
-        mem::size_of::<T>(),
+        mem::size_of::<W>(),
     );
     let groups = group_buffers(partitioned, num_partitions)?;
     let partitions =
@@ -253,20 +220,7 @@ fn construct<T: Int>(
     } else {
         vec![]
     };
-    write(path, &header, &text, partitions, &first_lcps)?;
-
-    let suffixes = if low_memory {
-        Storage::Disk
-    } else {
-        Storage::Memory
-    };
-    TypedSuffixArray::new(
-        &path.to_string_lossy(),
-        header,
-        Text::Memory(text),
-        suffixes,
-        None,
-    )
+    write(path, &header, &text, partitions, &first_lcps)
 }
 
 /// The header of the output file, with `int_size` bytes per
@@ -493,7 +447,7 @@ mod test {
             SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
                 .with_memory_scratch(memory_scratch)
                 .with_write_lcp(true)
-                .build_to_file(outfile.path(), false)?;
+                .build_to_file(outfile.path())?;
             Ok(fs::read(outfile.path())?)
         };
         assert_eq!(build(true)?, build(false)?);
@@ -508,7 +462,7 @@ mod test {
                 allow_ambiguity: false,
                 ignore_softmask: true,
             })
-            .build_to_file(outfile.path(), false)?;
+            .build_to_file(outfile.path())?;
         let suffix_array = SuffixArray::open(&outfile.path().to_string_lossy())?;
         let meta = suffix_array.metadata()?;
         assert_eq!(meta.text_len, 113);

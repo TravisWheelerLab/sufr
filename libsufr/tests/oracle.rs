@@ -162,7 +162,7 @@ fn check(case: &Case) -> Result<()> {
     }
     let outfile = NamedTempFile::new()?;
     let outpath = outfile.path().to_string_lossy().to_string();
-    builder.build_to_file(&outpath, false)?;
+    builder.build_to_file(&outpath)?;
 
     let built = SuffixArray::open(&outpath)?;
     let header = built.header();

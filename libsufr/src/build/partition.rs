@@ -1,5 +1,4 @@
-use super::scratch::{Scratch, ScratchKind};
-use crate::{format::SeedMask, io::Int};
+use crate::{buffer::Buffer, format::SeedMask, io::Int};
 use anyhow::{bail, Result};
 use log::info;
 use rayon::prelude::*;
@@ -109,7 +108,7 @@ impl PrefixEncoder {
 
 /// The sorted suffixes and LCPs of one partition.
 #[derive(Debug)]
-pub(super) struct Partition<T: Int> {
+pub(super) struct Partition<S> {
     /// The position of this partition in the suffix array.
     pub(super) order: usize,
 
@@ -125,33 +124,32 @@ pub(super) struct Partition<T: Int> {
     pub(super) last_suffix: usize,
 
     /// The buffer containing the suffix array.
-    pub(super) sa_buffer: Scratch<T>,
+    pub(super) sa_buffer: S,
 
     /// The buffer containing the LCP array, when one is written.
-    pub(super) lcp_buffer: Option<Scratch<T>>,
+    pub(super) lcp_buffer: Option<S>,
 }
 
 /// The unsorted suffixes in one scratch buffer per prefix, in prefix
 /// order.
 #[derive(Debug)]
-pub(super) struct PartitionedSuffixes<T: Int> {
-    buffers: Vec<Scratch<T>>,
+pub(super) struct PartitionedSuffixes<S> {
+    buffers: Vec<S>,
     pub(super) num_suffixes: usize,
 }
 
 /// Place each suffix of `text` whose first byte `keep` marks in the
-/// scratch buffer of `kind` for its bucket number from `encoder`.
-pub(super) fn partition<T: Int>(
+/// buffer for its bucket number from `encoder`.
+pub(super) fn partition<W: Int, S: Buffer<W>>(
     text: &[u8],
     encoder: &PrefixEncoder,
     keep: &[bool; 256],
     mask: Option<&SeedMask>,
-    kind: ScratchKind,
-) -> Result<PartitionedSuffixes<T>> {
+) -> Result<PartitionedSuffixes<S>> {
     let num_partitions = encoder.num_buckets();
-    let mut buffers: Vec<_> = vec![];
+    let mut buffers = Vec::with_capacity(num_partitions);
     for _ in 0..num_partitions {
-        buffers.push(Mutex::new(Scratch::new(kind)));
+        buffers.push(Mutex::new(S::empty()?));
     }
 
     let now = Instant::now();
@@ -174,7 +172,7 @@ pub(super) fn partition<T: Int>(
                 let key = encoder.encode(text, i, mask);
                 keys.push(key);
                 counts[key as usize] += 1;
-                suffixes.push(T::from_usize(i));
+                suffixes.push(W::from_usize(i));
             }
 
             let mut offsets = Vec::with_capacity(num_partitions);
@@ -184,7 +182,7 @@ pub(super) fn partition<T: Int>(
                 total += n;
             }
 
-            let mut ordered = vec![T::default(); keys.len()];
+            let mut ordered = vec![W::default(); keys.len()];
             let mut cursors = offsets.clone();
             for (&key, &suf) in keys.iter().zip(suffixes.iter()) {
                 let offset = &mut cursors[key as usize];
@@ -216,7 +214,7 @@ pub(super) fn partition<T: Int>(
         .map(|buffer| match buffer.into_inner() {
             Ok(mut buf) => {
                 buf.flush()?;
-                num_suffixes += buf.count();
+                num_suffixes += buf.len();
                 Ok(buf)
             }
             Err(e) => panic!("Failed to lock: {e}"),
@@ -237,10 +235,10 @@ pub(super) fn partition<T: Int>(
 
 /// Gather the buffers, which are in prefix order, into `num_partitions`
 /// groups of about the same number of suffixes.
-pub(super) fn group_buffers<T: Int>(
-    partitioned: PartitionedSuffixes<T>,
+pub(super) fn group_buffers<W: Int, S: Buffer<W>>(
+    partitioned: PartitionedSuffixes<S>,
     num_partitions: usize,
-) -> Result<Vec<Vec<Scratch<T>>>> {
+) -> Result<Vec<Vec<S>>> {
     // round up to take every suffix
     let num_per_partition =
         (partitioned.num_suffixes as f64 / num_partitions as f64).ceil() as usize;
@@ -256,8 +254,8 @@ pub(super) fn group_buffers<T: Int>(
     for (partition_num, partition_input) in partition_inputs.iter_mut().enumerate() {
         let boundary = num_per_partition * (partition_num + 1);
         for buffer in part_buffers.by_ref() {
-            if buffer.count() > 0 {
-                num_taken += buffer.count();
+            if !buffer.is_empty() {
+                num_taken += buffer.len();
                 partition_input.push(buffer);
             }
 
@@ -296,7 +294,7 @@ mod test {
 
     #[test]
     fn test_encode() -> Result<()> {
-        // ranks in $%ACGNT: $=0 %=1 A=2 C=3 G=4 N=5 T=6
+        // ranks in $%ACGNT: $=0 %=1 A=2 C=3 G=4 N=5 W=6
         let text = b"ACGTNA$";
         let mut occupancy = [false; 256];
         for &b in text {

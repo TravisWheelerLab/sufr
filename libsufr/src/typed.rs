@@ -1,8 +1,11 @@
 //! A _.sufr_ file opened for queries
 
 use crate::{
-    format::{Header, SeedMask, SuffixSortType},
-    io::{as_bytes, as_bytes_mut, FileAccess, Int},
+    buffer::{Buffer, Disk, Memory},
+    format::{read_text_length, Header, SeedMask, SuffixSortType},
+    io::{as_bytes, as_bytes_mut, Int},
+    search::{Context, Extraction, Location},
+    OpenOptions, Queryable,
 };
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
@@ -28,26 +31,6 @@ pub enum Storage {
     Memory,
 
     /// Read from the file as each query needs it.
-    Disk,
-}
-
-#[derive(Debug)]
-pub(crate) enum Text {
-    Memory(Vec<u8>),
-    Disk(FileAccess<u8>),
-}
-
-/// Where a search reads suffixes from.
-#[derive(Debug)]
-pub(crate) enum Suffixes<T> {
-    /// The whole suffix array.
-    Memory(Vec<T>),
-
-    /// The first suffix of each group sharing a `max_query_len` prefix,
-    /// with its rank in the whole suffix array.
-    Subsampled { suffixes: Vec<T>, ranks: Vec<T> },
-
-    /// The suffix array on disk.
     Disk,
 }
 
@@ -146,25 +129,28 @@ impl Metadata {
     }
 }
 
-/// A _.sufr_ file opened for queries, with its text and suffixes in
-/// memory or on disk as chosen by [`TypedSuffixArray::open`].
+/// A _.sufr_ file opened for queries, with its text in `T` and its
+/// suffix array in `S`.
 #[derive(Debug)]
-pub(crate) struct TypedSuffixArray<T: Int> {
+pub struct TypedSuffixArray<W: Int, T: Buffer<u8>, S: Buffer<W>> {
     /// The _.sufr_ filename.
     pub(crate) filename: String,
 
     /// The file's header.
     pub(crate) header: Header,
 
-    /// The suffix array on disk.
-    pub(crate) suffix_array_file: FileAccess<T>,
+    text: T,
 
-    /// The LCP array on disk, if the file has one.
-    pub(crate) lcp_file: Option<FileAccess<T>>,
+    suffixes: S,
 
-    text: Text,
+    /// The LCP array, if the file has one.
+    //
+    // always on disk: no search reads it, and no mode loads it
+    pub(crate) lcps: Option<Disk<W>>,
 
-    suffixes: Suffixes<T>,
+    /// The suffixes a search runs over instead of the whole array, when
+    /// `max_query_len` is shorter than the sort.
+    subsample: Option<Subsample<W>>,
 
     /// The seed mask the suffixes were sorted by, if any.
     pub(crate) seed_mask: Option<SeedMask>,
@@ -173,47 +159,41 @@ pub(crate) struct TypedSuffixArray<T: Int> {
     pub(crate) max_query_len: usize,
 }
 
-impl<T: Int> TypedSuffixArray<T> {
-    /// Open a _.sufr_ file whose arrays hold `T` values, with its
-    /// `text` and `suffixes` stored as given. `max_query_len` limits how
-    /// many characters of a query are compared, and when it is shorter
-    /// than the sort, suffixes in memory are a subsample.
-    pub(crate) fn open(
-        filename: &str,
-        text: Storage,
-        suffixes: Storage,
-        max_query_len: Option<usize>,
-    ) -> Result<TypedSuffixArray<T>> {
-        let header = Header::read(filename, mem::size_of::<T>())?;
-        let text_file: FileAccess<u8> =
-            FileAccess::new(filename, header.text_pos as u64, header.text_len)?;
-        let text = match text {
-            Storage::Disk => Text::Disk(text_file),
-            Storage::Memory => Text::Memory(text_file.get_range(0..header.text_len)?),
-        };
-        Self::new(filename, header, text, suffixes, max_query_len)
-    }
+/// The first suffix of each group sharing a `max_query_len` prefix,
+/// with its rank in the whole suffix array.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Subsample<W> {
+    suffixes: Vec<W>,
+    ranks: Vec<W>,
+}
 
-    /// The index over `filename`, whose `header` and `text` are already
-    /// read, with its suffixes stored as given.
-    pub(crate) fn new(
+impl<W: Int> Subsample<W> {
+    #[cfg(test)]
+    pub(crate) fn pair(self) -> (Vec<W>, Vec<W>) {
+        (self.suffixes, self.ranks)
+    }
+}
+
+impl<W: Int, T: Buffer<u8>, S: Buffer<W>> TypedSuffixArray<W, T, S> {
+    /// Open a _.sufr_ file whose arrays hold `W` values, with its text in
+    /// `T` and its suffix array in `S`. `max_query_len` limits how many
+    /// characters of a query are compared. With `subsample`, the first
+    /// suffix of each group sharing that many characters is held in
+    /// memory and searched instead of the whole array.
+    pub fn open(
         filename: &str,
-        header: Header,
-        text: Text,
-        suffixes: Storage,
         max_query_len: Option<usize>,
-    ) -> Result<TypedSuffixArray<T>> {
-        let suffix_array_file = FileAccess::new(
-            filename,
-            header.suffix_array_pos as u64,
-            header.num_suffixes,
-        )?;
-        let lcp_file = match header.lcp_pos {
-            Some(lcp_pos) => Some(FileAccess::new(
-                filename,
-                lcp_pos as u64,
-                header.num_suffixes,
-            )?),
+        subsample: bool,
+    ) -> Result<Self> {
+        let header = Header::read(filename, mem::size_of::<W>())?;
+        let path = Path::new(filename);
+        let text = T::open(path, header.text_pos as u64, header.text_len)?;
+        let suffixes =
+            S::open(path, header.suffix_array_pos as u64, header.num_suffixes)?;
+        let lcps = match header.lcp_pos {
+            Some(lcp_pos) => {
+                Some(Disk::open(path, lcp_pos as u64, header.num_suffixes)?)
+            }
             None => None,
         };
 
@@ -229,52 +209,90 @@ impl<T: Int> TypedSuffixArray<T> {
         let mut index = TypedSuffixArray {
             filename: filename.to_string(),
             header,
-            suffix_array_file,
-            lcp_file,
             text,
-            suffixes: Suffixes::Disk,
+            suffixes,
+            lcps,
+            subsample: None,
             seed_mask,
             max_query_len: search_max_query_len,
         };
-        if suffixes == Storage::Memory {
-            index.suffixes = index.load_suffixes(max_query_len)?;
+        if subsample {
+            let len = subsample_len(&index.header, max_query_len);
+            info!("Loading suffix_array_mem using max_query_len {len}");
+            index.subsample = Some(index.subsample_with_cache(len)?);
         }
         Ok(index)
     }
 
-    /// Read the whole suffix array into memory when `max_query_len`
-    /// matches how it was sorted, and otherwise a subsample of it.
-    fn load_suffixes(&self, max_query_len: Option<usize>) -> Result<Suffixes<T>> {
-        let built_max_query_len = match &self.header.sort_type {
-            SuffixSortType::MaxQueryLen(0) => self.header.text_len,
-            SuffixSortType::MaxQueryLen(mql) => *mql,
-            SuffixSortType::Mask(seed_mask) => seed_mask.weight,
+    /// The text byte at `pos`.
+    pub(crate) fn text_byte(&self, pos: usize) -> Result<Option<u8>> {
+        self.text.get(pos)
+    }
+
+    /// The text bytes in `range`, borrowed when the text is in memory.
+    pub(crate) fn text_slice(&self, range: Range<usize>) -> Result<Cow<'_, [u8]>> {
+        self.text.range(range)
+    }
+
+    /// The number of suffixes a search runs over.
+    pub(crate) fn num_searched(&self) -> usize {
+        match &self.subsample {
+            Some(subsample) => subsample.suffixes.len(),
+            None => self.suffixes.len(),
+        }
+    }
+
+    /// The suffix at position `pos` of the suffixes a search runs over.
+    pub(crate) fn searched_suffix(&self, pos: usize) -> Result<Option<W>> {
+        match &self.subsample {
+            Some(subsample) => Ok(subsample.suffixes.get(pos).copied()),
+            None => self.suffixes.get(pos),
+        }
+    }
+
+    /// The ranks in the whole suffix array of the searched positions
+    /// `first..=last`.
+    pub(crate) fn searched_ranks(&self, first: usize, last: usize) -> Range<usize> {
+        let Some(subsample) = &self.subsample else {
+            return first..last + 1;
         };
 
-        let mut max_query_len = max_query_len.unwrap_or(0);
-        if built_max_query_len > 0 {
-            max_query_len = if max_query_len > 0 {
-                min(max_query_len, built_max_query_len)
-            } else {
-                built_max_query_len
-            };
-        }
+        // the hit ends where the group after the last matched
+        // one begins
+        let end = match subsample.ranks.get(last + 1) {
+            Some(next) => next.to_usize(),
+            None => self.header.num_suffixes,
+        };
+        subsample.ranks[first].to_usize()..end
+    }
 
-        if max_query_len == built_max_query_len {
-            let now = Instant::now();
-            let suffixes = self.suffix_array_file.iter().collect();
-            info!("Read entire SA from disk in {:?}", now.elapsed());
-            return Ok(Suffixes::Memory(suffixes));
-        }
+    /// The positions in the text of the suffixes at `ranks`.
+    pub(crate) fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+        Ok(self
+            .suffixes
+            .range(ranks)?
+            .iter()
+            .map(Int::to_usize)
+            .collect())
+    }
 
-        info!("Loading suffix_array_mem using max_query_len {max_query_len}");
-        let (suffixes, ranks) = self.subsample_with_cache(max_query_len)?;
-        Ok(Suffixes::Subsampled { suffixes, ranks })
+    /// The LCP of each suffix at `ranks` with the suffix before it. An
+    /// error when the file has no LCP array.
+    pub(crate) fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+        match &self.lcps {
+            Some(lcps) => Ok(lcps.range(ranks)?.iter().map(Int::to_usize).collect()),
+            None => bail!("{} has no LCP array", self.filename),
+        }
+    }
+
+    /// The text bytes in `range`.
+    pub(crate) fn text(&self, range: Range<usize>) -> Result<Vec<u8>> {
+        Ok(self.text.range(range)?.into_owned())
     }
 
     /// Read the subsample for `max_query_len` from its cache file in
     /// `~/.sufr`, or compute it and write the cache file.
-    fn subsample_with_cache(&self, max_query_len: usize) -> Result<(Vec<T>, Vec<T>)> {
+    fn subsample_with_cache(&self, max_query_len: usize) -> Result<Subsample<W>> {
         let cache_dir = cache_dir()?;
         let basename = Path::new(&self.filename)
             .file_name()
@@ -300,20 +318,20 @@ impl<T: Int> TypedSuffixArray<T> {
         }
 
         let now = Instant::now();
-        let (suffixes, ranks) = self.subsample(max_query_len);
+        let subsample = self.subsample(max_query_len)?;
         info!(
             "Loaded compressed SA ({}/{}) in {:?}",
-            suffixes.len(),
+            subsample.suffixes.len(),
             self.header.num_suffixes,
             now.elapsed()
         );
-        if !suffixes.is_empty() {
-            write_cache(&cache_path, &suffixes, &ranks)?;
+        if !subsample.suffixes.is_empty() {
+            write_cache(&cache_path, &subsample)?;
         }
-        Ok((suffixes, ranks))
+        Ok(subsample)
     }
 
-    fn read_cache(&self, cache_path: &Path) -> Result<(Vec<T>, Vec<T>)> {
+    fn read_cache(&self, cache_path: &Path) -> Result<Subsample<W>> {
         let now = Instant::now();
         let mut file = File::open(cache_path)
             .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
@@ -324,9 +342,9 @@ impl<T: Int> TypedSuffixArray<T> {
         file.read_exact(&mut buffer)?;
         let len = u64::from_le_bytes(buffer) as usize;
 
-        let mut suffixes = vec![T::from_usize(0); len];
+        let mut suffixes = vec![W::from_usize(0); len];
         file.read_exact(as_bytes_mut(&mut suffixes))?;
-        let mut ranks = vec![T::from_usize(0); len];
+        let mut ranks = vec![W::from_usize(0); len];
         file.read_exact(as_bytes_mut(&mut ranks))?;
 
         info!(
@@ -336,55 +354,48 @@ impl<T: Int> TypedSuffixArray<T> {
             cache_path.display(),
             now.elapsed()
         );
-        Ok((suffixes, ranks))
+        Ok(Subsample { suffixes, ranks })
     }
 
     /// The first suffix of each group sharing a `max_query_len` prefix,
     /// with its rank, found from the LCP array when the file has one and
     /// otherwise from the text.
-    pub(crate) fn subsample(&self, max_query_len: usize) -> (Vec<T>, Vec<T>) {
-        let Some(lcp_file) = &self.lcp_file else {
+    pub(crate) fn subsample(&self, max_query_len: usize) -> Result<Subsample<W>> {
+        let Some(lcps) = &self.lcps else {
             return self.subsample_by_text(max_query_len);
         };
 
-        let max_query_len = T::from_usize(max_query_len);
-        let mut suffixes: Vec<T> = Vec::with_capacity(self.header.num_suffixes);
-        let mut ranks: Vec<T> = Vec::with_capacity(self.header.num_suffixes);
-        for (i, (lcp, suffix)) in lcp_file
-            .iter()
-            .zip(self.suffix_array_file.iter())
-            .enumerate()
-        {
-            if lcp < max_query_len {
-                suffixes.push(suffix);
-                ranks.push(T::from_usize(i));
+        let max_query_len = W::from_usize(max_query_len);
+        let num_suffixes = self.header.num_suffixes;
+        let mut suffixes: Vec<W> = Vec::with_capacity(num_suffixes);
+        let mut ranks: Vec<W> = Vec::with_capacity(num_suffixes);
+        for start in (0..num_suffixes).step_by(BLOCK_LEN) {
+            let block = start..min(start + BLOCK_LEN, num_suffixes);
+            let block_lcps = lcps.range(block.clone())?;
+            let block_suffixes = self.suffixes.range(block.clone())?;
+            for (i, (&lcp, &suffix)) in
+                block_lcps.iter().zip(block_suffixes.iter()).enumerate()
+            {
+                if lcp < max_query_len {
+                    suffixes.push(suffix);
+                    ranks.push(W::from_usize(start + i));
+                }
             }
         }
 
-        (suffixes, ranks)
+        Ok(Subsample { suffixes, ranks })
     }
 
     /// The subsample, keeping a suffix when the text of its first
     /// `max_query_len` bytes, or care positions under a seed mask,
     /// differs from its predecessor's.
-    fn subsample_by_text(&self, max_query_len: usize) -> (Vec<T>, Vec<T>) {
+    fn subsample_by_text(&self, max_query_len: usize) -> Result<Subsample<W>> {
         let now = Instant::now();
         let text_len = self.header.text_len;
-        let text_owned: Vec<u8>;
-        let text: &[u8] = match &self.text {
-            Text::Memory(text) => text,
-            Text::Disk(text_file) => {
-                // reading the whole text cannot be out of range, so
-                // this fails only on an I/O error, as the iterator
-                // over the suffix array file does
-                text_owned = text_file
-                    .get_range(0..text_len)
-                    .expect("failed to read text");
-                &text_owned
-            }
-        };
+        let text = self.text.range(0..text_len)?;
+        let text: &[u8] = &text;
 
-        let (suffixes, ranks) = match &self.seed_mask {
+        let subsample = match &self.seed_mask {
             Some(seed_mask) => {
                 let positions =
                     &seed_mask.positions[..min(max_query_len, seed_mask.weight)];
@@ -395,7 +406,7 @@ impl<T: Int> TypedSuffixArray<T> {
                             (Some(x), Some(y)) if x == y
                         )
                     })
-                })
+                })?
             }
             // compared as slices, which lowers to memcmp
             None => self.keep_differing(|a, b| {
@@ -406,41 +417,36 @@ impl<T: Int> TypedSuffixArray<T> {
                 end_a - a < max_query_len
                     || end_b - b < max_query_len
                     || text[a..end_a] != text[b..end_b]
-            }),
+            })?,
         };
         info!(
             "Subsampled SA ({}/{}) from text (no LCP array) in {:?}",
-            suffixes.len(),
+            subsample.suffixes.len(),
             self.header.num_suffixes,
             now.elapsed()
         );
 
-        (suffixes, ranks)
+        Ok(subsample)
     }
 
     /// Keep each suffix, with its rank, for which `differs` is true of
     /// the previous suffix and it, and always the first suffix.
-    /// The suffix array is streamed from disk in blocks, so memory is the
+    /// The suffix array is read from disk in blocks, so memory is the
     /// subsample plus one block.
     fn keep_differing(
         &self,
         differs: impl Fn(usize, usize) -> bool + Sync,
-    ) -> (Vec<T>, Vec<T>) {
+    ) -> Result<Subsample<W>> {
         // compare within a block in parallel, carrying
         // the last suffix of the previous block across
-        let block_len = 1 << 22;
-        let mut block: Vec<T> = Vec::with_capacity(block_len);
-        let mut suffixes: Vec<T> = vec![];
-        let mut ranks: Vec<T> = vec![];
+        let num_suffixes = self.header.num_suffixes;
+        let mut suffixes: Vec<W> = vec![];
+        let mut ranks: Vec<W> = vec![];
         let mut prev: Option<usize> = None;
-        let mut seen = 0usize;
-        let mut suffix_array = self.suffix_array_file.iter();
-        loop {
-            block.clear();
-            block.extend(suffix_array.by_ref().take(block_len));
-            if block.is_empty() {
-                break;
-            }
+        for start in (0..num_suffixes).step_by(BLOCK_LEN) {
+            let block = self
+                .suffixes
+                .range(start..min(start + BLOCK_LEN, num_suffixes))?;
             let keep: Vec<bool> = block
                 .par_iter()
                 .enumerate()
@@ -459,92 +465,13 @@ impl<T: Int> TypedSuffixArray<T> {
             for (i, (&suffix, &kept)) in block.iter().zip(&keep).enumerate() {
                 if kept {
                     suffixes.push(suffix);
-                    ranks.push(T::from_usize(seen + i));
+                    ranks.push(W::from_usize(start + i));
                 }
             }
-            seen += block.len();
             prev = block.last().map(|v| v.to_usize());
         }
 
-        (suffixes, ranks)
-    }
-
-    /// The text byte at `pos`.
-    pub(crate) fn text_byte(&self, pos: usize) -> Result<Option<u8>> {
-        match &self.text {
-            Text::Memory(text) => Ok(text.get(pos).copied()),
-            Text::Disk(text_file) => text_file.get(pos),
-        }
-    }
-
-    /// The text bytes in `range`.
-    pub(crate) fn text_range(&self, range: Range<usize>) -> Result<Vec<u8>> {
-        match &self.text {
-            Text::Memory(text) => Ok(text[range].to_vec()),
-            Text::Disk(text_file) => text_file.get_range(range),
-        }
-    }
-
-    /// The text bytes in `range`, borrowed when the text is in memory.
-    pub(crate) fn text_slice(&self, range: Range<usize>) -> Result<Cow<'_, [u8]>> {
-        match &self.text {
-            Text::Memory(text) => Ok(Cow::Borrowed(&text[range])),
-            Text::Disk(text_file) => Ok(Cow::Owned(text_file.get_range(range)?)),
-        }
-    }
-
-    /// The number of suffixes a search runs over.
-    pub(crate) fn num_searched(&self) -> usize {
-        match &self.suffixes {
-            Suffixes::Memory(suffixes) | Suffixes::Subsampled { suffixes, .. } => {
-                suffixes.len()
-            }
-            Suffixes::Disk => self.header.num_suffixes,
-        }
-    }
-
-    /// The suffix at position `pos` of the suffixes a search runs over.
-    pub(crate) fn searched_suffix(&self, pos: usize) -> Result<Option<T>> {
-        match &self.suffixes {
-            Suffixes::Memory(suffixes) | Suffixes::Subsampled { suffixes, .. } => {
-                Ok(suffixes.get(pos).copied())
-            }
-            Suffixes::Disk => self.suffix_array_file.get(pos),
-        }
-    }
-
-    /// The ranks in the whole suffix array of the searched positions
-    /// `first..=last`.
-    pub(crate) fn searched_ranks(&self, first: usize, last: usize) -> Range<usize> {
-        let Suffixes::Subsampled { ranks, .. } = &self.suffixes else {
-            return first..last + 1;
-        };
-
-        // the hit ends where the group after the last matched
-        // one begins
-        let end = match ranks.get(last + 1) {
-            Some(next) => next.to_usize(),
-            None => self.header.num_suffixes,
-        };
-        ranks[first].to_usize()..end
-    }
-
-    /// The suffixes at `ranks` in the whole suffix array.
-    pub(crate) fn suffixes_at(&self, ranks: Range<usize>) -> Result<Vec<T>> {
-        match &self.suffixes {
-            Suffixes::Memory(suffixes) => Ok(suffixes[ranks].to_vec()),
-            Suffixes::Subsampled { .. } | Suffixes::Disk => {
-                self.suffix_array_file.get_range(ranks)
-            }
-        }
-    }
-
-    /// The LCPs at `ranks`, read from the file.
-    pub(crate) fn lcps_at(&self, ranks: Range<usize>) -> Result<Vec<T>> {
-        match &self.lcp_file {
-            Some(lcp_file) => lcp_file.get_range(ranks),
-            None => bail!("{} has no LCP array", self.filename),
-        }
+        Ok(Subsample { suffixes, ranks })
     }
 
     /// The file's metadata.
@@ -566,9 +493,105 @@ impl<T: Int> TypedSuffixArray<T> {
             sequence_starts: self.header.sequence_starts.clone(),
             sequence_names: self.header.sequence_names.clone(),
             sort_type: self.header.sort_type.clone(),
-            has_lcp: self.lcp_file.is_some(),
+            has_lcp: self.lcps.is_some(),
         })
     }
+}
+
+impl<W: Int, T: Buffer<u8>, S: Buffer<W>> Queryable for TypedSuffixArray<W, T, S> {
+    fn header(&self) -> &Header {
+        &self.header
+    }
+
+    fn metadata(&self) -> Result<Metadata> {
+        TypedSuffixArray::metadata(self)
+    }
+
+    fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>> {
+        TypedSuffixArray::matching_ranks(self, query)
+    }
+
+    fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+        TypedSuffixArray::suffixes(self, ranks)
+    }
+
+    fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+        TypedSuffixArray::lcps(self, ranks)
+    }
+
+    fn text(&self, range: Range<usize>) -> Result<Vec<u8>> {
+        TypedSuffixArray::text(self, range)
+    }
+
+    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
+        TypedSuffixArray::locate(self, ranks)
+    }
+
+    fn extract(
+        &self,
+        ranks: Range<usize>,
+        context: Context,
+    ) -> Result<Vec<Extraction<'_>>> {
+        TypedSuffixArray::extract(self, ranks, context)
+    }
+}
+
+/// Open `filename` as [`crate::SuffixArray::open_with`] asks, at the int
+/// width its text length needs.
+pub(crate) fn open(
+    filename: &str,
+    options: &OpenOptions,
+) -> Result<Box<dyn Queryable>> {
+    use Storage::{Disk as D, Memory as M};
+    let OpenOptions {
+        text,
+        suffixes,
+        max_query_len: cap,
+    } = *options;
+    let text_len = read_text_length(filename)?;
+    let wide = text_len as u64 >= u32::MAX as u64;
+
+    // suffixes in memory under a cap shorter than the sort means
+    // the subsample in memory and the whole array on disk
+    let header = Header::read(filename, if wide { 8 } else { 4 })?;
+    let subsample = suffixes == M && subsample_len(&header, cap) < header.sorted_len();
+    let suffixes = if subsample { D } else { suffixes };
+
+    let inner: Box<dyn Queryable> = match (wide, text, suffixes) {
+        (false, D, D) => Box::new(TypedSuffixArray::<u32, Disk<u8>, Disk<u32>>::open(
+            filename, cap, subsample,
+        )?),
+        (false, M, D) => {
+            Box::new(TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+                filename, cap, subsample,
+            )?)
+        }
+        (false, D, M) => {
+            Box::new(TypedSuffixArray::<u32, Disk<u8>, Memory<u32>>::open(
+                filename, cap, subsample,
+            )?)
+        }
+        (false, M, M) => {
+            Box::new(TypedSuffixArray::<u32, Memory<u8>, Memory<u32>>::open(
+                filename, cap, subsample,
+            )?)
+        }
+        (true, D, D) => Box::new(TypedSuffixArray::<u64, Disk<u8>, Disk<u64>>::open(
+            filename, cap, subsample,
+        )?),
+        (true, M, D) => Box::new(TypedSuffixArray::<u64, Memory<u8>, Disk<u64>>::open(
+            filename, cap, subsample,
+        )?),
+        (true, D, M) => Box::new(TypedSuffixArray::<u64, Disk<u8>, Memory<u64>>::open(
+            filename, cap, subsample,
+        )?),
+        (true, M, M) => {
+            Box::new(TypedSuffixArray::<u64, Memory<u8>, Memory<u64>>::open(
+                filename, cap, subsample,
+            )?)
+        }
+    };
+    Ok(inner)
 }
 
 /// The number of query characters a search compares, or 0 for all, in a
@@ -591,13 +614,13 @@ fn cache_dir() -> Result<PathBuf> {
     Ok(cache_dir)
 }
 
-fn write_cache<T: Int>(cache_path: &Path, suffixes: &[T], ranks: &[T]) -> Result<()> {
+fn write_cache<W: Int>(cache_path: &Path, subsample: &Subsample<W>) -> Result<()> {
     let now = Instant::now();
     let mut file = File::create(cache_path)
         .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
-    file.write_all(&suffixes.len().to_le_bytes())?;
-    file.write_all(as_bytes(suffixes))?;
-    file.write_all(as_bytes(ranks))?;
+    file.write_all(&subsample.suffixes.len().to_le_bytes())?;
+    file.write_all(as_bytes(&subsample.suffixes))?;
+    file.write_all(as_bytes(&subsample.ranks))?;
     info!(
         "Wrote to cache {} in {:?}",
         cache_path.display(),
@@ -606,10 +629,24 @@ fn write_cache<T: Int>(cache_path: &Path, suffixes: &[T], ranks: &[T]) -> Result
     Ok(())
 }
 
+/// The number of suffixes read from the file at once while subsampling.
+const BLOCK_LEN: usize = 1 << 22;
+
+/// The prefix length a subsample groups by: `max_query_len`, clipped to
+/// how the file was sorted.
+pub(crate) fn subsample_len(header: &Header, max_query_len: Option<usize>) -> usize {
+    let built = header.sorted_len();
+    match max_query_len {
+        Some(mql) if mql > 0 => min(mql, built),
+        _ => built,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Storage, Suffixes, Text, TypedSuffixArray};
+    use super::TypedSuffixArray;
     use crate::{
+        buffer::{Buffer, Disk, Memory},
         format::{SeedMask, SuffixSortType},
         Alphabet, SuffixArrayBuilder,
     };
@@ -617,77 +654,50 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tempfile::NamedTempFile;
 
+    type Index = TypedSuffixArray<u32, Memory<u8>, Disk<u32>>;
+
     #[test]
     fn test_text_byte() -> Result<()> {
-        for very_low_memory in [true, false] {
-            let index = TypedSuffixArray::<u32>::open(
-                "../data/inputs/1.sufr",
-                if very_low_memory {
-                    Storage::Disk
-                } else {
-                    Storage::Memory
-                },
-                Storage::Disk,
-                None,
-            )?;
-            assert_eq!(index.text_byte(index.header.text_len - 1)?, Some(b'$'));
-            assert_eq!(index.text_byte(index.header.text_len)?, None);
-        }
+        let file = "../data/inputs/1.sufr";
+        let on_disk =
+            TypedSuffixArray::<u32, Disk<u8>, Disk<u32>>::open(file, None, false)?;
+        let in_memory = Index::open(file, None, false)?;
+        let text_len = on_disk.header.text_len;
+        assert_eq!(on_disk.text_byte(text_len - 1)?, Some(b'$'));
+        assert_eq!(on_disk.text_byte(text_len)?, None);
+        assert_eq!(in_memory.text_byte(text_len - 1)?, Some(b'$'));
+        assert_eq!(in_memory.text_byte(text_len)?, None);
         Ok(())
     }
 
     #[test]
     fn test_text_range() -> Result<()> {
-        for very_low_memory in [true, false] {
-            let index = TypedSuffixArray::<u32>::open(
-                "../data/inputs/1.sufr",
-                if very_low_memory {
-                    Storage::Disk
-                } else {
-                    Storage::Memory
-                },
-                Storage::Disk,
-                None,
-            )?;
-            assert_eq!(index.text_range(0..5)?, b"ACGTN");
-        }
+        let file = "../data/inputs/1.sufr";
+        let on_disk =
+            TypedSuffixArray::<u32, Disk<u8>, Disk<u32>>::open(file, None, false)?;
+        let in_memory = Index::open(file, None, false)?;
+        assert_eq!(on_disk.text(0..5)?, b"ACGTN");
+        assert_eq!(in_memory.text(0..5)?, b"ACGTN");
         Ok(())
     }
 
-    // 1.sufr is fully sorted, so no max_query_len, or one of at
-    // least its text length (11), reads the whole suffix array; a
-    // shorter one would subsample and write a cache file in ~/.sufr
+    // 1.sufr is fully sorted, so a max_query_len of at least its text
+    // length (11) subsamples to the whole array; a shorter one would
+    // write a cache file in ~/.sufr
     #[test]
-    fn test_open_modes() -> Result<()> {
+    fn test_subsample_at_the_sort_length_is_the_whole_array() -> Result<()> {
         let file = "../data/inputs/1.sufr";
-        let index =
-            TypedSuffixArray::<u32>::open(file, Storage::Disk, Storage::Disk, Some(2))?;
-        assert!(matches!(index.text, Text::Disk(_)));
-        assert!(matches!(index.suffixes, Suffixes::Disk));
-
-        let index = TypedSuffixArray::<u32>::open(
-            file,
-            Storage::Memory,
-            Storage::Disk,
-            Some(2),
-        )?;
-        assert!(matches!(index.text, Text::Memory(_)));
-        assert!(matches!(index.suffixes, Suffixes::Disk));
-
         for max_query_len in [None, Some(0), Some(11), Some(20)] {
-            let index = TypedSuffixArray::<u32>::open(
+            let index = TypedSuffixArray::<u32, Memory<u8>, Memory<u32>>::open(
                 file,
-                Storage::Memory,
-                Storage::Memory,
                 max_query_len,
+                true,
             )?;
-            assert!(matches!(index.suffixes, Suffixes::Memory(_)));
+            let subsample = index.subsample.as_ref().unwrap();
+            assert_eq!(subsample.suffixes, index.suffixes.0);
+            assert_eq!(subsample.ranks, (0..9).collect::<Vec<u32>>());
+            assert_eq!(index.num_searched(), 9);
         }
-
-        let index =
-            TypedSuffixArray::<u32>::open(file, Storage::Disk, Storage::Memory, None)?;
-        assert!(matches!(index.text, Text::Disk(_)));
-        assert!(matches!(index.suffixes, Suffixes::Memory(_)));
         Ok(())
     }
 
@@ -733,7 +743,7 @@ mod tests {
         seed_mask: Option<&str>,
         max_query_len: Option<usize>,
         write_lcp: bool,
-    ) -> Result<(NamedTempFile, TypedSuffixArray<u32>)> {
+    ) -> Result<(NamedTempFile, Index)> {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
         let mut builder =
@@ -751,9 +761,8 @@ mod tests {
             builder =
                 builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?));
         }
-        builder.build_to_file(&outpath, true)?;
-        let index: TypedSuffixArray<u32> =
-            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        builder.build_to_file(&outpath)?;
+        let index = Index::open(&outpath, None, false)?;
         Ok((outfile, index))
     }
 
@@ -804,13 +813,15 @@ mod tests {
         for mql in [1, 2, 4, 7, 10] {
             let (_f1, with_lcp) = build(&text, Some(mask), None, true)?;
             let (_f2, without_lcp) = build(&text, Some(mask), None, false)?;
-            assert!(with_lcp.lcp_file.is_some());
-            assert!(without_lcp.lcp_file.is_none());
-            let sa: Vec<u32> = without_lcp.suffix_array_file.iter().collect();
+            assert!(with_lcp.lcps.is_some());
+            assert!(without_lcp.lcps.is_none());
+            let sa = without_lcp
+                .suffixes
+                .range(0..without_lcp.header.num_suffixes)?;
             let expected = expected_subsample(&text, &sa, &offsets, mql);
-            let from_text = without_lcp.subsample(mql);
+            let from_text = without_lcp.subsample(mql)?.pair();
             assert_eq!(from_text, expected, "mask, mql={mql}, vs definition");
-            let from_lcp = with_lcp.subsample(mql);
+            let from_lcp = with_lcp.subsample(mql)?.pair();
             assert_eq!(from_text, from_lcp, "mask, mql={mql}, vs LCP array");
         }
 
@@ -820,11 +831,13 @@ mod tests {
         for mql in [1, 3, 6, 11] {
             let (_f1, with_lcp) = build(&text, None, Some(built_mql), true)?;
             let (_f2, without_lcp) = build(&text, None, Some(built_mql), false)?;
-            let sa: Vec<u32> = without_lcp.suffix_array_file.iter().collect();
+            let sa = without_lcp
+                .suffixes
+                .range(0..without_lcp.header.num_suffixes)?;
             let expected = expected_subsample(&text, &sa, &offsets, mql);
-            let from_text = without_lcp.subsample(mql);
+            let from_text = without_lcp.subsample(mql)?.pair();
             assert_eq!(from_text, expected, "mql index, mql={mql}, vs definition");
-            let from_lcp = with_lcp.subsample(mql);
+            let from_lcp = with_lcp.subsample(mql)?.pair();
             assert_eq!(from_text, from_lcp, "mql index, mql={mql}, vs LCP array");
         }
         Ok(())

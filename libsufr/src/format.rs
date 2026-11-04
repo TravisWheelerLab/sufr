@@ -177,6 +177,16 @@ impl Header {
     }
 
     /// The byte position of the sequence names, after the arrays.
+    /// The number of characters the suffixes were sorted by: the text
+    /// length for a full sort, the weight of a seed mask.
+    pub fn sorted_len(&self) -> usize {
+        match &self.sort_type {
+            SuffixSortType::MaxQueryLen(0) => self.text_len,
+            SuffixSortType::MaxQueryLen(mql) => *mql,
+            SuffixSortType::Mask(seed_mask) => seed_mask.weight,
+        }
+    }
+
     pub(crate) fn names_pos(&self) -> usize {
         let num_arrays = if self.lcp_pos.is_some() { 2 } else { 1 };
         self.suffix_array_pos + num_arrays * self.num_suffixes * self.int_size

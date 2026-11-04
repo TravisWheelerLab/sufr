@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! # Parallel Construction of Suffix Arrays in Rust
 //!
@@ -17,6 +18,7 @@
 //! * Jack Roddy <jroddy@arizona.edu>
 //! * Travis Wheeler <twheeler@arizona.edu>
 
+mod buffer;
 mod build;
 mod format;
 mod io;
@@ -28,6 +30,16 @@ pub use build::{Alphabet, SuffixArrayBuilder};
 pub use format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
 pub use search::{read_queries, Context, Extraction, Hits, Location};
 pub use typed::{Metadata, Storage};
+
+#[cfg(feature = "typed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
+pub use buffer::{Buffer, Disk, Memory};
+#[cfg(feature = "typed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
+pub use io::Int;
+#[cfg(feature = "typed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
+pub use typed::TypedSuffixArray;
 
 /// How [`SuffixArray::open_with`] opens a file. The default reads the text
 /// and the suffix array from disk as needed and searches to the length
@@ -56,24 +68,38 @@ impl Default for OpenOptions {
     }
 }
 
-use io::Int;
-use std::ops::Range;
-use typed::TypedSuffixArray;
-
 use anyhow::{bail, Result};
 use rayon::prelude::*;
+use std::{fmt::Debug, ops::Range};
 
 /// A suffix array read from a _.sufr_ file.
 #[derive(Debug)]
 pub struct SuffixArray {
-    inner: SuffixArrayKind,
+    inner: Box<dyn Queryable>,
 }
 
-/// A suffix array at whichever int size its file was written with.
-#[derive(Debug)]
-pub(crate) enum SuffixArrayKind {
-    U32(TypedSuffixArray<u32>),
-    U64(TypedSuffixArray<u64>),
+/// What [`SuffixArray`] asks of a [`TypedSuffixArray`] at whichever int
+/// size and storage its file was opened with.
+pub(crate) trait Queryable: Debug + Send + Sync {
+    fn header(&self) -> &Header;
+
+    fn metadata(&self) -> Result<Metadata>;
+
+    fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>>;
+
+    fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>>;
+
+    fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>>;
+
+    fn text(&self, range: Range<usize>) -> Result<Vec<u8>>;
+
+    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>>;
+
+    fn extract(
+        &self,
+        ranks: Range<usize>,
+        context: Context,
+    ) -> Result<Vec<Extraction<'_>>>;
 }
 
 impl SuffixArray {
@@ -85,38 +111,15 @@ impl SuffixArray {
 
     /// Open a _.sufr_ file.
     pub fn open_with(filename: &str, options: &OpenOptions) -> Result<SuffixArray> {
-        let OpenOptions {
-            text,
-            suffixes,
-            max_query_len,
-        } = *options;
-        let text_len = format::read_text_length(filename)? as u64;
-        let inner = if text_len < u32::MAX as u64 {
-            SuffixArrayKind::U32(TypedSuffixArray::open(
-                filename,
-                text,
-                suffixes,
-                max_query_len,
-            )?)
-        } else {
-            SuffixArrayKind::U64(TypedSuffixArray::open(
-                filename,
-                text,
-                suffixes,
-                max_query_len,
-            )?)
-        };
-        Ok(SuffixArray { inner })
+        Ok(SuffixArray {
+            inner: typed::open(filename, options)?,
+        })
     }
 
     /// Find the suffixes matching `query`. An error is a failed read of
     /// the file.
     pub fn search(&self, query: &[u8]) -> Result<Hits<'_>> {
-        let ranks = match &self.inner {
-            SuffixArrayKind::U32(sa) => sa.matching_ranks(query)?,
-            SuffixArrayKind::U64(sa) => sa.matching_ranks(query)?,
-        };
-        Ok(Hits::new(self, ranks))
+        Ok(Hits::new(self, self.inner.matching_ranks(query)?))
     }
 
     /// Search each query in turn, stopping at the first failed read.
@@ -151,36 +154,24 @@ impl SuffixArray {
 
     /// The file's header.
     pub fn header(&self) -> &Header {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => &sa.header,
-            SuffixArrayKind::U64(sa) => &sa.header,
-        }
+        self.inner.header()
     }
 
     /// The file's metadata.
     pub fn metadata(&self) -> Result<Metadata> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => sa.metadata(),
-            SuffixArrayKind::U64(sa) => sa.metadata(),
-        }
+        self.inner.metadata()
     }
 
     /// The positions in the text of the suffixes at `ranks`, in rank
     /// order.
     pub fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => Ok(to_usize(sa.suffixes_at(ranks)?)),
-            SuffixArrayKind::U64(sa) => Ok(to_usize(sa.suffixes_at(ranks)?)),
-        }
+        self.inner.suffixes(ranks)
     }
 
     /// The LCP of each suffix at `ranks` with the suffix before it, in
     /// rank order. An error when the file has no LCP array.
     pub fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => Ok(to_usize(sa.lcps_at(ranks)?)),
-            SuffixArrayKind::U64(sa) => Ok(to_usize(sa.lcps_at(ranks)?)),
-        }
+        self.inner.lcps(ranks)
     }
 
     /// The text in `range`, clipped to the end of the text.
@@ -189,18 +180,12 @@ impl SuffixArray {
         if range.start > end {
             bail!("Invalid range: {range:?}");
         }
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => sa.text_range(range.start..end),
-            SuffixArrayKind::U64(sa) => sa.text_range(range.start..end),
-        }
+        self.inner.text(range.start..end)
     }
 
     /// The suffixes at `ranks` within their sequences.
     pub(crate) fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => sa.locate(ranks),
-            SuffixArrayKind::U64(sa) => sa.locate(ranks),
-        }
+        self.inner.locate(ranks)
     }
 
     /// The suffixes at `ranks` with the window of their sequences that
@@ -210,22 +195,17 @@ impl SuffixArray {
         ranks: Range<usize>,
         context: Context,
     ) -> Result<Vec<Extraction<'_>>> {
-        match &self.inner {
-            SuffixArrayKind::U32(sa) => sa.extract(ranks, context),
-            SuffixArrayKind::U64(sa) => sa.extract(ranks, context),
-        }
+        self.inner.extract(ranks, context)
     }
-}
-
-fn to_usize<T: Int>(values: Vec<T>) -> Vec<usize> {
-    values.into_iter().map(|v| v.to_usize()).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Alphabet, Hits, SeedMask, Storage, SuffixArray, SuffixArrayBuilder,
-        SuffixArrayKind, SuffixSortType, TypedSuffixArray, OUTFILE_VERSION,
+        buffer::{Disk, Memory},
+        typed::TypedSuffixArray,
+        Alphabet, Hits, SeedMask, SuffixArray, SuffixArrayBuilder, SuffixSortType,
+        OUTFILE_VERSION,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -244,23 +224,24 @@ mod tests {
             })
             .with_num_partitions(2)
             .with_write_lcp(true)
-            .build_to_file(&outpath, true)?;
+            .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index: TypedSuffixArray<u32> =
-            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+            &outpath, None, false,
+        )?;
         assert_eq!(index.header.version, OUTFILE_VERSION);
         assert!(index.header.is_dna);
         assert_eq!(index.header.text_len, 18);
         assert_eq!(index.header.sequence_starts, [0, 9]);
         assert_eq!(index.header.sequence_names, ["ABC", "DEF"]);
-        assert_eq!(index.text_range(0..18)?, b"ACGTACGTNACGTACGT$");
+        assert_eq!(index.text(0..18)?, b"ACGTACGTNACGTACGT$");
 
-        let file_sa: Vec<_> = index.suffix_array_file.iter().collect();
+        let file_sa = index.suffixes(0..index.header.num_suffixes)?;
         let sorted_sa = [17, 13, 9, 0, 4, 14, 10, 1, 5, 15, 11, 2, 6, 16, 12, 3, 7];
         assert_eq!(file_sa, sorted_sa);
 
-        let file_lcp: Vec<_> = index.lcp_file.as_ref().unwrap().iter().collect();
+        let file_lcp = index.lcps(0..index.header.num_suffixes)?;
         let lcp = [0, 0, 4, 8, 4, 0, 3, 7, 3, 0, 2, 6, 2, 0, 1, 5, 1];
         assert_eq!(file_lcp, lcp);
         Ok(())
@@ -280,22 +261,23 @@ mod tests {
             .with_num_partitions(2)
             .with_force_64bit(true)
             .with_write_lcp(true)
-            .build_to_file(&outpath, true)?;
+            .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index: TypedSuffixArray<u64> =
-            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index = TypedSuffixArray::<u64, Memory<u8>, Disk<u64>>::open(
+            &outpath, None, false,
+        )?;
         assert_eq!(index.header.version, OUTFILE_VERSION);
         assert!(index.header.is_dna);
         assert_eq!(index.header.text_len, 11);
         assert_eq!(index.header.sequence_starts, [0]);
         assert_eq!(index.header.sequence_names, ["1"]);
-        assert_eq!(index.text_range(0..11)?, b"ACGTNNACGT$");
+        assert_eq!(index.text(0..11)?, b"ACGTNNACGT$");
         assert_eq!(index.header.num_suffixes, 11);
 
-        let file_sa: Vec<_> = index.suffix_array_file.iter().collect();
+        let file_sa = index.suffixes(0..index.header.num_suffixes)?;
         assert_eq!(file_sa, &[10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3]);
-        let file_lcp: Vec<_> = index.lcp_file.as_ref().unwrap().iter().collect();
+        let file_lcp = index.lcps(0..index.header.num_suffixes)?;
         assert_eq!(file_lcp, &[0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1]);
         Ok(())
     }
@@ -313,19 +295,20 @@ mod tests {
             })
             .with_num_partitions(2)
             .with_write_lcp(true)
-            .build_to_file(&outpath, true)?;
+            .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index: TypedSuffixArray<u32> =
-            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+            &outpath, None, false,
+        )?;
         assert_eq!(index.header.num_suffixes, 364);
-        let full_sa: Vec<_> = index.suffix_array_file.iter().collect();
-        let full_lcp: Vec<_> = index.lcp_file.as_ref().unwrap().iter().collect();
+        let full_sa = index.suffixes(0..index.header.num_suffixes)?;
+        let full_lcp = index.lcps(0..index.header.num_suffixes)?;
         assert_eq!(full_sa.len(), 364);
         assert_eq!(full_lcp.len(), 364);
 
         let max_query_len = 1;
-        let (sub_sa, sub_rank) = index.subsample(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 5);
         assert_eq!(sub_rank.len(), 5);
         // $, A, C, G, T
@@ -333,7 +316,7 @@ mod tests {
         assert_eq!(sub_rank, vec![0, 1, 94, 191, 284]);
 
         let max_query_len = 2;
-        let (sub_sa, sub_rank) = index.subsample(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 20);
         assert_eq!(sub_rank.len(), 20);
         // $, A$, AA, AC, AG, AN, AT, CA, CC, CG, CT, GA, GC, GG, GN, GT, TA, TC, TG, TT
@@ -353,17 +336,17 @@ mod tests {
         );
 
         let max_query_len = 3;
-        let (sub_sa, sub_rank) = index.subsample(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 71);
         assert_eq!(sub_rank.len(), 71);
 
         let max_query_len = 5;
-        let (sub_sa, sub_rank) = index.subsample(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 293);
         assert_eq!(sub_rank.len(), 293);
 
         let max_query_len = 3;
-        let (sub_sa, sub_rank) = index.subsample(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 71);
         assert_eq!(sub_rank.len(), 71);
 
@@ -393,13 +376,14 @@ mod tests {
             .with_num_partitions(1)
             .with_sort_type(SuffixSortType::Mask(SeedMask::new("101").unwrap()))
             .with_write_lcp(true)
-            .build_to_file(&outpath, true)?;
+            .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index: TypedSuffixArray<u32> =
-            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+            &outpath, None, false,
+        )?;
         assert_eq!(index.header.num_suffixes, 8);
-        let suffix_array: Vec<_> = index.suffix_array_file.iter().collect();
+        let suffix_array = index.suffixes(0..index.header.num_suffixes)?;
         assert_eq!(suffix_array.len(), 8);
         assert_eq!(suffix_array, vec![7, 6, 5, 4, 2, 0, 1, 3]);
 
@@ -438,17 +422,14 @@ mod tests {
             .with_num_partitions(1)
             .with_sort_type(SuffixSortType::Mask(SeedMask::new("11011").unwrap()))
             .with_write_lcp(true)
-            .build_to_file(&outpath, true)?;
+            .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index = TypedSuffixArray::<u32>::open(
-            &outpath,
-            Storage::Memory,
-            Storage::Disk,
-            None,
+        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+            &outpath, None, false,
         )?;
         assert_eq!(index.header.num_suffixes, 17);
-        let suffix_array: Vec<_> = index.suffix_array_file.iter().collect();
+        let suffix_array = index.suffixes(0..17)?;
         assert_eq!(suffix_array.len(), 17);
         assert_eq!(
             suffix_array,
@@ -472,13 +453,14 @@ mod tests {
             .with_num_partitions(1)
             .with_sort_type(SuffixSortType::Mask(SeedMask::new("11000111").unwrap()))
             .with_write_lcp(true)
-            .build_to_file(&outpath, true)?;
+            .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index: TypedSuffixArray<u32> =
-            TypedSuffixArray::open(&outpath, Storage::Memory, Storage::Disk, None)?;
+        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+            &outpath, None, false,
+        )?;
         assert_eq!(index.header.num_suffixes, 43);
-        let suffix_array: Vec<_> = index.suffix_array_file.iter().collect();
+        let suffix_array = index.suffixes(0..index.header.num_suffixes)?;
         assert_eq!(suffix_array.len(), 43);
         assert_eq!(
             suffix_array,
@@ -512,9 +494,8 @@ mod tests {
     }
 
     // what: a compile-time check that SuffixArray is Send + Sync
-    // why: nothing declares either; the compiler infers both from
-    //      the fields, down through TypedSuffixArray, Text,
-    //      Suffixes and FileAccess. par_search_all shares &self
+    // why: Queryable declares both, and every TypedSuffixArray
+    //      must satisfy them for the box. par_search_all shares &self
     //      across the rayon pool, and a caller with their own
     //      threads is promised thread::scope with search or
     //      thread::spawn with the array moved in. A new field
@@ -588,7 +569,6 @@ mod tests {
     #[test]
     fn test_suffix_array_text() -> Result<()> {
         let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-        assert!(matches!(suffix_array.inner, SuffixArrayKind::U32(_)));
         assert_eq!(suffix_array.text(0..11)?, b"ACGTNNACGT$");
         assert_eq!(suffix_array.text(6..9)?, b"ACG");
         assert_eq!(suffix_array.text(8..20)?, b"GT$");

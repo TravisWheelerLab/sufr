@@ -1,5 +1,6 @@
-use super::{partition::Partition, scratch::Scratch};
+use super::partition::Partition;
 use crate::{
+    buffer::Buffer,
     format::SeedMask,
     io::Int,
     lcp::{mask_offset, masked_lcp, suffix_lcp, LcpCache},
@@ -18,17 +19,17 @@ use thread_local::ThreadLocal;
 
 /// Sort the suffixes of each group of buffers into one partition, in
 /// order, dropping the groups that hold none.
-pub(super) fn sort_partitions<T: Int>(
+pub(super) fn sort_partitions<W: Int, S: Buffer<W>>(
     text: &[u8],
-    groups: Vec<Vec<Scratch<T>>>,
+    groups: Vec<Vec<S>>,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
     write_lcp: bool,
-) -> Result<Vec<Partition<T>>> {
+) -> Result<Vec<Partition<S>>> {
     let num_partitions = groups.len();
     let total_sort_time = Instant::now();
-    let mut partitions: Vec<Option<Partition<T>>> =
+    let mut partitions: Vec<Option<Partition<S>>> =
         (0..num_partitions).map(|_| None).collect();
 
     let lcp_cache: ThreadLocal<RefCell<LcpCache>> = ThreadLocal::new();
@@ -67,23 +68,23 @@ pub(super) fn sort_partitions<T: Int>(
 /// Sort the suffixes in `buffers` into the partition at `order`, or
 /// `None` when there are none.
 #[allow(clippy::too_many_arguments)]
-fn sort_partition<T: Int>(
+fn sort_partition<W: Int, S: Buffer<W>>(
     text: &[u8],
     order: usize,
-    buffers: Vec<Scratch<T>>,
+    buffers: Vec<S>,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
     write_lcp: bool,
     lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
-) -> Result<Option<Partition<T>>> {
-    let Some(kind) = buffers.first().map(Scratch::kind) else {
-        return Ok(None);
-    };
+) -> Result<Option<Partition<S>>> {
     let mut part_sa = vec![];
-    for buffer in buffers {
-        part_sa.extend_from_slice(&buffer.consume()?);
+    for buffer in &buffers {
+        part_sa.extend_from_slice(&buffer.range(0..buffer.len())?);
     }
+
+    // frees the memory, or the temp files, of the input
+    drop(buffers);
 
     let len = part_sa.len();
     if len == 0 {
@@ -91,8 +92,8 @@ fn sort_partition<T: Int>(
     }
 
     let mut sa_w = part_sa.clone();
-    let mut lcp = vec![T::default(); len];
-    let mut lcp_w = vec![T::default(); len];
+    let mut lcp = vec![W::default(); len];
+    let mut lcp_w = vec![W::default(); len];
     merge_sort(
         text,
         Arrays {
@@ -109,10 +110,10 @@ fn sort_partition<T: Int>(
         lcp_cache,
     );
 
-    let mut sa_buffer = Scratch::new(kind);
+    let mut sa_buffer = S::empty()?;
     sa_buffer.extend_from_slice(&part_sa)?;
     let lcp_buffer = if write_lcp {
-        let mut lcp_buffer = Scratch::new(kind);
+        let mut lcp_buffer = S::empty()?;
         lcp_buffer.extend_from_slice(&lcp)?;
         Some(lcp_buffer)
     } else {
@@ -130,13 +131,13 @@ fn sort_partition<T: Int>(
 }
 
 /// A slice of the suffix array and the LCPs beside it.
-struct Arrays<'a, T> {
-    sa: &'a mut [T],
-    lcp: &'a mut [T],
+struct Arrays<'a, W> {
+    sa: &'a mut [W],
+    lcp: &'a mut [W],
 }
 
-impl<T> Arrays<'_, T> {
-    fn split_at_mut(&mut self, mid: usize) -> (Arrays<'_, T>, Arrays<'_, T>) {
+impl<W> Arrays<'_, W> {
+    fn split_at_mut(&mut self, mid: usize) -> (Arrays<'_, W>, Arrays<'_, W>) {
         let (sa_l, sa_r) = self.sa.split_at_mut(mid);
         let (lcp_l, lcp_r) = self.lcp.split_at_mut(mid);
         (
@@ -154,10 +155,10 @@ impl<T> Arrays<'_, T> {
 
 /// Sort the suffixes in `out` with their LCPs, using `work`, which
 /// starts with the same suffixes, as scratch space.
-fn merge_sort<T: Int>(
+fn merge_sort<W: Int>(
     text: &[u8],
-    mut work: Arrays<'_, T>,
-    mut out: Arrays<'_, T>,
+    mut work: Arrays<'_, W>,
+    mut out: Arrays<'_, W>,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
@@ -165,7 +166,7 @@ fn merge_sort<T: Int>(
 ) {
     let n = work.sa.len();
     if n == 1 {
-        out.lcp[0] = T::default();
+        out.lcp[0] = W::default();
     } else {
         const NESTED_PAR_GRAIN_SIZE: usize = 1 << 13;
         let mid = n / 2;
@@ -235,11 +236,11 @@ fn merge_sort<T: Int>(
 
 /// Merge the sorted runs `from[..mid]` and `from[mid..]` into `into`.
 #[allow(clippy::too_many_arguments)]
-fn merge<T: Int>(
+fn merge<W: Int>(
     text: &[u8],
-    from: Arrays<'_, T>,
+    from: Arrays<'_, W>,
     mid: usize,
-    into: Arrays<'_, T>,
+    into: Arrays<'_, W>,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
@@ -254,7 +255,7 @@ fn merge<T: Int>(
     let mut len_x = x.len();
     let mut len_y = y.len();
     // the last LCP taken from x
-    let mut m = T::default();
+    let mut m = W::default();
     let mut idx_x = 0;
     let mut idx_y = 0;
     let mut idx_target = 0;
@@ -274,10 +275,10 @@ fn merge<T: Int>(
             }
             Ordering::Equal => {
                 let shorter_suffix = max(x[idx_x], y[idx_y]);
-                let max_n = T::from_usize(text.len()) - shorter_suffix;
+                let max_n = W::from_usize(text.len()) - shorter_suffix;
 
                 let context = match mask {
-                    Some(seed_mask) => T::from_usize(
+                    Some(seed_mask) => W::from_usize(
                         seed_mask
                             .positions
                             .iter()
@@ -285,7 +286,7 @@ fn merge<T: Int>(
                             .count(),
                     ),
                     None if max_query_len > 0 => {
-                        min(T::from_usize(max_query_len), max_n)
+                        min(W::from_usize(max_query_len), max_n)
                     }
                     None => max_n,
                 };
@@ -307,7 +308,7 @@ fn merge<T: Int>(
                         Some(seed_mask) => mask_offset(lcp.to_usize(), seed_mask),
                         None => lcp.to_usize(),
                     };
-                    (lcp, T::from_usize(full_lcp))
+                    (lcp, W::from_usize(full_lcp))
                 } else {
                     (context, context)
                 };
@@ -379,13 +380,13 @@ fn merge<T: Int>(
 
 /// The LCP of each partition's first suffix with the last suffix of the
 /// partition before it, or `None` for the first partition.
-pub(super) fn first_lcps<T: Int>(
+pub(super) fn first_lcps<W: Int, S: Buffer<W>>(
     text: &[u8],
-    partitions: &[Partition<T>],
+    partitions: &[Partition<S>],
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
-) -> Vec<Option<T>> {
+) -> Vec<Option<W>> {
     (0..partitions.len())
         .into_par_iter()
         .map(|i| {
@@ -394,7 +395,7 @@ pub(super) fn first_lcps<T: Int>(
                     text,
                     partitions[i - 1].last_suffix,
                     partitions[i].first_suffix,
-                    T::from_usize(text.len()),
+                    W::from_usize(text.len()),
                     0,
                     mask,
                     max_query_len,
@@ -410,21 +411,21 @@ pub(super) fn first_lcps<T: Int>(
 /// first `skip` characters, comparing at most `len` characters.
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn find_lcp<T: Int>(
+fn find_lcp<W: Int>(
     text: &[u8],
     start1: usize,
     start2: usize,
-    len: T,
+    len: W,
     skip: usize,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
     lcp_cache: Option<&mut LcpCache>,
-) -> T {
+) -> W {
     // with a mask, `len` is not consulted: the comparison
     // stops at the end of the mask or of the text
     if let Some(mask) = mask {
-        return T::from_usize(
+        return W::from_usize(
             skip + masked_lcp(
                 &text[start1..],
                 &text[start2..],
@@ -441,7 +442,7 @@ fn find_lcp<T: Int>(
         if run1 != run2 {
             // the byte after the shorter run is N against not N
             let run = min(run1, run2);
-            return T::from_usize(if max_query_len > 0 {
+            return W::from_usize(if max_query_len > 0 {
                 min(run, max_query_len)
             } else {
                 run
@@ -451,7 +452,7 @@ fn find_lcp<T: Int>(
         skip = max(skip, run1);
     }
     if max_query_len > 0 && skip >= max_query_len {
-        return T::from_usize(max_query_len);
+        return W::from_usize(max_query_len);
     }
 
     // `len` counts bytes past `skip`, so the cap leaves
@@ -461,7 +462,7 @@ fn find_lcp<T: Int>(
     } else {
         len.to_usize()
     };
-    T::from_usize(suffix_lcp(text, start1, start2, skip, len, lcp_cache))
+    W::from_usize(suffix_lcp(text, start1, start2, skip, len, lcp_cache))
 }
 
 /// The end of the run of `N`s in `n_ranges` holding `suffix`, if it is
@@ -519,7 +520,7 @@ mod test {
         let text = b"TTTTAG";
         assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 2, None, 2, &[], None), 2);
 
-        // skip 1 with max query len 3: one byte left, T == T
+        // skip 1 with max query len 3: one byte left, W == W
         assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 1, None, 3, &[], None), 3);
 
         // two runs of four N with the same remaining length: the

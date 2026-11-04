@@ -12,6 +12,15 @@ authors = [
     "Travis Wheeler <twheeler@arizona.edu>"
 ]
 
+[features]
+# The generic suffix array and its storage types, for a caller that
+# names them to skip the box in SuffixArray.
+typed = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 anyhow = "1.0.86"
 bincode = "1.3.3"

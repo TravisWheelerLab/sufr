@@ -1,6 +1,7 @@
 //! Search a suffix array
 
 use crate::{
+    buffer::Buffer,
     io::Int,
     lcp::{lcp, mask_offset, masked_lcp},
     typed::TypedSuffixArray,
@@ -141,7 +142,7 @@ struct Comparison {
     lcp: usize,
 }
 
-impl<T: Int> TypedSuffixArray<T> {
+impl<W: Int, T: Buffer<u8>, S: Buffer<W>> TypedSuffixArray<W, T, S> {
     /// The ranks of the suffixes matching `query`, empty when none match.
     pub(crate) fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>> {
         let n = self.num_searched();
@@ -319,11 +320,10 @@ impl<T: Int> TypedSuffixArray<T> {
 
     pub(crate) fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
         let seq_starts = &self.header.sequence_starts;
-        let suffixes = self.suffixes_at(ranks.clone())?;
+        let suffixes = self.suffixes(ranks.clone())?;
         let mut locations: Vec<Location> = ranks
             .zip(suffixes)
             .map(|(rank, suffix)| {
-                let suffix = suffix.to_usize();
                 let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
                 Location {
                     rank,
@@ -343,10 +343,10 @@ impl<T: Int> TypedSuffixArray<T> {
         ranks: Range<usize>,
         context: Context,
     ) -> Result<Vec<Extraction<'_>>> {
-        let suffixes = self.suffixes_at(ranks.clone())?;
+        let suffixes = self.suffixes(ranks.clone())?;
         Ok(ranks
             .zip(suffixes)
-            .map(|(rank, suffix)| self.extraction(rank, suffix.to_usize(), context))
+            .map(|(rank, suffix)| self.extraction(rank, suffix, context))
             .collect())
     }
 
