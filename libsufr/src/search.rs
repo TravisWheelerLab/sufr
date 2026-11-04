@@ -26,39 +26,45 @@ pub struct Hits<'a> {
 /// Where a hit falls in the sequences of the text.
 #[derive(Debug, PartialEq)]
 pub struct Location<'a> {
-    /// The position of the hit in the text.
-    pub suffix: usize,
-
     /// The rank of the suffix in the suffix array.
     pub rank: usize,
 
+    /// The position of the hit in the text.
+    pub suffix: usize,
+
     /// The name of the sequence holding the hit.
     pub sequence_name: &'a str,
+
+    /// The start of that sequence in the text.
+    pub sequence_start: usize,
 
     /// The position of the hit in its sequence.
     pub position: usize,
 }
 
-/// A hit with context around it, taken from its sequence.
+/// How much of a hit's sequence [`Hits::extract`] takes around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Context {
+    /// Bytes before the hit, fewer at the start of the sequence.
+    pub before: usize,
+
+    /// Bytes from the start of the hit, or to the end of the sequence
+    /// when `None`; fewer at the end of the sequence.
+    pub after: Option<usize>,
+}
+
+/// A hit with the window of its sequence around it.
 #[derive(Debug, PartialEq)]
 pub struct Extraction<'a> {
-    /// The position of the hit in the text.
-    pub suffix: usize,
+    /// The hit.
+    pub location: Location<'a>,
 
-    /// The rank of the suffix in the suffix array.
-    pub rank: usize,
-
-    /// The name of the sequence holding the hit.
-    pub sequence_name: &'a str,
-
-    /// The extracted range, relative to the start of the sequence.
+    /// The window, relative to the start of the sequence. Its bytes are
+    /// `text(sequence_start + window)`.
     pub sequence_range: Range<usize>,
 
-    /// The position of the hit in `text`.
+    /// The position of the hit in the window.
     pub suffix_offset: usize,
-
-    /// The text in `sequence_range`.
-    pub text: Vec<u8>,
 }
 
 impl<'a> Hits<'a> {
@@ -72,6 +78,11 @@ impl<'a> Hits<'a> {
     /// The number of hits.
     pub fn count(&self) -> usize {
         self.ranks.len()
+    }
+
+    /// Whether nothing matched.
+    pub fn is_empty(&self) -> bool {
+        self.ranks.is_empty()
     }
 
     /// The ranks of the hits in the suffix array, empty when nothing
@@ -91,15 +102,10 @@ impl<'a> Hits<'a> {
         self.suffix_array.locate(self.ranks())
     }
 
-    /// The hits in rank order, each with up to `before` characters of its
-    /// sequence before it and `after` characters from its start, or to
-    /// the end of its sequence when `after` is not given.
-    pub fn extract(
-        &self,
-        before: Option<usize>,
-        after: Option<usize>,
-    ) -> Result<Vec<Extraction<'a>>> {
-        self.suffix_array.extract(self.ranks(), before, after)
+    /// The hits in rank order, each with the window of its sequence that
+    /// `context` asks for.
+    pub fn extract(&self, context: Context) -> Result<Vec<Extraction<'a>>> {
+        self.suffix_array.extract(self.ranks(), context)
     }
 }
 
@@ -293,9 +299,10 @@ impl<T: Int> TypedSuffixArray<T> {
                 let suffix = suffix.to_usize();
                 let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
                 Location {
-                    suffix,
                     rank,
+                    suffix,
                     sequence_name: &self.header.sequence_names[i],
+                    sequence_start: seq_starts[i],
                     position: suffix - seq_starts[i],
                 }
             })
@@ -311,25 +318,21 @@ impl<T: Int> TypedSuffixArray<T> {
     pub(crate) fn extract(
         &self,
         ranks: Range<usize>,
-        before: Option<usize>,
-        after: Option<usize>,
+        context: Context,
     ) -> Result<Vec<Extraction<'_>>> {
         let suffixes = self.suffixes_at(ranks.clone())?;
-        ranks
+        Ok(ranks
             .zip(suffixes)
-            .map(|(rank, suffix)| {
-                self.extraction(rank, suffix.to_usize(), before, after)
-            })
-            .collect()
+            .map(|(rank, suffix)| self.extraction(rank, suffix.to_usize(), context))
+            .collect())
     }
 
     fn extraction(
         &self,
         rank: usize,
         suffix: usize,
-        before: Option<usize>,
-        after: Option<usize>,
-    ) -> Result<Extraction<'_>> {
+        context: Context,
+    ) -> Extraction<'_> {
         let seq_starts = &self.header.sequence_starts;
         let text_len = self.header.text_len;
         let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
@@ -344,27 +347,30 @@ impl<T: Int> TypedSuffixArray<T> {
             seq_starts[i + 1]
         };
         let relative_suffix_start = suffix - sequence_start;
-        let context_start = relative_suffix_start.saturating_sub(before.unwrap_or(0));
+        let context_start = relative_suffix_start.saturating_sub(context.before);
         let context_end = min(
-            after.map_or(seq_end, |len| relative_suffix_start + len),
+            context
+                .after
+                .map_or(seq_end, |len| relative_suffix_start + len),
             seq_end,
         );
-        let text_start = sequence_start + context_start;
-        let text_end = min(text_start + (context_end - context_start), text_len);
-        Ok(Extraction {
-            suffix,
-            rank,
-            sequence_name: &self.header.sequence_names[i],
+        Extraction {
+            location: Location {
+                rank,
+                suffix,
+                sequence_name: &self.header.sequence_names[i],
+                sequence_start,
+                position: relative_suffix_start,
+            },
             sequence_range: context_start..context_end,
             suffix_offset: relative_suffix_start - context_start,
-            text: self.text_range(text_start..text_end)?,
-        })
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{read_queries, Extraction, Location};
+    use super::{read_queries, Context, Extraction, Location};
     use crate::{OpenOptions, Storage, SuffixArray};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -382,22 +388,36 @@ mod tests {
         )
     }
 
+    /// An extraction from a one-sequence file, whose sequence starts at 0.
     fn extraction(
         suffix: usize,
         rank: usize,
         sequence_range: std::ops::Range<usize>,
         suffix_offset: usize,
-        text: &[u8],
     ) -> Extraction<'static> {
         Extraction {
-            suffix,
-            rank,
-            sequence_name: "1",
+            location: Location {
+                rank,
+                suffix,
+                sequence_name: "1",
+                sequence_start: 0,
+                position: suffix,
+            },
             sequence_range,
             suffix_offset,
-            text: text.to_vec(),
         }
     }
+
+    /// The bytes of an extraction's window.
+    fn window(sa: &SuffixArray, ex: &Extraction) -> Result<Vec<u8>> {
+        let start = ex.location.sequence_start;
+        sa.text(start + ex.sequence_range.start..start + ex.sequence_range.end)
+    }
+
+    const ONE_THREE: Context = Context {
+        before: 1,
+        after: Some(3),
+    };
 
     #[test]
     fn test_count() -> Result<()> {
@@ -428,14 +448,14 @@ mod tests {
     #[test]
     fn test_extract_text_on_disk() -> Result<()> {
         let sa = open("../data/inputs/1.sufr", Storage::Disk, Storage::Disk)?;
+        let extractions = sa.search(b"ACG").extract(ONE_THREE)?;
         assert_eq!(
-            sa.search(b"ACG").extract(Some(1), Some(3))?,
-            [
-                extraction(6, 1, 5..9, 1, b"NACG"),
-                extraction(0, 2, 0..3, 0, b"ACG"),
-            ]
+            extractions,
+            [extraction(6, 1, 5..9, 1), extraction(0, 2, 0..3, 0)]
         );
-        assert_eq!(sa.search(b"GTC").extract(Some(1), Some(3))?, []);
+        assert_eq!(window(&sa, &extractions[0])?, b"NACG");
+        assert_eq!(window(&sa, &extractions[1])?, b"ACG");
+        assert_eq!(sa.search(b"GTC").extract(ONE_THREE)?, []);
         Ok(())
     }
 
@@ -445,35 +465,34 @@ mod tests {
         let extractions = sa
             .search_all(&["AC", "GT", "XX"])
             .iter()
-            .map(|hits| hits.extract(Some(1), Some(3)))
+            .map(|hits| hits.extract(ONE_THREE))
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(
             extractions,
             [
-                vec![
-                    extraction(6, 1, 5..9, 1, b"NACG"),
-                    extraction(0, 2, 0..3, 0, b"ACG"),
-                ],
-                vec![
-                    extraction(8, 5, 7..11, 1, b"CGT$"),
-                    extraction(2, 6, 1..5, 1, b"CGTN"),
-                ],
+                vec![extraction(6, 1, 5..9, 1), extraction(0, 2, 0..3, 0)],
+                vec![extraction(8, 5, 7..11, 1), extraction(2, 6, 1..5, 1)],
                 vec![],
             ]
         );
+        assert_eq!(window(&sa, &extractions[1][0])?, b"CGT$");
+        assert_eq!(window(&sa, &extractions[1][1])?, b"CGTN");
         Ok(())
     }
 
     #[test]
     fn test_extract_without_after() -> Result<()> {
         let sa = open("../data/inputs/1.sufr", Storage::Memory, Storage::Memory)?;
+        let extractions = sa.search(b"CGT").extract(Context {
+            before: 1,
+            after: None,
+        })?;
         assert_eq!(
-            sa.search(b"CGT").extract(Some(1), None)?,
-            [
-                extraction(7, 3, 6..11, 1, b"ACGT$"),
-                extraction(1, 4, 0..11, 1, b"ACGTNNACGT$"),
-            ]
+            extractions,
+            [extraction(7, 3, 6..11, 1), extraction(1, 4, 0..11, 1)]
         );
+        assert_eq!(window(&sa, &extractions[0])?, b"ACGT$");
+        assert_eq!(window(&sa, &extractions[1])?, b"ACGTNNACGT$");
         Ok(())
     }
 
@@ -523,9 +542,10 @@ mod tests {
                 let expected: Vec<_> = hits
                     .iter()
                     .map(|&(rank, suffix)| Location {
-                        suffix,
                         rank,
+                        suffix,
                         sequence_name: "1",
+                        sequence_start: 0,
                         position: suffix,
                     })
                     .collect();

@@ -26,7 +26,7 @@ mod typed;
 
 pub use build::{Alphabet, SuffixArrayBuilder};
 pub use format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
-pub use search::{read_queries, Extraction, Hits, Location};
+pub use search::{read_queries, Context, Extraction, Hits, Location};
 pub use typed::{Metadata, Storage};
 
 /// How [`SuffixArray::open_with`] opens a file. The default reads the text
@@ -190,16 +190,16 @@ impl SuffixArray {
         }
     }
 
-    /// The suffixes at `ranks` with `before` and `after` bytes of context.
+    /// The suffixes at `ranks` with the window of their sequences that
+    /// `context` asks for.
     pub(crate) fn extract(
         &self,
         ranks: Range<usize>,
-        before: Option<usize>,
-        after: Option<usize>,
+        context: Context,
     ) -> Result<Vec<Extraction<'_>>> {
         match &self.inner {
-            SuffixArrayKind::U32(sa) => sa.extract(ranks, before, after),
-            SuffixArrayKind::U64(sa) => sa.extract(ranks, before, after),
+            SuffixArrayKind::U32(sa) => sa.extract(ranks, context),
+            SuffixArrayKind::U64(sa) => sa.extract(ranks, context),
         }
     }
 }

@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Result};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    read_queries, Alphabet, Hits, OpenOptions, SeedMask, Storage, SuffixArray,
+    read_queries, Alphabet, Context, Hits, OpenOptions, SeedMask, Storage, SuffixArray,
     SuffixArrayBuilder, SuffixSortType,
 };
 use log::info;
@@ -394,21 +394,28 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
     for (query, hits) in queries.iter().zip(hits) {
         // TODO: a query whose suffixes cannot be read is
         //       skipped without a message
-        let Ok(extractions) = hits.extract(args.prefix_len, args.suffix_len) else {
+        let context = Context {
+            before: args.prefix_len.unwrap_or(0),
+            after: args.suffix_len,
+        };
+        let Ok(extractions) = hits.extract(context) else {
             continue;
         };
         if extractions.is_empty() {
             eprintln!("{query} not found");
         }
         for ex in extractions {
+            let start = ex.location.sequence_start;
+            let window = ex.sequence_range;
+            let text = suffix_array.text(start + window.start..start + window.end)?;
             writeln!(
                 output,
                 ">{}:{}-{} {query} {}\n{}",
-                ex.sequence_name,
-                ex.sequence_range.start,
-                ex.sequence_range.end,
+                ex.location.sequence_name,
+                window.start,
+                window.end,
                 ex.suffix_offset,
-                str::from_utf8(&ex.text)?
+                str::from_utf8(&text)?
             )?;
         }
     }
