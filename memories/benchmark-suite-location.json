@@ -1,10 +1,10 @@
 {
   "slug": "benchmark-suite-location",
-  "text": "The benchmark suite is the cargo project benchmarks/, added on branch bench at 1e4005e and on no other branch until the branches are collapsed. Run from benchmarks/: cargo run --release -- [WHICH] [-t N] [-r N] [-s MiB] [--compare-to label=path]. Groups normal, long-n, long-repeats, protein; default 10 MiB; rows append to runs/results.tsv. A branch without it follows the same protocol by hand on a 50 MB synthetic input.",
+  "text": "The benchmark suite is the cargo project benchmarks/ on branch bench (1e4005e..efaf30f) and no other branch until the branches are collapsed. Run from benchmarks/: cargo run --release -- [WHICH] [-t N] [-r N] [-s MiB] [--compare-to label=path]. Groups normal, long-n, long-repeats, protein; default 10 MiB; rows append to runs/results.tsv. On other branches benchmarks/ shows as untracked: its ignored runs/ and target/ stay behind.",
   "created_at": "2026-11-03T22:47:05.419363109Z",
-  "updated_at": "2026-11-03T22:47:05.419363109Z",
+  "updated_at": "2026-11-04T01:53:47.202220692Z",
   "stamp": {
-    "commit": "efaf30f",
-    "branch": "bench"
+    "commit": "6edc011",
+    "branch": "refactor"
   }
 }
