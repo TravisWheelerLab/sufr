@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-04T03:49:28.815089877Z",
   "defer_until": null,
   "created_at": "2026-11-04T02:45:51.07068387Z",
-  "updated_at": "2026-11-04T03:56:09.33830512Z",
+  "updated_at": "2026-11-04T04:09:39.134943086Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -31,6 +31,14 @@
       "at": "2026-11-04T03:31:37.790528991Z",
       "author": "Jack Roddy/1ddc0e5b",
       "text": "Rescoped on 2026-11-03 after Jack narrowed the CLAUDE.md rule to construction and search results. The body holds the scope. The sweep script and the memory benchmark-and-sweep-scripts were deleted the same day.",
+      "commit": "4e04a02",
+      "branch": "refactor"
+    },
+    {
+      "id": "9ec39187",
+      "at": "2026-11-04T04:09:39.134942476Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Open item one decided on 2026-11-03: sufr-2b76b5 is fixed before batch 1 (sufr-a88738) so the reference LCP can be compared exactly on -m builds. The fix caps find_lcp's result and the N-run shortcut at max_query_len. No fixture is built with -m, so no fixture bytes move.",
       "commit": "4e04a02",
       "branch": "refactor"
     }
