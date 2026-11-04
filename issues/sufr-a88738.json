@@ -16,7 +16,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T03:56:09.346397407Z",
-  "updated_at": "2026-11-04T05:24:49.251435353Z",
+  "updated_at": "2026-11-04T05:28:38.720443042Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -29,6 +29,14 @@
       "commit": "86cf586",
       "branch": "refactor",
       "deleted_at": "2026-11-04T05:24:49.251435003Z"
+    },
+    {
+      "id": "64f3dcab",
+      "at": "2026-11-04T05:28:38.720442382Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Jack decided on 2026-11-03 to land the oracle at u32 only and fix sufr-c549c4 afterwards, when the table gains a u64 pass.",
+      "commit": "86cf586",
+      "branch": "refactor"
     }
   ],
   "stamps": {
