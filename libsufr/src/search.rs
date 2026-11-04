@@ -259,7 +259,12 @@ impl<T: Int> TypedSuffixArray<T> {
             ) {
                 (None, _) => Ordering::Equal,
                 (Some(a), Some(b)) => a.cmp(b),
-                _ => unreachable!(),
+                // the query matched the whole suffix, sentinel
+                // included, and has bytes left: T$A against the
+                // suffix T$ at the end of ACGTNNACGT$. A suffix
+                // that is a proper prefix of the query sorts
+                // before it
+                (Some(_), None) => Ordering::Greater,
             }
         };
 
@@ -456,6 +461,12 @@ mod tests {
         assert_eq!(hits.ranks(), 0..0);
         assert!(hits.is_empty());
         assert_eq!(hits.suffixes()?, []);
+
+        // a query that matches a suffix through the sentinel and
+        // has bytes left finds nothing
+        assert!(sa.search(b"T$A")?.is_empty());
+        assert!(sa.search(b"ACGTNNACGT$A")?.is_empty());
+        assert_eq!(sa.search(b"ACGTNNACGT$")?.suffixes()?, [0]);
         Ok(())
     }
 
