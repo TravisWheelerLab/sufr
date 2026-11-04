@@ -15,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.789271833Z",
-  "updated_at": "2026-11-04T05:50:39.909819262Z",
+  "updated_at": "2026-11-04T06:58:30.798973331Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -26,6 +26,14 @@
       "author": "Jack Roddy/4be42394",
       "text": "At cff9fb6 the cache read fills a `Vec<T>` through `as_bytes_mut` (`index.rs:304-327`, `io.rs:222-232`). The `Vec<u8>` to `&[T]` cast and its alignment problem are gone.\n\nThe byte order problem remains. Suffix and rank data are still written and read in native byte order (TODOs at `io.rs:220` and `io.rs:234`). Only the length prefix is little-endian (`index.rs:310`, `index.rs:590`).",
       "commit": "cff9fb6",
+      "branch": "refactor"
+    },
+    {
+      "id": "c0ce3196",
+      "at": "2026-11-04T06:58:30.798972561Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Checked on 2026-11-03 at fc5db36. The alignment half is fixed: bd21d2e rewrote read_cache (libsufr/src/typed.rs) to allocate a Vec<T> and read into its bytes through as_bytes_mut, so the slice is aligned for T by construction. The byte-order half is the format's own convention: the .sufr arrays are native order too, per the layout comment in format.rs. Proposed to close as fixed by bd21d2e; Jack had not decided when the session ended.",
+      "commit": "fc5db36",
       "branch": "refactor"
     }
   ],
