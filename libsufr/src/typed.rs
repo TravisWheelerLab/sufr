@@ -5,7 +5,7 @@ use crate::{
     format::{read_text_length, Header, SeedMask, SuffixSortType},
     io::{as_bytes, as_bytes_mut, Int},
     search::{Context, Extraction, Location},
-    OpenOptions, Queryable,
+    OpenOptions,
 };
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Local};
@@ -16,6 +16,7 @@ use rayon::prelude::*;
 use std::{
     borrow::Cow,
     cmp::min,
+    fmt::Debug,
     fs::{self, File},
     io::{Read, Write},
     mem,
@@ -498,6 +499,30 @@ impl<W: Int, T: Buffer<u8>, S: Buffer<W>> TypedSuffixArray<W, T, S> {
             has_lcp: self.lcps.is_some(),
         })
     }
+}
+
+/// What [`crate::SuffixArray`] asks of a [`TypedSuffixArray`] at whichever int
+/// size and storage its file was opened with.
+pub(crate) trait Queryable: Debug + Send + Sync {
+    fn header(&self) -> &Header;
+
+    fn metadata(&self) -> Result<Metadata>;
+
+    fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>>;
+
+    fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>>;
+
+    fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>>;
+
+    fn text(&self, range: Range<usize>) -> Result<Vec<u8>>;
+
+    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>>;
+
+    fn extract(
+        &self,
+        ranks: Range<usize>,
+        context: Context,
+    ) -> Result<Vec<Extraction<'_>>>;
 }
 
 impl<W: Int, T: Buffer<u8>, S: Buffer<W>> Queryable for TypedSuffixArray<W, T, S> {

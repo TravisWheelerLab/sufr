@@ -70,36 +70,13 @@ impl Default for OpenOptions {
 
 use anyhow::{bail, Result};
 use rayon::prelude::*;
-use std::{fmt::Debug, ops::Range};
+use std::ops::Range;
+use typed::Queryable;
 
 /// A suffix array read from a _.sufr_ file.
 #[derive(Debug)]
 pub struct SuffixArray {
     inner: Box<dyn Queryable>,
-}
-
-/// What [`SuffixArray`] asks of a [`TypedSuffixArray`] at whichever int
-/// size and storage its file was opened with.
-pub(crate) trait Queryable: Debug + Send + Sync {
-    fn header(&self) -> &Header;
-
-    fn metadata(&self) -> Result<Metadata>;
-
-    fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>>;
-
-    fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>>;
-
-    fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>>;
-
-    fn text(&self, range: Range<usize>) -> Result<Vec<u8>>;
-
-    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>>;
-
-    fn extract(
-        &self,
-        ranks: Range<usize>,
-        context: Context,
-    ) -> Result<Vec<Extraction<'_>>>;
 }
 
 impl SuffixArray {
