@@ -514,7 +514,20 @@ mod test {
 
         // both suffixes inside a run of four N, max query len 2
         let text = b"NNNNA";
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 5, 0, None, 2, &[0..4], None), 2);
+        assert_eq!(
+            find_lcp::<u32>(
+                text,
+                0,
+                1,
+                5,
+                0,
+                None,
+                2,
+                std::slice::from_ref(&(0..4)),
+                None
+            ),
+            2
+        );
 
         Ok(())
     }
