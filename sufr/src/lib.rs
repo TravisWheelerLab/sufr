@@ -316,10 +316,7 @@ pub fn count(args: &CountArgs) -> Result<()> {
     let queries = read_queries(&args.query)?;
     let now = Instant::now();
 
-    let hits = suffix_array
-        .search_all(&queries)
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
+    let hits = suffix_array.par_search_all(&queries)?;
     for (query, hits) in queries.iter().zip(hits) {
         writeln!(output, "{query} {}", hits.count())?;
     }
@@ -393,10 +390,7 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
     let now = Instant::now();
     let mut output = create_output(&args.output)?;
 
-    let hits = suffix_array
-        .search_all(&queries)
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
+    let hits = suffix_array.par_search_all(&queries)?;
     for (query, hits) in queries.iter().zip(hits) {
         let context = Context {
             before: args.prefix_len.unwrap_or(0),
@@ -520,10 +514,7 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
     let queries = read_queries(&args.query)?;
     let now = Instant::now();
 
-    let hits = suffix_array
-        .search_all(&queries)
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
+    let hits = suffix_array.par_search_all(&queries)?;
     if args.abs {
         write_suffixes(&mut output, &queries, &hits)?;
     } else {

@@ -25,8 +25,14 @@ fn main() -> Result<()> {
         );
     }
 
-    for hits in suffix_array.search_all(&["AC", "GT", "XX"]) {
-        println!("count: {}", hits?.count());
+    for hits in suffix_array.search_all(["AC", "GT", "XX"])? {
+        println!("count: {}", hits.count());
+    }
+
+    // the same queries, spread over the rayon pool
+    let queries = vec![String::from("AC"), String::from("GT")];
+    for hits in suffix_array.par_search_all(&queries)? {
+        println!("count: {}", hits.count());
     }
 
     Ok(())

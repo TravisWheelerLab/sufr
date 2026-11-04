@@ -61,9 +61,7 @@ use std::ops::Range;
 use typed::TypedSuffixArray;
 
 use anyhow::{bail, Result};
-use log::info;
 use rayon::prelude::*;
-use std::time::Instant;
 
 /// A suffix array read from a _.sufr_ file.
 #[derive(Debug)]
@@ -121,23 +119,34 @@ impl SuffixArray {
         Ok(Hits::new(self, ranks))
     }
 
-    /// Search for each of `queries` in parallel, returning their hits in
-    /// the same order.
-    pub fn search_all<Q: AsRef<[u8]> + Sync>(
+    /// Search each query in turn, stopping at the first failed read.
+    pub fn search_all<Q>(
         &self,
-        queries: &[Q],
-    ) -> Vec<Result<Hits<'_>>> {
-        let now = Instant::now();
-        let hits = queries
+        queries: impl IntoIterator<Item = Q>,
+    ) -> Result<Vec<Hits<'_>>>
+    where
+        Q: AsRef<[u8]>,
+    {
+        queries
+            .into_iter()
+            .map(|q| self.search(q.as_ref()))
+            .collect()
+    }
+
+    /// Search the queries on the current rayon pool, in the same order.
+    pub fn par_search_all<Q>(
+        &self,
+        queries: impl IntoIterator<Item = Q>,
+    ) -> Result<Vec<Hits<'_>>>
+    where
+        Q: AsRef<[u8]> + Sync,
+    {
+        // rayon parallelises slices, not arbitrary iterators
+        let queries: Vec<Q> = queries.into_iter().collect();
+        queries
             .par_iter()
-            .map(|query| self.search(query.as_ref()))
-            .collect();
-        info!(
-            "Search of {} queries finished in {:?}",
-            queries.len(),
-            now.elapsed()
-        );
-        hits
+            .map(|q| self.search(q.as_ref()))
+            .collect()
     }
 
     /// The file's header.
@@ -215,8 +224,8 @@ fn to_usize<T: Int>(values: Vec<T>) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Alphabet, SeedMask, Storage, SuffixArray, SuffixArrayBuilder, SuffixArrayKind,
-        SuffixSortType, TypedSuffixArray, OUTFILE_VERSION,
+        Alphabet, Hits, SeedMask, Storage, SuffixArray, SuffixArrayBuilder,
+        SuffixArrayKind, SuffixSortType, TypedSuffixArray, OUTFILE_VERSION,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -486,14 +495,38 @@ mod tests {
     #[test]
     fn test_suffix_array_search() -> Result<()> {
         let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-        let counts = suffix_array
-            .search_all(&["AC", "GG", "CG"])
-            .into_iter()
-            .map(|hits| Ok(hits?.count()))
-            .collect::<Result<Vec<_>>>()?;
+        let counts: Vec<_> = suffix_array
+            .search_all(["AC", "GG", "CG"])?
+            .iter()
+            .map(Hits::count)
+            .collect();
+        assert_eq!(counts, [2, 0, 2]);
+        let counts: Vec<_> = suffix_array
+            .par_search_all(["AC", "GG", "CG"])?
+            .iter()
+            .map(Hits::count)
+            .collect();
         assert_eq!(counts, [2, 0, 2]);
         assert_eq!(suffix_array.search(b"CG")?.ranks(), 3..5);
         Ok(())
+    }
+
+    // what: a compile-time check that SuffixArray is Send + Sync
+    // why: nothing declares either; the compiler infers both from
+    //      the fields, down through TypedSuffixArray, Text,
+    //      Suffixes and FileAccess. par_search_all shares &self
+    //      across the rayon pool, and a caller with their own
+    //      threads is promised thread::scope with search or
+    //      thread::spawn with the array moved in. A new field
+    //      holding a Cell, RefCell or Rc would silently remove
+    //      the trait, and the first error would come out of
+    //      rayon's bounds on par_iter, or out of a downstream
+    //      crate's build. This line fails instead, naming the
+    //      field that lost it
+    #[test]
+    fn suffix_array_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SuffixArray>();
     }
 
     #[test]

@@ -387,7 +387,7 @@ impl<T: Int> TypedSuffixArray<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_queries, Context, Extraction, Location};
+    use super::{read_queries, Context, Extraction, Hits, Location};
     use crate::{OpenOptions, Storage, SuffixArray};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -439,11 +439,11 @@ mod tests {
     #[test]
     fn test_count() -> Result<()> {
         let sa = open("../data/inputs/1.sufr", Storage::Memory, Storage::Disk)?;
-        let counts = sa
-            .search_all(&["AC", "AG", "GT"])
-            .into_iter()
-            .map(|hits| Ok(hits?.count()))
-            .collect::<Result<Vec<_>>>()?;
+        let counts: Vec<_> = sa
+            .search_all(["AC", "AG", "GT"])?
+            .iter()
+            .map(Hits::count)
+            .collect();
         assert_eq!(counts, [2, 0, 2]);
         Ok(())
     }
@@ -481,9 +481,9 @@ mod tests {
     fn test_extract() -> Result<()> {
         let sa = open("../data/expected/1.sufr", Storage::Memory, Storage::Disk)?;
         let extractions = sa
-            .search_all(&["AC", "GT", "XX"])
-            .into_iter()
-            .map(|hits| hits?.extract(ONE_THREE))
+            .search_all(["AC", "GT", "XX"])?
+            .iter()
+            .map(|hits| hits.extract(ONE_THREE))
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(
             extractions,
