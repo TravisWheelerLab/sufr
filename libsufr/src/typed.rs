@@ -570,21 +570,18 @@ pub(crate) fn open(
     options: &OpenOptions,
 ) -> Result<Box<dyn Queryable>> {
     use Storage::{Disk as D, Memory as M};
-    let OpenOptions {
-        text,
-        suffixes,
-        max_query_len: cap,
-    } = *options;
+    let cap = options.max_query_len;
     let text_len = read_text_length(filename)?;
     let wide = text_len as u64 >= u32::MAX as u64;
 
     // suffixes in memory under a cap shorter than the sort means
     // the subsample in memory and the whole array on disk
     let header = Header::read(filename, if wide { 8 } else { 4 })?;
-    let subsample = suffixes == M && subsample_len(&header, cap) < header.sorted_len();
-    let suffixes = if subsample { D } else { suffixes };
+    let subsample =
+        options.suffixes == M && subsample_len(&header, cap) < header.sorted_len();
+    let suffixes = if subsample { D } else { options.suffixes };
 
-    let inner: Box<dyn Queryable> = match (wide, text, suffixes) {
+    let inner: Box<dyn Queryable> = match (wide, options.text, suffixes) {
         (false, D, D) => Box::new(TypedSuffixArray::<u32, Disk<u8>, Disk<u32>>::open(
             filename, cap, subsample,
         )?),

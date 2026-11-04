@@ -246,10 +246,8 @@ fn merge<W: Int>(
     n_ranges: &[Range<usize>],
     lcp_cache: &mut LcpCache,
 ) {
-    let Arrays {
-        sa: target_sa,
-        lcp: target_lcp,
-    } = into;
+    let target_sa = into.sa;
+    let target_lcp = into.lcp;
     let (mut x, mut y) = from.sa.split_at_mut(mid);
     let (mut lcp_x, mut lcp_y) = from.lcp.split_at_mut(mid);
     let mut len_x = x.len();

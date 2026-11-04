@@ -33,21 +33,17 @@ pub(super) fn write<W: Int, S: Buffer<W>>(
         .zip(offsets)
         .enumerate()
         .try_for_each(|(i, (partition, offset))| -> Result<()> {
-            let Partition {
-                len,
-                sa_buffer,
-                lcp_buffer,
-                ..
-            } = partition;
             write_all_at(
                 &file,
-                as_bytes(&sa_buffer.range(0..len)?),
+                as_bytes(&partition.sa_buffer.range(0..partition.len)?),
                 (header.suffix_array_pos + offset * int_size) as u64,
             )?;
-            drop(sa_buffer);
+            drop(partition.sa_buffer);
 
-            if let (Some(lcp_buffer), Some(lcp_pos)) = (lcp_buffer, header.lcp_pos) {
-                let mut lcp = lcp_buffer.range(0..len)?.into_owned();
+            if let (Some(lcp_buffer), Some(lcp_pos)) =
+                (partition.lcp_buffer, header.lcp_pos)
+            {
+                let mut lcp = lcp_buffer.range(0..partition.len)?.into_owned();
                 if let Some(first_lcp) = first_lcps[i] {
                     if let Some(val) = lcp.first_mut() {
                         *val = first_lcp;

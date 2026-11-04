@@ -175,19 +175,10 @@ impl SuffixArrayBuilder {
     /// the unsorted and sorted suffixes held in `S`, and write it to
     /// `path`.
     fn construct<W: Int, S: Buffer<W>>(self, path: &Path) -> Result<()> {
-        let SuffixArrayBuilder {
-            mut text,
-            sequences,
-            alphabet,
-            seed_mask: mask,
-            max_query_len,
-            num_partitions,
-            write_lcp,
-            ..
-        } = self;
-        let occupancy = normalize(&mut text, &alphabet);
-        let keep = keep_table(&alphabet);
-        let n_ranges = match alphabet {
+        let mut text = self.text;
+        let occupancy = normalize(&mut text, &self.alphabet);
+        let keep = keep_table(&self.alphabet);
+        let n_ranges = match self.alphabet {
             Alphabet::Dna {
                 allow_ambiguity: true,
                 ..
@@ -195,24 +186,30 @@ impl SuffixArrayBuilder {
             _ => vec![],
         };
         let encoder = PrefixEncoder::from_occupancy(occupancy);
-        let mask = mask.as_ref();
+        let mask = self.seed_mask.as_ref();
 
         let partitioned = partition::<W, S>(&text, &encoder, &keep, mask)?;
         let header = header(
-            &alphabet,
-            &sequences,
+            &self.alphabet,
+            &self.sequences,
             text.len(),
             partitioned.num_suffixes,
             mask,
-            max_query_len,
-            write_lcp,
+            self.max_query_len,
+            self.write_lcp,
             mem::size_of::<W>(),
         );
-        let groups = group_buffers(partitioned, num_partitions)?;
-        let partitions =
-            sort_partitions(&text, groups, mask, max_query_len, &n_ranges, write_lcp)?;
-        let first_lcps = if write_lcp {
-            first_lcps(&text, &partitions, mask, max_query_len, &n_ranges)
+        let groups = group_buffers(partitioned, self.num_partitions)?;
+        let partitions = sort_partitions(
+            &text,
+            groups,
+            mask,
+            self.max_query_len,
+            &n_ranges,
+            self.write_lcp,
+        )?;
+        let first_lcps = if self.write_lcp {
+            first_lcps(&text, &partitions, mask, self.max_query_len, &n_ranges)
         } else {
             vec![]
         };
