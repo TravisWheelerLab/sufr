@@ -3,7 +3,7 @@
   "title": "A query that runs past the end of the text hits unreachable!() in compare",
   "body": "`SufrSearch::compare` in `libsufr/src/sufr_search.rs` decides the ordering from the next byte of the query and the next byte of the text:\n\n```rust\nmatch (query.get(full_offset), &self.get_text(suffix_pos + full_offset)) {\n    (None, _) => Ordering::Equal,\n    (Some(a), Some(b)) => a.cmp(b),\n    _ => unreachable!(),\n}\n```\n\nThe last arm is reachable. Take a query that matches a suffix all the way to the end of the text and still has bytes left. An example is `T$A` against a text ending in `T$`. The LCP stops at the end of the text, `query.get` returns `Some` and `get_text` returns `None`, and the search panics. This requires the query to contain the sentinel byte, which no current check prevents.\n\nThe `Mask` branch of `compare` feeds the same match and may reach it the same way. That path has not been traced.\n\nFound by reading the code. Not reproduced.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.810584847Z",
-  "updated_at": "2026-11-02T19:59:04.457132345Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-04T06:07:49.808066135Z",
+  "closed_at": "2026-11-04T06:07:49.808066135Z",
+  "close_reason": "Fixed in 0a209e8: the (Some, None) arm of compare answers Greater. T$A and ACGTNNACGT$A on fixture 1 find nothing instead of panicking; test_search pins both.",
+  "resolution": "done",
   "notes": [
     {
       "id": "80626872",
@@ -32,6 +32,9 @@
       "commit": "b4a924a",
       "branch": "search-api"
     },
-    "closed": null
+    "closed": {
+      "commit": "0a209e8",
+      "branch": "refactor"
+    }
   }
 }
