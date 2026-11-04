@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-04T03:49:28.815089877Z",
   "defer_until": null,
   "created_at": "2026-11-04T02:45:51.07068387Z",
-  "updated_at": "2026-11-04T04:09:39.134943086Z",
+  "updated_at": "2026-11-04T04:15:42.56492641Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -39,6 +39,14 @@
       "at": "2026-11-04T04:09:39.134942476Z",
       "author": "Jack Roddy/1ddc0e5b",
       "text": "Open item one decided on 2026-11-03: sufr-2b76b5 is fixed before batch 1 (sufr-a88738) so the reference LCP can be compared exactly on -m builds. The fix caps find_lcp's result and the N-run shortcut at max_query_len. No fixture is built with -m, so no fixture bytes move.",
+      "commit": "4e04a02",
+      "branch": "refactor"
+    },
+    {
+      "id": "899f242d",
+      "at": "2026-11-04T04:15:42.56492585Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Open item two decided on 2026-11-03: sufr-2fd179 is fixed before batch 3 (sufr-5cf0b7), with windows stopping at the last byte of the sequence. Queries holding the sentinel or delimiter keep matching for now; sufr-7b022c holds that decision and batch 3 pins the current behaviour.",
       "commit": "4e04a02",
       "branch": "refactor"
     }
