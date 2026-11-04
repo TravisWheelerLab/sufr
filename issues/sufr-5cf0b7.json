@@ -16,11 +16,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T03:56:09.362445973Z",
-  "updated_at": "2026-11-04T06:02:22.657324837Z",
+  "updated_at": "2026-11-04T06:02:22.665617419Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "fa8d98c4",
+      "at": "2026-11-04T06:02:22.665616849Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Decided 2026-11-03: the empty query stays as it is, every suffix matches, and batch 3 pins it. Sequence order in locate becomes file order, sufr-bd7605, fixed before this batch.",
+      "commit": "9722e49",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4e04a02",
