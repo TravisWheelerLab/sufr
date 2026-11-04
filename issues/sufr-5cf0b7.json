@@ -1,0 +1,28 @@
+{
+  "id": "sufr-5cf0b7",
+  "title": "Library search tests with hand-derived expectations for the untested query kinds, mql cases and extract windows",
+  "body": "Batch 3 of sufr-25f57e. In libsufr/src/search.rs, on a small multi-sequence text whose expectations are derived by hand: count, locate and extract across the six (text, suffixes) modes and -m, count with -m; queries not found before $, empty, containing N, containing $, longer than the text, equal to a whole sequence, at the text end; mql shorter than, equal to and longer than the query on a plain and a masked file; extract with before larger than the distance to the sequence start, after past the sequence end, after Some(0), on the second sequence; locate order with sequence names 10 and 2; a search on the u64 build. The decisions on sufr-2fd179 and on a query holding $ are on the parent.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "sufr-25f57e",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T03:56:09.362445973Z",
+  "updated_at": "2026-11-04T03:56:09.362445973Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4e04a02",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
