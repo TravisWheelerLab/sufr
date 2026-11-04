@@ -111,18 +111,22 @@ impl SuffixArray {
         Ok(SuffixArray { inner })
     }
 
-    /// Find the suffixes matching `query`.
-    pub fn search(&self, query: &[u8]) -> Hits<'_> {
+    /// Find the suffixes matching `query`. An error is a failed read of
+    /// the file.
+    pub fn search(&self, query: &[u8]) -> Result<Hits<'_>> {
         let ranks = match &self.inner {
-            SuffixArrayKind::U32(sa) => sa.matching_ranks(query),
-            SuffixArrayKind::U64(sa) => sa.matching_ranks(query),
+            SuffixArrayKind::U32(sa) => sa.matching_ranks(query)?,
+            SuffixArrayKind::U64(sa) => sa.matching_ranks(query)?,
         };
-        Hits::new(self, ranks)
+        Ok(Hits::new(self, ranks))
     }
 
     /// Search for each of `queries` in parallel, returning their hits in
     /// the same order.
-    pub fn search_all<Q: AsRef<[u8]> + Sync>(&self, queries: &[Q]) -> Vec<Hits<'_>> {
+    pub fn search_all<Q: AsRef<[u8]> + Sync>(
+        &self,
+        queries: &[Q],
+    ) -> Vec<Result<Hits<'_>>> {
         let now = Instant::now();
         let hits = queries
             .par_iter()
@@ -482,13 +486,13 @@ mod tests {
     #[test]
     fn test_suffix_array_search() -> Result<()> {
         let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-        let counts: Vec<_> = suffix_array
+        let counts = suffix_array
             .search_all(&["AC", "GG", "CG"])
-            .iter()
-            .map(|hits| hits.count())
-            .collect();
+            .into_iter()
+            .map(|hits| Ok(hits?.count()))
+            .collect::<Result<Vec<_>>>()?;
         assert_eq!(counts, [2, 0, 2]);
-        assert_eq!(suffix_array.search(b"CG").ranks(), 3..5);
+        assert_eq!(suffix_array.search(b"CG")?.ranks(), 3..5);
         Ok(())
     }
 

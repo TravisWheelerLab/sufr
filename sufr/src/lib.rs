@@ -316,7 +316,10 @@ pub fn count(args: &CountArgs) -> Result<()> {
     let queries = read_queries(&args.query)?;
     let now = Instant::now();
 
-    let hits = suffix_array.search_all(&queries);
+    let hits = suffix_array
+        .search_all(&queries)
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
     for (query, hits) in queries.iter().zip(hits) {
         writeln!(output, "{query} {}", hits.count())?;
     }
@@ -390,17 +393,16 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
     let now = Instant::now();
     let mut output = create_output(&args.output)?;
 
-    let hits = suffix_array.search_all(&queries);
+    let hits = suffix_array
+        .search_all(&queries)
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
     for (query, hits) in queries.iter().zip(hits) {
-        // TODO: a query whose suffixes cannot be read is
-        //       skipped without a message
         let context = Context {
             before: args.prefix_len.unwrap_or(0),
             after: args.suffix_len,
         };
-        let Ok(extractions) = hits.extract(context) else {
-            continue;
-        };
+        let extractions = hits.extract(context)?;
         if extractions.is_empty() {
             eprintln!("{query} not found");
         }
@@ -518,7 +520,10 @@ pub fn locate(args: &LocateArgs) -> Result<()> {
     let queries = read_queries(&args.query)?;
     let now = Instant::now();
 
-    let hits = suffix_array.search_all(&queries);
+    let hits = suffix_array
+        .search_all(&queries)
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
     if args.abs {
         write_suffixes(&mut output, &queries, &hits)?;
     } else {
@@ -542,11 +547,7 @@ fn write_suffixes(
 ) -> Result<()> {
     let suffixes: Vec<_> = hits.par_iter().map(|hits| hits.suffixes()).collect();
     for (query, suffixes) in queries.iter().zip(suffixes) {
-        // TODO: a query whose suffixes cannot be read is
-        //       skipped without a message
-        let Ok(suffixes) = suffixes else {
-            continue;
-        };
+        let suffixes = suffixes?;
         if suffixes.is_empty() {
             eprintln!("{query} not found");
             continue;
@@ -565,11 +566,7 @@ fn write_locations(
 ) -> Result<()> {
     let locations: Vec<_> = hits.par_iter().map(|hits| hits.locate()).collect();
     for (query, locations) in queries.iter().zip(locations) {
-        // TODO: a query whose suffixes cannot be read is
-        //       skipped without a message
-        let Ok(locations) = locations else {
-            continue;
-        };
+        let locations = locations?;
         if locations.is_empty() {
             eprintln!("{query} not found");
             continue;

@@ -143,15 +143,15 @@ struct Comparison {
 
 impl<T: Int> TypedSuffixArray<T> {
     /// The ranks of the suffixes matching `query`, empty when none match.
-    pub(crate) fn matching_ranks(&self, query: &[u8]) -> Range<usize> {
+    pub(crate) fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>> {
         let n = self.num_searched();
-        let Some(start) = self.first_match(query, 0, n - 1, 0, 0) else {
-            return 0..0;
+        let Some(start) = self.first_match(query, 0, n - 1, 0, 0)? else {
+            return Ok(0..0);
         };
         let end = self
-            .last_match(query, start, n - 1, n, 0, 0)
+            .last_match(query, start, n - 1, n, 0, 0)?
             .unwrap_or(start);
-        self.searched_ranks(start, end)
+        Ok(self.searched_ranks(start, end))
     }
 
     fn first_match(
@@ -161,23 +161,29 @@ impl<T: Int> TypedSuffixArray<T> {
         high: usize,
         left_lcp: usize,
         right_lcp: usize,
-    ) -> Option<usize> {
+    ) -> Result<Option<usize>> {
         if high >= low {
             let mid = low + ((high - low) / 2);
-            let mid_val = self.searched_suffix(mid)?.to_usize();
-            let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
+            let Some(mid_val) = self.searched_suffix(mid)? else {
+                return Ok(None);
+            };
+            let mid_val = mid_val.to_usize();
+            let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp))?;
 
             let mid_minus_one = if mid > 0 {
-                self.searched_suffix(mid - 1)?.to_usize()
+                match self.searched_suffix(mid - 1)? {
+                    Some(suffix) => suffix.to_usize(),
+                    None => return Ok(None),
+                }
             } else {
                 mid_val
             };
 
             if mid_cmp.cmp == Ordering::Equal
                 && (mid == 0
-                    || self.compare(qry, mid_minus_one, 0).cmp == Ordering::Greater)
+                    || self.compare(qry, mid_minus_one, 0)?.cmp == Ordering::Greater)
             {
-                Some(mid)
+                Ok(Some(mid))
             } else if mid_cmp.cmp == Ordering::Greater {
                 self.first_match(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
             } else {
@@ -185,7 +191,7 @@ impl<T: Int> TypedSuffixArray<T> {
                 self.first_match(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
             }
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -197,38 +203,49 @@ impl<T: Int> TypedSuffixArray<T> {
         n: usize,
         left_lcp: usize,
         right_lcp: usize,
-    ) -> Option<usize> {
+    ) -> Result<Option<usize>> {
         if high >= low {
             let mid = low + ((high - low) / 2);
-            let mid_val = self.searched_suffix(mid)?.to_usize();
-            let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp));
+            let Some(mid_val) = self.searched_suffix(mid)? else {
+                return Ok(None);
+            };
+            let mid_val = mid_val.to_usize();
+            let mid_cmp = self.compare(qry, mid_val, min(left_lcp, right_lcp))?;
 
             let mid_plus_one = if mid < n - 1 {
-                self.searched_suffix(mid + 1)?.to_usize()
+                match self.searched_suffix(mid + 1)? {
+                    Some(suffix) => suffix.to_usize(),
+                    None => return Ok(None),
+                }
             } else {
                 mid_val
             };
 
             if mid_cmp.cmp == Ordering::Equal
                 && (mid == n - 1
-                    || self.compare(qry, mid_plus_one, 0).cmp == Ordering::Less)
+                    || self.compare(qry, mid_plus_one, 0)?.cmp == Ordering::Less)
             {
-                Some(mid)
+                Ok(Some(mid))
             } else if mid_cmp.cmp == Ordering::Less {
                 self.last_match(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
             } else {
                 self.last_match(qry, mid + 1, high, n, mid_cmp.lcp, right_lcp)
             }
         } else {
-            None
+            Ok(None)
         }
     }
 
     /// How `query` compares to the suffix at `suffix_pos`, which share
     /// their first `skip` characters.
-    fn compare(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Comparison {
+    fn compare(
+        &self,
+        query: &[u8],
+        suffix_pos: usize,
+        skip: usize,
+    ) -> Result<Comparison> {
         let max_query_len = self.max_query_len;
-        let lcp = self.query_lcp(query, suffix_pos, skip);
+        let lcp = self.query_lcp(query, suffix_pos, skip)?;
         let cmp = if (max_query_len > 0) && (lcp >= max_query_len) {
             Ordering::Equal
         } else {
@@ -238,7 +255,7 @@ impl<T: Int> TypedSuffixArray<T> {
             };
             match (
                 query.get(full_offset),
-                &self.text_byte(suffix_pos + full_offset),
+                &self.text_byte(suffix_pos + full_offset)?,
             ) {
                 (None, _) => Ordering::Equal,
                 (Some(a), Some(b)) => a.cmp(b),
@@ -246,15 +263,15 @@ impl<T: Int> TypedSuffixArray<T> {
             }
         };
 
-        Comparison { lcp, cmp }
+        Ok(Comparison { lcp, cmp })
     }
 
     /// The LCP of `query` and the suffix at `suffix_pos`, which share their
     /// first `skip` characters, counted in care positions under a seed mask.
-    fn query_lcp(&self, query: &[u8], suffix_pos: usize, skip: usize) -> usize {
+    fn query_lcp(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Result<usize> {
         let text_len = self.header.text_len;
         let max_query_len = self.max_query_len;
-        match &self.seed_mask {
+        Ok(match &self.seed_mask {
             None => {
                 if (max_query_len > 0) && (skip >= max_query_len) {
                     skip
@@ -265,7 +282,7 @@ impl<T: Int> TypedSuffixArray<T> {
                     } else {
                         min(text_len, text_start + query.len())
                     };
-                    let text = self.text_slice(text_start..text_end).unwrap();
+                    let text = self.text_slice(text_start..text_end)?;
                     skip + lcp(query.get(skip..).unwrap_or_default(), &text, None)
                 }
             }
@@ -283,11 +300,11 @@ impl<T: Int> TypedSuffixArray<T> {
                     let positions = &seed_mask.positions[skip..end];
                     let last = positions[positions.len() - 1];
                     let text_end = min(text_len, suffix_pos + last + 1);
-                    let text = self.text_slice(suffix_pos..text_end).unwrap();
+                    let text = self.text_slice(suffix_pos..text_end)?;
                     skip + masked_lcp(query, &text, positions)
                 }
             }
-        }
+        })
     }
 
     pub(crate) fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
@@ -422,11 +439,11 @@ mod tests {
     #[test]
     fn test_count() -> Result<()> {
         let sa = open("../data/inputs/1.sufr", Storage::Memory, Storage::Disk)?;
-        let counts: Vec<_> = sa
+        let counts = sa
             .search_all(&["AC", "AG", "GT"])
-            .iter()
-            .map(|hits| hits.count())
-            .collect();
+            .into_iter()
+            .map(|hits| Ok(hits?.count()))
+            .collect::<Result<Vec<_>>>()?;
         assert_eq!(counts, [2, 0, 2]);
         Ok(())
     }
@@ -435,12 +452,13 @@ mod tests {
     fn test_search() -> Result<()> {
         // the text is ACGTNNACGT$
         let sa = open("../data/inputs/1.sufr", Storage::Memory, Storage::Disk)?;
-        let hits = sa.search(b"ACG");
+        let hits = sa.search(b"ACG")?;
         assert_eq!(hits.ranks(), 1..3);
         assert_eq!(hits.suffixes()?, [6, 0]);
 
-        let hits = sa.search(b"GGC");
+        let hits = sa.search(b"GGC")?;
         assert_eq!(hits.ranks(), 0..0);
+        assert!(hits.is_empty());
         assert_eq!(hits.suffixes()?, []);
         Ok(())
     }
@@ -448,14 +466,14 @@ mod tests {
     #[test]
     fn test_extract_text_on_disk() -> Result<()> {
         let sa = open("../data/inputs/1.sufr", Storage::Disk, Storage::Disk)?;
-        let extractions = sa.search(b"ACG").extract(ONE_THREE)?;
+        let extractions = sa.search(b"ACG")?.extract(ONE_THREE)?;
         assert_eq!(
             extractions,
             [extraction(6, 1, 5..9, 1), extraction(0, 2, 0..3, 0)]
         );
         assert_eq!(window(&sa, &extractions[0])?, b"NACG");
         assert_eq!(window(&sa, &extractions[1])?, b"ACG");
-        assert_eq!(sa.search(b"GTC").extract(ONE_THREE)?, []);
+        assert_eq!(sa.search(b"GTC")?.extract(ONE_THREE)?, []);
         Ok(())
     }
 
@@ -464,8 +482,8 @@ mod tests {
         let sa = open("../data/expected/1.sufr", Storage::Memory, Storage::Disk)?;
         let extractions = sa
             .search_all(&["AC", "GT", "XX"])
-            .iter()
-            .map(|hits| hits.extract(ONE_THREE))
+            .into_iter()
+            .map(|hits| hits?.extract(ONE_THREE))
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(
             extractions,
@@ -483,7 +501,7 @@ mod tests {
     #[test]
     fn test_extract_without_after() -> Result<()> {
         let sa = open("../data/inputs/1.sufr", Storage::Memory, Storage::Memory)?;
-        let extractions = sa.search(b"CGT").extract(Context {
+        let extractions = sa.search(b"CGT")?.extract(Context {
             before: 1,
             after: None,
         })?;
@@ -549,7 +567,7 @@ mod tests {
                         position: suffix,
                     })
                     .collect();
-                assert_eq!(sa.search(query.as_bytes()).locate()?, expected, "{query}");
+                assert_eq!(sa.search(query.as_bytes())?.locate()?, expected, "{query}");
             }
         }
         Ok(())

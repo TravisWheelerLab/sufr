@@ -117,11 +117,8 @@ impl<T: Int> FileAccess<T> {
 
     /// The value at `pos`, or `None` past the end of the array.
     ///
-    /// # Panics
-    ///
-    /// Panics when the file cannot be read.
-    pub fn get(&self, pos: usize) -> Option<T> {
-        // TODO: Ignoring lots of Results to return Option
+    /// The value at `pos`, `None` past the end of the array.
+    pub fn get(&self, pos: usize) -> Result<Option<T>> {
         let seek = self.start_position + (pos * mem::size_of::<T>()) as u64;
         if seek < self.end_position {
             let mut val = T::from_usize(0);
@@ -129,11 +126,10 @@ impl<T: Int> FileAccess<T> {
                 &self.file,
                 as_bytes_mut(std::slice::from_mut(&mut val)),
                 seek,
-            )
-            .unwrap();
-            Some(val)
+            )?;
+            Ok(Some(val))
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -414,9 +410,7 @@ mod tests {
         ];
 
         for (rank, &suffix) in suf_by_rank.iter().enumerate() {
-            let res = suffix_array_file.get(rank);
-            assert!(res.is_some());
-            assert_eq!(res.unwrap(), suffix);
+            assert_eq!(suffix_array_file.get(rank)?, Some(suffix));
         }
 
         let res = suffix_array_file.get_range(1..100);

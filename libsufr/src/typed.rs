@@ -470,9 +470,9 @@ impl<T: Int> TypedSuffixArray<T> {
     }
 
     /// The text byte at `pos`.
-    pub(crate) fn text_byte(&self, pos: usize) -> Option<u8> {
+    pub(crate) fn text_byte(&self, pos: usize) -> Result<Option<u8>> {
         match &self.text {
-            Text::Memory(text) => text.get(pos).copied(),
+            Text::Memory(text) => Ok(text.get(pos).copied()),
             Text::Disk(text_file) => text_file.get(pos),
         }
     }
@@ -504,10 +504,10 @@ impl<T: Int> TypedSuffixArray<T> {
     }
 
     /// The suffix at position `pos` of the suffixes a search runs over.
-    pub(crate) fn searched_suffix(&self, pos: usize) -> Option<T> {
+    pub(crate) fn searched_suffix(&self, pos: usize) -> Result<Option<T>> {
         match &self.suffixes {
             Suffixes::Memory(suffixes) | Suffixes::Subsampled { suffixes, .. } => {
-                suffixes.get(pos).copied()
+                Ok(suffixes.get(pos).copied())
             }
             Suffixes::Disk => self.suffix_array_file.get(pos),
         }
@@ -633,8 +633,8 @@ mod tests {
                 Storage::Disk,
                 None,
             )?;
-            assert_eq!(index.text_byte(index.header.text_len - 1), Some(b'$'));
-            assert_eq!(index.text_byte(index.header.text_len), None);
+            assert_eq!(index.text_byte(index.header.text_len - 1)?, Some(b'$'));
+            assert_eq!(index.text_byte(index.header.text_len)?, None);
         }
         Ok(())
     }
