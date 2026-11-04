@@ -8,14 +8,15 @@
   "labels": [],
   "parent": "sufr-25f57e",
   "blocked_by": [
-    "sufr-2fd179"
+    "sufr-2fd179",
+    "sufr-bd7605"
   ],
   "related": [],
   "assignee": null,
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T03:56:09.362445973Z",
-  "updated_at": "2026-11-04T04:15:42.548514251Z",
+  "updated_at": "2026-11-04T06:02:22.657324837Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
