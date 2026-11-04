@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T20:42:06.641053281Z",
-  "updated_at": "2026-11-03T20:50:28.646806155Z",
+  "updated_at": "2026-11-04T05:12:52.502538629Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -25,6 +25,14 @@
       "text": "Five runs of the ten-copy fixture at 10 MiB on 8 threads took 9.45, 6.19, 7.60, 2.56 and 7.63 s of wall, with user time from 20 to 75 s in step, so the runs do different amounts of work. LcpCache is one per thread through a ThreadLocal in sort_partitions, so whether a merge finds the entry it needs depends on which rayon thread ran the merge that set it. The 2.56 s run is what the cache gives when the scheduling is kind.",
       "commit": "069d033",
       "branch": "bench"
+    },
+    {
+      "id": "cb89444c",
+      "at": "2026-11-04T05:12:52.502538099Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Observed 2026-11-03 while benchmarking an unrelated change: the instruction count of one build of the 10 MiB long-repeats fixture varies by up to 45% between runs of the same binary (542G to 789G). The work done depends on scheduling, which points at the LcpCache or the parallel merge rather than at the comparison itself. Memory long-repeats-row-is-noisy.",
+      "commit": "a9bb934",
+      "branch": "refactor"
     }
   ],
   "stamps": {
