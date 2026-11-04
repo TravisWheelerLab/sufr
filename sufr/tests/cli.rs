@@ -39,11 +39,18 @@ struct LocateOptions {
 
 // --------------------------------------------------
 #[test]
-fn create_empty_dies() -> Result<()> {
+fn create_empty_input_fails() -> Result<()> {
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
     Command::cargo_bin(PRG)?
-        .args(["create", "../data/expected/empty.sa"])
+        .args(["create", "--dna", "-o", &outpath, "../data/inputs/empty.fa"])
         .assert()
         .failure();
+    assert_eq!(
+        fs::metadata(&outpath)?.len(),
+        0,
+        "nothing written for an empty input"
+    );
     Ok(())
 }
 
