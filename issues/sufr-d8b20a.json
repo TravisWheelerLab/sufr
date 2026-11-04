@@ -3,7 +3,7 @@
   "title": "Makefile targets reference an undefined variable, a misspelled tool and a BSD-only flag",
   "body": "Three problems in the root `Makefile`.\n\n- Target `r1` runs `$(SEARCH) C 1.sufr` (line 19). No `SEARCH` variable is defined, so the command line is empty before `C`.\n- Target `valcall` runs `valgrind --tool=callrind` (line 89). The tool is `callgrind`.\n- `CREATE_RELEASE` uses `/usr/bin/time -l` (line 12). `-l` is the BSD form and GNU `time` rejects it.\n\nSeveral benchmark targets also read machine-local paths such as `../data/chr1.fa`, `hs1.fa`, `elegans.fa` and `ecoli.fa`, which are not in the repository.\n\nSeen by reading the Makefile in the survey. No target was run.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.247505449Z",
-  "updated_at": "2026-11-02T19:59:04.505526114Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-04T06:32:17.771040713Z",
+  "closed_at": "2026-11-04T06:32:17.771040713Z",
+  "close_reason": "The Makefile is deleted in 56db6ff.",
+  "resolution": "dropped",
   "notes": [
     {
       "id": "9911b0ad",
@@ -32,6 +32,9 @@
       "commit": "e8655c9",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "56db6ff",
+      "branch": "refactor"
+    }
   }
 }
