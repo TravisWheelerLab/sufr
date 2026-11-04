@@ -1,0 +1,28 @@
+{
+  "id": "sufr-d92278",
+  "title": "The text is indexed by W through a newtype instead of to_usize at each load",
+  "body": "`merge` and `find_lcp` in `libsufr/src/build/sort.rs` and `compare` in `libsufr/src/search.rs` index the text with values loaded from a `W` array, so each index is `text[(y[idx_y] + full_len_lcp).to_usize()]` or `text[suffix_pos + full_offset]` after a `to_usize` on the load. The `Int` trait in `libsufr/src/io.rs` provides `to_usize` and `from_usize`, since `as` cannot be written on a type parameter.\n\n## Proposal\n\nA newtype over the text, `struct Text<'a>(&'a [u8])`, with `impl<W: Int> Index<W>` and `Index<Range<W>>`, so `text[suffix]` takes a `W` and the cast sits once in the `Index` impl. About six `to_usize` calls in the hot loops go. Stores into `W` arrays are unchanged, so `from_usize` stays.\n\n## Cost\n\nA wrapper type between the reader and a slice, which `concrete-first` counts against. The `Index` impl is inlined, and the benchmark says whether that holds: `merge` and `find_lcp` are hot loops, so the build before and after goes on one board, 4 threads, 5 repeats, medians, and `count` over the 10 MiB build in each memory mode beside it.\n\n## Open\n\nTwo things decide it, and both are judged on the diff: whether the code reads as simpler with the casts out of the loops, and whether any row of the benchmark moves. A loss on either is a no. It follows `sufr-cad4f6` and the change that types `merge`'s locals as `usize`, since that change removes most of the other casts first.",
+  "type": "decision",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T22:57:43.055786363Z",
+  "updated_at": "2026-11-04T22:57:43.055786363Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "fc5db36",
+      "branch": "buffer"
+    },
+    "closed": null
+  }
+}
