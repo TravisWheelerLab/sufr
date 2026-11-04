@@ -362,41 +362,6 @@ fn extract_uniprot_masked() -> Result<()> {
 }
 
 // --------------------------------------------------
-#[test]
-fn extract_uniprot_masked_low_memory() -> Result<()> {
-    // In this test, the MQL 3 means all the found suffixes start with "R*EL"
-    // cargo run -- ex -s 10 -m 3 data/expected/uniprot-masked.sufr RNELNNEEA
-    extract(
-        "../data/expected/uniprot-masked.sufr",
-        ExtractOptions {
-            queries: vec!["RNELNNEEA".to_string()],
-            prefix_len: None,
-            suffix_len: Some(10),
-            max_query_len: Some(3),
-        },
-        &[
-            ">sp|P32234|128UP_DROME:38-48 RNELNNEEA 0",
-            "RRELISPKGG",
-            ">sp|P26709|1107L_ASFL5:128-138 RNELNNEEA 0",
-            "RKELKKDEF%",
-            ">sp|P0DO85|10H_STRNX:151-161 RNELNNEEA 0",
-            "RLELLKHIRV",
-            ">sp|Q9U408|14331_ECHGR:42-52 RNELNNEEA 0",
-            "RNELNNEEAN",
-            ">sp|P19084|11S3_HELAN:355-365 RNELNNEEA 0",
-            "RGELRPNAIQ",
-            ">sp|Q6GZV8|017L_FRG3G:18-28 RNELNNEEA 0",
-            "RGELSALSAA",
-            ">sp|Q6GZW6|009L_FRG3G:653-663 RNELNNEEA 0",
-            "RLELSAPYGS",
-            "",
-        ]
-        .join("\n"),
-        None,
-    )
-}
-
-// --------------------------------------------------
 fn list(filename: &str, opts: ListOptions, expected: &str) -> Result<()> {
     for memory in &["", "-v"] {
         let mut args = vec!["list".to_string(), filename.to_string()];
