@@ -505,6 +505,7 @@ impl SuffixArrayBuilder {
 /// Upper-case soft-masked characters, or replace them with `N` when the
 /// alphabet is `Dna` with `ignore_softmask`, and return which bytes occur.
 fn normalize(text: &mut [u8], alphabet: &Alphabet) -> [bool; 256] {
+    let now = Instant::now();
     let ignore_softmask = matches!(
         alphabet,
         Alphabet::Dna {
@@ -512,17 +513,35 @@ fn normalize(text: &mut [u8], alphabet: &Alphabet) -> [bool; 256] {
             ..
         }
     );
-    let mut occupancy = [false; 256];
-    for b in text.iter_mut() {
-        if b.is_ascii_lowercase() {
-            if ignore_softmask {
-                *b = b'N'
-            } else {
-                *b = b.to_ascii_uppercase()
-            }
-        }
-        occupancy[*b as usize] = true;
+    let mut table = [0u8; 256];
+    for (b, to) in table.iter_mut().enumerate() {
+        let b = b as u8;
+        *to = match (b.is_ascii_lowercase(), ignore_softmask) {
+            (false, _) => b,
+            (true, false) => b.to_ascii_uppercase(),
+            (true, true) => b'N',
+        };
     }
+    let occupancy = text
+        .par_chunks_mut(CHUNK_SIZE)
+        .map(|chunk| {
+            let mut occupancy = [false; 256];
+            for b in chunk {
+                *b = table[*b as usize];
+                occupancy[*b as usize] = true;
+            }
+            occupancy
+        })
+        .reduce(
+            || [false; 256],
+            |mut total, occupancy| {
+                for (total, seen) in total.iter_mut().zip(occupancy) {
+                    *total |= seen;
+                }
+                total
+            },
+        );
+    info!("Normalized the text in {:?}", now.elapsed());
     occupancy
 }
 
