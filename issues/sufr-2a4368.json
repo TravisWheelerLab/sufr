@@ -1,0 +1,28 @@
+{
+  "id": "sufr-2a4368",
+  "title": "The construct function reads as a list of one-line steps",
+  "body": "`SuffixArrayBuilder::construct` in `libsufr/src/build.rs` runs the build end to end. Four of its statements take ten to seventeen lines each: the `match` on the alphabet that fills `n_ranges`, the eight-argument call to `header`, the turn loop around `gather` and the ten-argument `sort_partitions`, and the block that computes and writes each partition's first LCP.\n\nThe seed mask, `max_query_len` and `n_ranges` travel as three separate arguments through `sort_partitions`, `merge_sort`, `first_lcps` and `find_lcp` in `libsufr/src/build/sort.rs`. Together they are the rule for how two suffixes compare.\n\n## Proposal\n\n- A struct in `sort.rs` holding the three comparison values, built once in `construct`. Its constructor takes the alphabet and runs `find_n_ranges` only for `Dna` with `allow_ambiguity`.\n- `header` becomes a method on the builder, taking only the text length, the suffix count and the integer width.\n- A struct for the build state that does not change between turns: the text, the encoder, the keep table, the layout, the comparison rule, the file and the header. `gather` and `sort_partitions` take it by reference.\n- `first_lcps` writes the values itself and does nothing when the header has no LCP position.\n\n## Cost\n\n`merge_sort` and `find_lcp` are hot, so the comparison struct runs the benchmark suite before and after. The `.sufr` bytes do not change.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T19:56:45.851102011Z",
+  "updated_at": "2026-11-05T19:56:45.851102011Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "276640b",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}
