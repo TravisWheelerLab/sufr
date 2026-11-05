@@ -3,7 +3,7 @@
   "title": "Construction counts bucket sizes first and places suffixes into exact slots",
   "body": "`partition` in `libsufr/src/build/partition.rs` appends each suffix to one of up to 65536 bucket `Scratch` buffers behind a `Mutex` each. A `DiskScratch` flushes to its own temp file at 4096 values. `sort_partition` concatenates a group of buckets, sorts it, and copies the result into two more `Scratch` buffers, which `write` reads back and writes at their offsets. No size is known before it happens, so every buffer grows, every bucket has its own file, and the sorted side of the scratch exists at all.\n\n## Proposal\n\nA count pass over the text first, then placement into exact slots.\n\n1. `count`: parallel over chunks, a histogram of suffixes per bucket, merged by adding the per-chunk histograms.\n2. `Layout`: the buckets in prefix order cut into partitions of about N/1024, from the histogram, before any suffix moves. It gives a bucket to partition table and each partition's range of the placed array, which is also its offset in the output.\n3. `place`: parallel over chunks, a counting sort of the chunk's suffixes by partition, then each slice appended to its partition. The order inside a partition does not matter, since the merge sort sorts the whole partition, so nothing is per bucket.\n4. `Placed`: in memory, one `Vec` per partition behind a `Mutex`, reserved to its exact size. On disk, one temp file holding the partitions end to end, written with `write_at` at the partition's start plus a `fetch_add` on its cursor.\n5. `sort_partition` reads its partition in one piece, sorts it, and writes the SA and LCP straight into the output file at the partition's offset.\n6. The first LCP of each partition is patched with one positioned write per partition after all are sorted, from `first_lcps` as now.\n\n## Cost\n\nOne more encode of every suffix, the count pass. At 10 MiB the whole partition pass is 48 ms of a 400 ms build. The temp traffic falls from 2 × N × W written and read (3 × with LCP) to 1 ×, and from thousands of files to one.\n\n## Out of scope\n\nWhere the N-run scan goes, and whether the memory kind stays, which this keeps.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T06:39:24.960142016Z",
-  "updated_at": "2026-11-05T10:15:59.599480198Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-05T10:19:12.121257129Z",
+  "closed_at": "2026-11-05T10:19:12.121257129Z",
+  "close_reason": "Landed as 01aa478 (count, turns, no scratch), 159f5a2 (64-bit key sort) and 276640b (LCP cache keyed by distance and block) on construction. The boards are in the notes above.",
+  "resolution": "done",
   "notes": [
     {
       "id": "1bb6dc35",
@@ -72,6 +72,9 @@
       "commit": "80d74c0",
       "branch": "construction"
     },
-    "closed": null
+    "closed": {
+      "commit": "276640b",
+      "branch": "construction"
+    }
   }
 }
