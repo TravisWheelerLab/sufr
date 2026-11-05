@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-05T21:56:47.516316059Z",
   "defer_until": null,
   "created_at": "2026-11-05T11:27:25.069614789Z",
-  "updated_at": "2026-11-05T21:41:47.516316059Z",
+  "updated_at": "2026-11-05T21:44:46.362933105Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "4d2b88d5",
+      "at": "2026-11-05T21:44:46.362931975Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "A floor for merge_sort, in tmp-claude/2026-11-05-construct-refactor/floor.patch and applied in the working tree on 2026-11-05: merge_sort and merge take the characters a run is known to share, min(key_chars, max_query_len), and merge starts find_lcp at max(m, min(floor, context)). With a cap at or under the key the skip reaches the cap and find_lcp returns at once, so each compare is O(1), though the merge still runs. Board at 10 MiB, 4 threads, median of 5, against 8a05eb2: normal 1.16x wall with user time flat and CPU 349% to 304%, long-n 1.02x, protein 1.01x, long-repeats 1.04x. The suite has no capped row, so the case this helps is unmeasured.",
+      "commit": "8a05eb2",
+      "branch": "construction"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "276640b",
