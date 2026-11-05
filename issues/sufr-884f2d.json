@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-05T21:34:24.460509539Z",
   "defer_until": null,
   "created_at": "2026-11-05T21:15:15.293728744Z",
-  "updated_at": "2026-11-05T21:22:04.872872753Z",
+  "updated_at": "2026-11-05T21:28:40.584995713Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/fdde2c6d",
       "text": "Done in the working tree, not yet committed: a 256-entry table from the alphabet, applied over par_chunks_mut(CHUNK_SIZE) with one occupancy per chunk ORed in the reduce, and a log line for the pass. On benchmarks/runs/dna-1024.fa at 4 threads, three runs each: 208, 208 and 212 ms before, 75, 78 and 76 ms after. The .sufr outputs are identical. find_n_ranges is still its own pass; whether it rides this one is the open question.",
       "commit": "1462051",
+      "branch": "construction"
+    },
+    {
+      "id": "8114de8c",
+      "at": "2026-11-05T21:28:40.584994953Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "The N-run scan now rides the normalize pass, in the working tree and not committed. Each chunk keeps its runs of 1000 or more plus any run touching a chunk end, the reduce joins runs across a boundary, and a final retain drops the short ones. On long-n-1024.fa with --dna -a at 4 threads: normalize plus scan took 517 ms before and the one pass takes 125 to 138 ms after; the log reports 3 runs, which an independent count confirms, and the outputs are identical. Cost on the path with no tracking: dna-1024.fa normalize went from 76 ms to 109 ms, so the per-byte compare behind track_n is not hoisted. Options: a second loop without the compare, or accept it.",
+      "commit": "e47dab8",
       "branch": "construction"
     }
   ],
