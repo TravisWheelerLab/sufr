@@ -1,0 +1,28 @@
+{
+  "id": "sufr-37d67b",
+  "title": "Tie runs are sorted by deeper keys before the merge sort",
+  "body": "The sort phase in `construct` sorts each partition by its 64-bit key and hands every run of equal keys to `merge_sort`, which compares suffixes from the first character. Suffixes in a run share the key's characters, 21 for DNA, so every comparison in the run re-reads them.\n\n## Proposal\n\nA `sort_run` that encodes a second key at `start + depth` for each suffix of a run, sorts the run by it, reads the LCP between unequal keys as `depth + shared`, and recurses into the ties with the depth grown by the key's characters, handing a run to `merge_sort` only under a mask, past the cap, or past a fixed depth. `merge_sort` and `merge` take a floor, the characters the run is known to share, and `find_lcp` starts past it.\n\n## Rejected\n\nMeasured on 2026-11-05 with the floor at 128 characters, 10 MiB fixtures, 4 threads, median of 5, against 8a05eb2: normal 1.03x, protein 1.08x, long-n 1.41x with peak memory 85 to 218 MiB, long-repeats 1.49x. Each level allocates a key per suffix of the run and the recursion holds every level's keys alive, which is the memory on long-n, whose runs of N are one giant tie run. On long-repeats every suffix sits in a run of ten copies, and six levels of keys per run cost more than the merge sort, whose LCP cache answers those comparisons at once. The patch is `tmp-claude/2026-11-05-construct-refactor/floor-and-deeper.patch`.\n\n## Open\n\nWhether a size threshold, deeper keys only for runs over some length, keeps the win on the capped case without the loss on repeats. Not tried.",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T21:44:46.349840224Z",
+  "updated_at": "2026-11-05T21:44:46.349840224Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "8a05eb2",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}
