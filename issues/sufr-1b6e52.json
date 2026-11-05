@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T06:39:24.960142016Z",
-  "updated_at": "2026-11-05T08:40:38.276856082Z",
+  "updated_at": "2026-11-05T09:04:21.085420856Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -39,6 +39,14 @@
       "at": "2026-11-05T08:19:40.522708263Z",
       "author": "Jack Roddy/22668672",
       "text": "Budget sweep on `benchmarks/runs/dna-1024.fa`, 8 threads, one run each, `create --dna --memory-budget`, every output identical:\n\n| budget MiB | turns | scans s | sort s | wall s | peak RSS MiB |\n|---|---|---|---|---|---|\n| 100 | 64 | 38.6 | 48.2 | 88.5 | 1335 |\n| 200 | 32 | 19.9 | 48.3 | 69.7 | 1579 |\n| 400 | 16 | 10.7 | 47.2 | 59.5 | 1772 |\n| 800 | 8 | 6.1 | 46.8 | 54.4 | 2154 |\n| 1600 | 4 | 3.9 | 47.0 | 52.5 | 2957 |\n| 3200 | 2 | 2.5 | 47.6 | 51.7 | 4404 |\n| 6400 | 1 | 1.2 | 44.9 | 47.5 | 7426 |\n\nA scan costs 0.6 s whatever the budget, so the scan total is 0.6 s times the number of turns. The sort total barely moves. Peak RSS is the 1 GiB text plus the budget plus about 250 MiB of working arrays.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "7d68f572",
+      "at": "2026-11-05T09:04:21.085419956Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Scan cost after the rolling encode and the one-compare turn test, `dna-1024.fa`, 8 threads, one run each, outputs identical:\n\n| budget MiB | turns | scans s | per scan s | sort s | wall s | peak RSS MiB |\n|---|---|---|---|---|---|---|\n| 100 | 64 | 10.2 | 0.16 | 47.0 | 58.5 | 1345 |\n| 400 | 16 | 3.7 | 0.18 to 0.25 | 45.4 | 50.3 | 1800 |\n| 6400 | 1 | 0.9 | 0.93 | 44.4 | 46.7 | 7546 |\n\nThree things got the scan from 0.6 s to 0.16 s. `PrefixEncoder::roll` computes the next key from the current one with two table lookups instead of six. The per-chunk buffers are per-thread and written by index, so the loop holds no call. And the test for \"key in this turn's buckets\" is one unsigned compare: as `lo <= key && key < hi` the first branch was a coin flip in the middle turns and a scan there took three times as long as in the first turn. The count pass is 0.14 s, so a scan is at the floor and SIMD has nothing left to take from it.",
       "commit": "80d74c0",
       "branch": "construction"
     }
