@@ -1,0 +1,10 @@
+{
+  "slug": "hg38non-budget-and-phase-times",
+  "text": "At 276640b on hg38noN with 32 threads, --memory-budget 6400 is the fastest budget at 35.7 s; 3200 takes 43.0 s and 12800 and 25600 take 42.5 s with lower CPU use. In the --log info run at 6400 the read took 4.5 s and normalize about 5.3 s, inferred from the gap, both on one thread; then gather 3.8 s and sort plus write 21.9 s at about 22 of 32 cores. numactl on one node changed nothing. Logs: ~/sufr-benchmarks/results/profile/ on catalyst. Measured 2026-11-05.",
+  "created_at": "2026-11-05T21:31:56.573330675Z",
+  "updated_at": "2026-11-05T21:31:56.573330675Z",
+  "stamp": {
+    "commit": "e47dab8",
+    "branch": "construction"
+  }
+}
