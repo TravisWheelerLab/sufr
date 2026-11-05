@@ -77,7 +77,6 @@ Arguments:
 
 Options:
   -n, --num-partitions <NUM_PARTS>  Subproblem count [default: 1024]
-  -m, --max-query-len <CONTEXT>     Max context
   -o, --output <OUTPUT>             Output file
   -d, --dna                         Input is DNA
   -a, --allow-ambiguity             Allow suffixes starting with ambiguity codes

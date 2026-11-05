@@ -351,7 +351,7 @@ mod tests {
                 ignore_softmask: false,
             })
             .with_num_partitions(1)
-            .with_sort_type(SuffixSortType::Mask(SeedMask::new("101").unwrap()))
+            .with_seed_mask(SeedMask::new("101").unwrap())
             .with_write_lcp(true)
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
@@ -397,7 +397,7 @@ mod tests {
                 ignore_softmask: false,
             })
             .with_num_partitions(1)
-            .with_sort_type(SuffixSortType::Mask(SeedMask::new("11011").unwrap()))
+            .with_seed_mask(SeedMask::new("11011").unwrap())
             .with_write_lcp(true)
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
@@ -428,7 +428,7 @@ mod tests {
                 ignore_softmask: false,
             })
             .with_num_partitions(1)
-            .with_sort_type(SuffixSortType::Mask(SeedMask::new("11000111").unwrap()))
+            .with_seed_mask(SeedMask::new("11000111").unwrap())
             .with_write_lcp(true)
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());

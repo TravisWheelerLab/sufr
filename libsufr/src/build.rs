@@ -58,9 +58,6 @@ pub struct SuffixArrayBuilder {
     /// The seed mask the suffixes are sorted by, if any.
     seed_mask: Option<SeedMask>,
 
-    /// The number of characters the suffixes are sorted by, or 0 for all.
-    max_query_len: usize,
-
     num_partitions: usize,
 
     /// The most bytes of suffixes to hold in memory while sorting, or
@@ -104,7 +101,6 @@ impl SuffixArrayBuilder {
             sequences,
             alphabet: Alphabet::Bytes,
             seed_mask: None,
-            max_query_len: 0,
             num_partitions: 1024,
             memory_budget: None,
             force_64bit: false,
@@ -118,24 +114,11 @@ impl SuffixArrayBuilder {
         self
     }
 
-    /// Set how the suffixes are sorted (default: `SuffixSortType::MaxQueryLen(0)`,
-    /// by all of their characters).
-    pub fn with_sort_type(mut self, sort_type: SuffixSortType) -> Self {
-        (self.seed_mask, self.max_query_len) = match sort_type {
-            SuffixSortType::Mask(seed_mask) => (Some(seed_mask), 0),
-            SuffixSortType::MaxQueryLen(max_query_len) => (None, max_query_len),
-        };
+    /// Sort the suffixes by the care positions of `mask` rather than by
+    /// every character.
+    pub fn with_seed_mask(mut self, mask: SeedMask) -> Self {
+        self.seed_mask = Some(mask);
         self
-    }
-
-    /// Sort the suffixes by their first `max_query_len` characters.
-    pub fn with_max_query_len(self, max_query_len: usize) -> Self {
-        self.with_sort_type(SuffixSortType::MaxQueryLen(max_query_len))
-    }
-
-    /// Sort the suffixes by the care positions of `mask`.
-    pub fn with_seed_mask(self, mask: SeedMask) -> Self {
-        self.with_sort_type(SuffixSortType::Mask(mask))
     }
 
     /// Set the number of partitions the suffixes are sorted in
@@ -192,9 +175,8 @@ impl SuffixArrayBuilder {
             } => find_n_ranges(text),
             _ => vec![],
         };
-        let encoder = PrefixEncoder::from_occupancy(occupancy, self.max_query_len);
+        let encoder = PrefixEncoder::from_occupancy(occupancy);
         let mask = self.seed_mask.as_ref();
-        let max_query_len = self.max_query_len;
 
         // ---
         // count the suffixes of each bucket, those whose first byte
@@ -214,7 +196,7 @@ impl SuffixArrayBuilder {
                             for i in start..end {
                                 if keep[text[i] as usize] {
                                     let key = encoder.encode(text, i, Some(mask));
-                                    counts[encoder.bucket(encoder.capped(key))] += 1;
+                                    counts[encoder.bucket(key)] += 1;
                                 }
                             }
                         }
@@ -222,7 +204,7 @@ impl SuffixArrayBuilder {
                             let mut key = encoder.encode(text, start, None);
                             for i in start..end {
                                 if keep[text[i] as usize] {
-                                    counts[encoder.bucket(encoder.capped(key))] += 1;
+                                    counts[encoder.bucket(key)] += 1;
                                 }
                                 key = encoder.roll(text, i, key);
                             }
@@ -271,7 +253,7 @@ impl SuffixArrayBuilder {
             num_suffixes,
             sort_type: match mask {
                 Some(seed_mask) => SuffixSortType::Mask(seed_mask.clone()),
-                None => SuffixSortType::MaxQueryLen(max_query_len),
+                None => SuffixSortType::MaxQueryLen(0),
             },
             sequence_starts: self.sequences.iter().map(|(start, _)| *start).collect(),
             sequence_names: self
@@ -331,11 +313,7 @@ impl SuffixArrayBuilder {
                         match mask {
                             Some(mask) => {
                                 for i in start..end {
-                                    let key = encoder.capped(encoder.encode(
-                                        text,
-                                        i,
-                                        Some(mask),
-                                    ));
+                                    let key = encoder.encode(text, i, Some(mask));
                                     let bucket = encoder.bucket(key);
                                     if keep[text[i] as usize]
                                         && bucket.wrapping_sub(lo) < width
@@ -349,13 +327,12 @@ impl SuffixArrayBuilder {
                             None => {
                                 let mut key = encoder.encode(text, start, None);
                                 for i in start..end {
-                                    let capped = encoder.capped(key);
-                                    let bucket = encoder.bucket(capped);
+                                    let bucket = encoder.bucket(key);
                                     if keep[text[i] as usize]
                                         && bucket.wrapping_sub(lo) < width
                                     {
                                         suffixes[n] = W::from_usize(i);
-                                        keys[n] = capped;
+                                        keys[n] = key;
                                         n += 1;
                                     }
                                     key = encoder.roll(text, i, key);
@@ -426,7 +403,6 @@ impl SuffixArrayBuilder {
                                 &mut sa[run..i],
                                 &mut lcp[run..i],
                                 mask,
-                                max_query_len,
                                 &n_ranges,
                                 &lcp_cache,
                             );
@@ -480,7 +456,6 @@ impl SuffixArrayBuilder {
                         W::from_usize(text.len()),
                         0,
                         mask,
-                        max_query_len,
                         &n_ranges,
                         None,
                     )
@@ -685,15 +660,11 @@ pub(super) struct PrefixEncoder {
 
     /// The unused low bits of a key.
     shift: u32,
-
-    /// Keeps the first `max_query_len` characters of a key, or all.
-    cap: u64,
 }
 
 impl PrefixEncoder {
-    /// The encoder for a text whose bytes `occupancy` marks, sorted by
-    /// its first `max_query_len` characters, or all of them for 0.
-    pub(super) fn from_occupancy(occupancy: [bool; 256], max_query_len: usize) -> Self {
+    /// The encoder for a text whose bytes `occupancy` marks.
+    pub(super) fn from_occupancy(occupancy: [bool; 256]) -> Self {
         let mut table = [0u8; 256];
         let mut radix: usize = 0;
         for (c, &seen) in occupancy.iter().enumerate() {
@@ -706,11 +677,6 @@ impl PrefixEncoder {
         let key_chars = 64 / bits as usize;
         let bucket_chars = 16 / bits as usize;
         let shift = 64 - bits * key_chars as u32;
-        let cap = if max_query_len > 0 && max_query_len < key_chars {
-            u64::MAX << (64 - bits * max_query_len as u32)
-        } else {
-            u64::MAX
-        };
         info!(
             "{radix} distinct bytes at {bits} bits: {key_chars}-character keys, \
              {bucket_chars}-character buckets"
@@ -721,7 +687,6 @@ impl PrefixEncoder {
             key_chars,
             bucket_chars,
             shift,
-            cap,
         }
     }
 
@@ -730,13 +695,7 @@ impl PrefixEncoder {
         1 << (self.bits * self.bucket_chars as u32)
     }
 
-    /// `key` with the characters past `max_query_len` cleared.
-    #[inline(always)]
-    pub(super) fn capped(&self, key: u64) -> u64 {
-        key & self.cap
-    }
-
-    /// The bucket number of a suffix with the capped key `key`.
+    /// The bucket number of a suffix with the key `key`.
     #[inline(always)]
     pub(super) fn bucket(&self, key: u64) -> usize {
         (key >> (64 - self.bits * self.bucket_chars as u32)) as usize
@@ -749,7 +708,7 @@ impl PrefixEncoder {
         ((a ^ b).leading_zeros() / self.bits) as usize
     }
 
-    /// The key of the suffix at `i` before the cap: its first
+    /// The key of the suffix at `i`: its first
     /// `key_chars` characters, or those at the care positions of `mask`.
     pub(super) fn encode(&self, text: &[u8], i: usize, mask: Option<&SeedMask>) -> u64 {
         let mut key = 0u64;
@@ -766,8 +725,8 @@ impl PrefixEncoder {
         key << self.shift
     }
 
-    /// The key of the suffix after the one at `i` with the key `key`
-    /// before the cap, without a mask: the first character shifts out
+    /// The key of the suffix after the one at `i` with the key `key`,
+    /// without a mask: the first character shifts out
     /// of the top and the character `key_chars` ahead comes in at the
     /// bottom.
     #[inline(always)]
@@ -868,7 +827,6 @@ fn merge_sort<W: Int>(
     out_sa: &mut [W],
     out_lcp: &mut [W],
     mask: Option<&SeedMask>,
-    max_query_len: usize,
     n_ranges: &[Range<usize>],
     lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
 ) {
@@ -887,53 +845,25 @@ fn merge_sort<W: Int>(
         // roles, so the merge below reads `work`
         if mid < NESTED_PAR_GRAIN_SIZE {
             merge_sort(
-                text,
-                out_sa_l,
-                out_lcp_l,
-                work_sa_l,
-                work_lcp_l,
-                mask,
-                max_query_len,
-                n_ranges,
+                text, out_sa_l, out_lcp_l, work_sa_l, work_lcp_l, mask, n_ranges,
                 lcp_cache,
             );
             merge_sort(
-                text,
-                out_sa_r,
-                out_lcp_r,
-                work_sa_r,
-                work_lcp_r,
-                mask,
-                max_query_len,
-                n_ranges,
+                text, out_sa_r, out_lcp_r, work_sa_r, work_lcp_r, mask, n_ranges,
                 lcp_cache,
             );
         } else {
             rayon::join(
                 || {
                     merge_sort(
-                        text,
-                        out_sa_l,
-                        out_lcp_l,
-                        work_sa_l,
-                        work_lcp_l,
-                        mask,
-                        max_query_len,
-                        n_ranges,
-                        lcp_cache,
+                        text, out_sa_l, out_lcp_l, work_sa_l, work_lcp_l, mask,
+                        n_ranges, lcp_cache,
                     )
                 },
                 || {
                     merge_sort(
-                        text,
-                        out_sa_r,
-                        out_lcp_r,
-                        work_sa_r,
-                        work_lcp_r,
-                        mask,
-                        max_query_len,
-                        n_ranges,
-                        lcp_cache,
+                        text, out_sa_r, out_lcp_r, work_sa_r, work_lcp_r, mask,
+                        n_ranges, lcp_cache,
                     )
                 },
             );
@@ -947,7 +877,6 @@ fn merge_sort<W: Int>(
             out_sa,
             out_lcp,
             mask,
-            max_query_len,
             n_ranges,
             &mut lcp_cache.get_or_default().borrow_mut(),
         );
@@ -964,7 +893,6 @@ fn merge<W: Int>(
     target_sa: &mut [W],
     target_lcp: &mut [W],
     mask: Option<&SeedMask>,
-    max_query_len: usize,
     n_ranges: &[Range<usize>],
     lcp_cache: &mut LcpCache,
 ) {
@@ -1003,9 +931,6 @@ fn merge<W: Int>(
                             .filter(|&i| *i < max_n.to_usize())
                             .count(),
                     ),
-                    None if max_query_len > 0 => {
-                        min(W::from_usize(max_query_len), max_n)
-                    }
                     None => max_n,
                 };
 
@@ -1018,7 +943,6 @@ fn merge<W: Int>(
                         context - m,
                         m.to_usize(), // skip
                         mask,
-                        max_query_len,
                         n_ranges,
                         Some(lcp_cache),
                     );
@@ -1107,7 +1031,6 @@ fn find_lcp<W: Int>(
     len: W,
     skip: usize,
     mask: Option<&SeedMask>,
-    max_query_len: usize,
     n_ranges: &[Range<usize>],
     lcp_cache: Option<&mut LcpCache>,
 ) -> W {
@@ -1130,28 +1053,19 @@ fn find_lcp<W: Int>(
         let (run1, run2) = (end1 - start1, end2 - start2);
         if run1 != run2 {
             // the byte after the shorter run is N against not N
-            let run = min(run1, run2);
-            return W::from_usize(if max_query_len > 0 {
-                min(run, max_query_len)
-            } else {
-                run
-            });
+            return W::from_usize(min(run1, run2));
         }
         // equal runs end together, so compare on from there
         skip = max(skip, run1);
     }
-    if max_query_len > 0 && skip >= max_query_len {
-        return W::from_usize(max_query_len);
-    }
-
-    // `len` counts bytes past `skip`, so the cap leaves
-    // max_query_len - skip of them
-    let len = if max_query_len > 0 {
-        max_query_len - skip
-    } else {
-        len.to_usize()
-    };
-    W::from_usize(suffix_lcp(text, start1, start2, skip, len, lcp_cache))
+    W::from_usize(suffix_lcp(
+        text,
+        start1,
+        start2,
+        skip,
+        len.to_usize(),
+        lcp_cache,
+    ))
 }
 
 /// The end of the run of `N`s in `n_ranges` holding `suffix`, if it is
@@ -1248,12 +1162,12 @@ mod test {
         Ok(())
     }
 
-    fn encoder(text: &[u8], max_query_len: usize) -> PrefixEncoder {
+    fn encoder(text: &[u8]) -> PrefixEncoder {
         let mut occupancy = [false; 256];
         for &b in text {
             occupancy[b as usize] = true;
         }
-        PrefixEncoder::from_occupancy(occupancy, max_query_len)
+        PrefixEncoder::from_occupancy(occupancy)
     }
 
     /// `ranks` packed from the top of a u64 at `bits` each.
@@ -1267,22 +1181,22 @@ mod test {
 
     #[test]
     fn test_widths() {
-        let dna = encoder(b"$%ACGNT", 0);
+        let dna = encoder(b"$%ACGNT");
         assert_eq!((dna.bits, dna.key_chars, dna.bucket_chars), (3, 21, 5));
         assert_eq!(dna.num_buckets(), 32768);
 
-        let protein = encoder(b"$%*-ABCDEFGHIKLMNPQRSTVWY", 0);
+        let protein = encoder(b"$%*-ABCDEFGHIKLMNPQRSTVWY");
         assert_eq!(
             (protein.bits, protein.key_chars, protein.bucket_chars),
             (5, 12, 3)
         );
 
         let bytes: Vec<u8> = (0..=255).collect();
-        let bytes = encoder(&bytes, 0);
+        let bytes = encoder(&bytes);
         assert_eq!((bytes.bits, bytes.key_chars, bytes.bucket_chars), (8, 8, 2));
         assert_eq!(bytes.num_buckets(), 65536);
 
-        let one = encoder(b"$", 0);
+        let one = encoder(b"$");
         assert_eq!((one.bits, one.key_chars, one.bucket_chars), (1, 64, 16));
     }
 
@@ -1290,7 +1204,7 @@ mod test {
     fn test_encode() -> Result<()> {
         // ranks in byte order: $=0 A=1 C=2 G=3 N=4 T=5, 3 bits each
         let text = b"ACGTNA$";
-        let encoder = encoder(text, 0);
+        let encoder = encoder(text);
 
         // A C G T N A $ and 14 characters past the end
         let key = encoder.encode(text, 0, None);
@@ -1308,33 +1222,24 @@ mod test {
         assert_eq!(encoder.encode(text, 0, Some(&mask)), packed(&[1, 2, 5], 3));
         // A $ and position 8 past the end
         assert_eq!(encoder.encode(text, 5, Some(&mask)), packed(&[1], 3));
-
-        // a cap keeps that many characters
-        let capped = super::test::encoder(text, 2);
-        assert_eq!(
-            capped.capped(capped.encode(text, 0, None)),
-            packed(&[1, 2], 3)
-        );
         Ok(())
     }
 
     #[test]
     fn test_roll_reaches_the_same_key_as_encode() {
         let text = b"ACGTNACGTTTGANNACGTACGTACGTAAA$";
-        for max_query_len in [0, 4] {
-            let encoder = encoder(text, max_query_len);
-            let mut key = encoder.encode(text, 0, None);
-            for i in 0..text.len() {
-                assert_eq!(key, encoder.encode(text, i, None), "at {i}");
-                key = encoder.roll(text, i, key);
-            }
+        let encoder = encoder(text);
+        let mut key = encoder.encode(text, 0, None);
+        for i in 0..text.len() {
+            assert_eq!(key, encoder.encode(text, i, None), "at {i}");
+            key = encoder.roll(text, i, key);
         }
     }
 
     #[test]
     fn test_shared_counts_equal_leading_characters() {
         let text = b"ACGTACGA$";
-        let encoder = encoder(text, 0);
+        let encoder = encoder(text);
         let a = encoder.encode(text, 0, None);
         let b = encoder.encode(text, 4, None);
         // ACGTACGA$ and ACGA$ share ACG
@@ -1390,72 +1295,30 @@ mod test {
         // 0: TTTAGC
         // 1:  TTAGC
         // 6: len of text
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 0, None, 0, &[], None), 2);
+        assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 0, None, &[], None), 2);
 
         // 0: TTTAGC
         // 2:   TAGC
         // 6: len of text
-        assert_eq!(find_lcp::<u32>(text, 0, 2, 6, 0, None, 0, &[], None), 1);
+        assert_eq!(find_lcp::<u32>(text, 0, 2, 6, 0, None, &[], None), 1);
 
         // 0: TTTAGC
         // 1:  TTAGC
-        // 1: max query len = 1
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 1, 0, None, 0, &[], None), 1);
+        // 1: compare one byte
+        assert_eq!(find_lcp::<u32>(text, 0, 1, 1, 0, None, &[], None), 1);
 
         // 0: TTTAGC
         // 3:    AGC
         // 6: len of text
-        assert_eq!(find_lcp::<u32>(text, 0, 3, 6, 0, None, 0, &[], None), 0);
-
-        // 0: TTTTAG
-        // 1:  TTTAG
-        // skip 2 with max query len 2: nothing left to compare
-        let text = b"TTTTAG";
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 2, None, 2, &[], None), 2);
-
-        // skip 1 with max query len 3: one byte left, W == W
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 1, None, 3, &[], None), 3);
+        assert_eq!(find_lcp::<u32>(text, 0, 3, 6, 0, None, &[], None), 0);
 
         // two runs of four N with the same remaining length: the
         // match goes on past them, GA against GAT
         let text = b"NNNNGA%NNNNGAT";
         let n_ranges = [0..4, 7..11];
-        assert_eq!(
-            find_lcp::<u32>(text, 0, 7, 14, 0, None, 0, &n_ranges, None),
-            6
-        );
-        assert_eq!(
-            find_lcp::<u32>(text, 0, 7, 14, 0, None, 5, &n_ranges, None),
-            5
-        );
-        assert_eq!(
-            find_lcp::<u32>(text, 0, 7, 14, 0, None, 3, &n_ranges, None),
-            3
-        );
+        assert_eq!(find_lcp::<u32>(text, 0, 7, 14, 0, None, &n_ranges, None), 6);
         // runs of different remaining length end at the shorter
-        assert_eq!(
-            find_lcp::<u32>(text, 1, 7, 14, 0, None, 0, &n_ranges, None),
-            3
-        );
-
-        // both suffixes inside a run of four N, max query len 2
-        let text = b"NNNNA";
-        // from_ref, since clippy reads the array literal [0..4]
-        // as a typo for a range
-        assert_eq!(
-            find_lcp::<u32>(
-                text,
-                0,
-                1,
-                5,
-                0,
-                None,
-                2,
-                std::slice::from_ref(&(0..4)),
-                None
-            ),
-            2
-        );
+        assert_eq!(find_lcp::<u32>(text, 1, 7, 14, 0, None, &n_ranges, None), 3);
 
         Ok(())
     }
@@ -1469,15 +1332,15 @@ mod test {
 
         // 0: TTTTTA
         // 1:  TTTTA
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 3, 0, mask, 0, &[], None), 3);
+        assert_eq!(find_lcp::<u32>(text, 0, 1, 3, 0, mask, &[], None), 3);
 
         // 0: TTTTTA
         // 2:   TTTA
-        assert_eq!(find_lcp::<u32>(text, 0, 2, 3, 0, mask, 0, &[], None), 2);
+        assert_eq!(find_lcp::<u32>(text, 0, 2, 3, 0, mask, &[], None), 2);
 
         // 0: TTTTTA
         // 5:      A
-        assert_eq!(find_lcp::<u32>(text, 0, 5, 3, 0, mask, 0, &[], None), 0);
+        assert_eq!(find_lcp::<u32>(text, 0, 5, 3, 0, mask, &[], None), 0);
 
         Ok(())
     }

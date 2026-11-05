@@ -1,6 +1,6 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::{OpenOptions, Storage, SuffixArray, OUTFILE_VERSION};
+use libsufr::OUTFILE_VERSION;
 use pretty_assertions::assert_eq;
 use regex::Regex;
 use std::fs;
@@ -936,26 +936,6 @@ fn create_num_partitions_same_bytes() -> Result<()> {
     }
     assert!(outputs[0] == outputs[1]);
     assert!(outputs[0] == fs::read(SUFR1)?);
-    Ok(())
-}
-
-// --------------------------------------------------
-#[test]
-fn create_max_query_len() -> Result<()> {
-    let outfile = NamedTempFile::new()?;
-    let outpath = outfile.path().to_string_lossy().to_string();
-    run_stdout(&["create", "--dna", "-m", "3", "-o", &outpath, SEQ1])?;
-
-    let actual = SuffixArray::open_with(
-        &outpath,
-        &OpenOptions {
-            text: Storage::Memory,
-            suffixes: Storage::Disk,
-            max_query_len: None,
-        },
-    )?;
-    let actual_sa = actual.suffixes(0..actual.header().num_suffixes)?;
-    assert_eq!(actual_sa, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
     Ok(())
 }
 

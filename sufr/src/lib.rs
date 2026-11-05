@@ -3,7 +3,7 @@ use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
     read_queries, Alphabet, Context, Hits, OpenOptions, SeedMask, Storage, SuffixArray,
-    SuffixArrayBuilder, SuffixSortType,
+    SuffixArrayBuilder,
 };
 use log::info;
 use rayon::prelude::*;
@@ -78,10 +78,6 @@ pub struct CreateArgs {
     /// per that many
     #[arg(long, value_name = "MIB")]
     pub memory_budget: Option<usize>,
-
-    /// Max context
-    #[arg(short, long, value_name = "CONTEXT", conflicts_with = "seed_mask")]
-    pub max_query_len: Option<usize>,
 
     /// Output file
     #[arg(short, long, value_name = "OUTPUT")]
@@ -358,15 +354,8 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         builder = builder.with_memory_budget(mib << 20);
     }
 
-    match (args.max_query_len, &args.seed_mask) {
-        (Some(_), Some(_)) => bail!("Cannot use max_query_len and seed_mask together"),
-        (Some(n), None) => {
-            builder = builder.with_sort_type(SuffixSortType::MaxQueryLen(n))
-        }
-        (None, Some(mask)) => {
-            builder = builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?))
-        }
-        (None, None) => (),
+    if let Some(mask) = &args.seed_mask {
+        builder = builder.with_seed_mask(SeedMask::new(mask)?);
     }
 
     builder = builder.with_write_lcp(args.write_lcp);

@@ -28,7 +28,8 @@ pub const OUTFILE_VERSION: u8 = 6;
 //                   20  suffix_array_pos (u64)
 //                   28  lcp_pos (u64, 0 when there is no LCP array)
 //                   36  num_suffixes (u64)
-//                   44  max_query_len (u64, 0 for a seed mask)
+//                   44  max_query_len (u64, always 0; an older file with
+//                       a cap here is refused)
 //                   52  num_sequences (u64)
 //                   60  sequence starts (num_sequences values)
 //                    .  seed mask length (u64)
@@ -128,8 +129,14 @@ impl Header {
         file.read_exact(&mut buffer)?;
         let mut seed_mask = vec![0u8; u64::from_le_bytes(buffer) as usize];
         file.read_exact(&mut seed_mask)?;
+        // a file sorted by only the first characters of each suffix
+        // cannot be searched correctly by this version
+        let max_query_len = u64_at(MAX_QUERY_LEN) as usize;
+        if max_query_len > 0 {
+            bail!("{filename}: built with a max query length of {max_query_len}, which is no longer supported");
+        }
         let sort_type = if seed_mask.is_empty() {
-            SuffixSortType::MaxQueryLen(u64_at(MAX_QUERY_LEN) as usize)
+            SuffixSortType::MaxQueryLen(0)
         } else {
             SuffixSortType::Mask(SeedMask::from_bytes(&seed_mask)?)
         };
@@ -391,7 +398,7 @@ mod tests {
     fn test_header_round_trip() -> Result<()> {
         let cases = [
             (4, SuffixSortType::Mask(SeedMask::new("1101")?), true),
-            (8, SuffixSortType::MaxQueryLen(5), false),
+            (8, SuffixSortType::MaxQueryLen(0), false),
         ];
         for (int_size, sort_type, write_lcp) in cases {
             let mut header = Header {

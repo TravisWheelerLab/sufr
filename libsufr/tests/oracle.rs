@@ -20,9 +20,6 @@ struct Case {
 
     delimiter: u8,
 
-    /// Zero for no cap.
-    max_query_len: usize,
-
     mask: Option<&'static str>,
 
     /// `None` for the builder's default.
@@ -75,14 +72,9 @@ fn kept(text: &[u8], dna: Option<(bool, bool)>) -> Vec<usize> {
         .collect()
 }
 
-/// What the suffix at `p` sorts by: its first `max_query_len` bytes, or
-/// the bytes at the mask's positions that fall inside the text.
-fn key<'a>(
-    text: &'a [u8],
-    p: usize,
-    max_query_len: usize,
-    mask: Option<&[usize]>,
-) -> Cow<'a, [u8]> {
+/// What the suffix at `p` sorts by: the whole suffix, or the bytes at
+/// the mask's positions that fall inside the text.
+fn key<'a>(text: &'a [u8], p: usize, mask: Option<&[usize]>) -> Cow<'a, [u8]> {
     match mask {
         Some(positions) => positions
             .iter()
@@ -90,9 +82,6 @@ fn key<'a>(
             .take_while(|&i| i < text.len())
             .map(|i| text[i])
             .collect(),
-        None if max_query_len > 0 => {
-            Cow::Borrowed(&text[p..(p + max_query_len).min(text.len())])
-        }
         None => Cow::Borrowed(&text[p..]),
     }
 }
@@ -107,13 +96,16 @@ fn check(case: &Case) -> Result<()> {
         input,
         dna,
         delimiter,
-        max_query_len,
         mask,
         partitions,
     } = *case;
     let label = format!(
-        "{} dna={dna:?} delimiter={} max_query_len={max_query_len} mask={mask:?} partitions={partitions:?}",
-        if input.starts_with('>') { "inline" } else { input },
+        "{} dna={dna:?} delimiter={} mask={mask:?} partitions={partitions:?}",
+        if input.starts_with('>') {
+            "inline"
+        } else {
+            input
+        },
         delimiter as char
     );
     // an input starting with > is a FASTA string, not a file name
@@ -133,12 +125,7 @@ fn check(case: &Case) -> Result<()> {
         reference_text(&fs::read(&path)?, delimiter, ignore_softmask);
     let mut order = kept(&text, dna);
     order.sort_by(|&a, &b| {
-        key(&text, a, max_query_len, positions.as_deref()).cmp(&key(
-            &text,
-            b,
-            max_query_len,
-            positions.as_deref(),
-        ))
+        key(&text, a, positions.as_deref()).cmp(&key(&text, b, positions.as_deref()))
     });
 
     let alphabet = match dna {
@@ -151,9 +138,6 @@ fn check(case: &Case) -> Result<()> {
     let mut builder = SuffixArrayBuilder::from_sequence_file(&path, delimiter)?
         .with_alphabet(alphabet)
         .with_write_lcp(true);
-    if max_query_len > 0 {
-        builder = builder.with_max_query_len(max_query_len);
-    }
     if let Some(mask) = mask {
         builder = builder.with_seed_mask(mask);
     }
@@ -177,15 +161,15 @@ fn check(case: &Case) -> Result<()> {
     let lcps = built.lcps(0..n)?;
     let mut group = 0;
     for rank in 0..n {
-        let expected = key(&text, order[rank], max_query_len, positions.as_deref());
-        let actual = key(&text, suffixes[rank], max_query_len, positions.as_deref());
+        let expected = key(&text, order[rank], positions.as_deref());
+        let actual = key(&text, suffixes[rank], positions.as_deref());
         assert_eq!(actual, expected, "{label}: key at rank {rank}");
 
         let lcp = if rank == 0 {
             0
         } else {
             shared(
-                &key(&text, order[rank - 1], max_query_len, positions.as_deref()),
+                &key(&text, order[rank - 1], positions.as_deref()),
                 &expected,
             )
         };
@@ -194,8 +178,7 @@ fn check(case: &Case) -> Result<()> {
         // the order inside a run of equal keys is the merge's, so
         // a run is compared as a set of positions
         let last_of_group = rank + 1 == n
-            || key(&text, order[rank + 1], max_query_len, positions.as_deref())
-                != expected;
+            || key(&text, order[rank + 1], positions.as_deref()) != expected;
         if last_of_group {
             let mut expected: Vec<usize> = order[group..=rank].to_vec();
             let mut actual: Vec<usize> = suffixes[group..=rank].to_vec();
@@ -226,7 +209,6 @@ fn dna(input: &'static str, allow_ambiguity: bool, ignore_softmask: bool) -> Cas
         input,
         dna: Some((allow_ambiguity, ignore_softmask)),
         delimiter: b'%',
-        max_query_len: 0,
         mask: None,
         partitions: None,
     }
@@ -237,7 +219,6 @@ fn bytes(input: &'static str) -> Case {
         input,
         dna: None,
         delimiter: b'%',
-        max_query_len: 0,
         mask: None,
         partitions: None,
     }
@@ -250,14 +231,6 @@ fn table() -> Vec<Case> {
             [(false, false), (true, false), (false, true), (true, true)]
         {
             cases.push(dna(input, allow_ambiguity, ignore_softmask));
-        }
-        for max_query_len in [1, 3, 5] {
-            for allow_ambiguity in [false, true] {
-                cases.push(Case {
-                    max_query_len,
-                    ..dna(input, allow_ambiguity, false)
-                });
-            }
         }
     }
     for input in ["2", "3"] {
@@ -283,11 +256,6 @@ fn table() -> Vec<Case> {
         });
         cases.push(Case {
             partitions: Some(partitions),
-            max_query_len: 3,
-            ..dna("2", false, false)
-        });
-        cases.push(Case {
-            partitions: Some(partitions),
             mask: Some("101"),
             ..dna("2", false, false)
         });
@@ -300,19 +268,7 @@ fn table() -> Vec<Case> {
     );
     let n_runs: &'static str = Box::leak(n_runs.into_boxed_str());
     cases.push(dna(n_runs, true, false));
-    cases.push(Case {
-        max_query_len: 3,
-        ..dna(n_runs, true, false)
-    });
-    cases.push(Case {
-        max_query_len: 1500,
-        ..dna(n_runs, true, false)
-    });
     cases.push(bytes("abba"));
-    cases.push(Case {
-        max_query_len: 2,
-        ..bytes("abba")
-    });
     cases.push(bytes("uniprot"));
     cases.push(Case {
         mask: Some("10111011"),

@@ -678,7 +678,7 @@ pub(crate) fn subsample_len(header: &Header, max_query_len: Option<usize>) -> us
 mod tests {
     use super::TypedSuffixArray;
     use crate::{
-        format::{SeedMask, SuffixSortType},
+        format::SeedMask,
         source::{DiskSource, MemorySource, Source},
         Alphabet, SuffixArrayBuilder,
     };
@@ -776,7 +776,6 @@ mod tests {
     fn build(
         text: &[u8],
         seed_mask: Option<&str>,
-        max_query_len: Option<usize>,
         write_lcp: bool,
     ) -> Result<(NamedTempFile, Index)> {
         let outfile = NamedTempFile::new()?;
@@ -789,12 +788,8 @@ mod tests {
                 })
                 .with_num_partitions(3)
                 .with_write_lcp(write_lcp);
-        if let Some(n) = max_query_len {
-            builder = builder.with_sort_type(SuffixSortType::MaxQueryLen(n));
-        }
         if let Some(mask) = seed_mask {
-            builder =
-                builder.with_sort_type(SuffixSortType::Mask(SeedMask::new(mask)?));
+            builder = builder.with_seed_mask(SeedMask::new(mask)?);
         }
         builder.build_to_file(&outpath)?;
         let index = Index::open(&outpath, None, false)?;
@@ -846,8 +841,8 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         for mql in [1, 2, 4, 7, 10] {
-            let (_f1, with_lcp) = build(&text, Some(mask), None, true)?;
-            let (_f2, without_lcp) = build(&text, Some(mask), None, false)?;
+            let (_f1, with_lcp) = build(&text, Some(mask), true)?;
+            let (_f2, without_lcp) = build(&text, Some(mask), false)?;
             assert!(with_lcp.lcps.is_some());
             assert!(without_lcp.lcps.is_none());
             let sa = without_lcp
@@ -858,22 +853,6 @@ mod tests {
             assert_eq!(from_text, expected, "mask, mql={mql}, vs definition");
             let from_lcp = with_lcp.subsample(mql)?.pair();
             assert_eq!(from_text, from_lcp, "mask, mql={mql}, vs LCP array");
-        }
-
-        // Max-query-len index, query-time MQL shorter than the build-time one
-        let built_mql = 12;
-        let offsets: Vec<usize> = (0..built_mql).collect();
-        for mql in [1, 3, 6, 11] {
-            let (_f1, with_lcp) = build(&text, None, Some(built_mql), true)?;
-            let (_f2, without_lcp) = build(&text, None, Some(built_mql), false)?;
-            let sa = without_lcp
-                .suffixes
-                .range(0..without_lcp.header.num_suffixes)?;
-            let expected = expected_subsample(&text, &sa, &offsets, mql);
-            let from_text = without_lcp.subsample(mql)?.pair();
-            assert_eq!(from_text, expected, "mql index, mql={mql}, vs definition");
-            let from_lcp = with_lcp.subsample(mql)?.pair();
-            assert_eq!(from_text, from_lcp, "mql index, mql={mql}, vs LCP array");
         }
         Ok(())
     }
