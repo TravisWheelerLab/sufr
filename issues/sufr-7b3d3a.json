@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T04:51:22.593137006Z",
-  "updated_at": "2026-11-05T06:39:24.968768066Z",
+  "updated_at": "2026-11-05T06:39:29.809800591Z",
   "closed_at": "2026-11-05T06:39:24.968768066Z",
   "close_reason": "Superseded: the count-then-place design replaces Scratch rather than reshaping it; see the construction issue created today",
   "resolution": "dropped",
-  "notes": [],
+  "notes": [
+    {
+      "id": "9a188b7a",
+      "at": "2026-11-05T06:39:29.809800051Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Superseded by sufr-1b6e52.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "80d74c0",
