@@ -8,7 +8,8 @@ use std::cmp::min;
 /// Given two indices i and j, with an LCP of l at that position,
 /// the LCP of i+1 and j+1 is l-1, of i+2 and j+2 is l-2, and so on.
 /// This structure caches LCP values using the difference between i and j
-/// as a key, so that LCP values can be reused.
+/// and the block of the smaller of them as a key, so that LCP values can
+/// be reused.
 pub struct LcpCache {
     // (2^CACHE_BITS) entries
     // (distance between two starts, smaller start value, lcp)
@@ -33,10 +34,18 @@ impl LcpCache {
     const CACHE_BITS: usize = 16;
     const CACHE_SIZE: usize = 1 << Self::CACHE_BITS;
 
-    fn idx(d: usize) -> usize {
+    /// The positions sharing a slot for one distance: 64 KiB.
+    const BLOCK_BITS: usize = 16;
+
+    // keyed by the distance alone, one slot served every copy of a
+    // repeat at that distance, and an entry covers only the copy it
+    // was made in, so ten copies of a unit thrashed the slot and
+    // nearly every comparison between copies walked the whole copy:
+    // 16 million walks of a million characters on 10 MiB
+    fn idx(d: usize, first: usize) -> usize {
         // Fibonacci hash for 64-bit integers
-        ((d as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - Self::CACHE_BITS))
-            as usize
+        let key = (d as u64) ^ ((first >> Self::BLOCK_BITS) as u64).rotate_left(32);
+        (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - Self::CACHE_BITS)) as usize
     }
 
     /// Adds the LCP of i,j to the cache for later lookup.
@@ -45,7 +54,7 @@ impl LcpCache {
     pub fn set(&mut self, i: usize, j: usize, lcp: usize) {
         let first = i.min(j);
         let d = i.abs_diff(j);
-        let idx = Self::idx(d);
+        let idx = Self::idx(d, first);
         let loc = &mut self.cache[idx];
 
         // Eviction conditions:
@@ -62,7 +71,7 @@ impl LcpCache {
     pub fn get(&self, i: usize, j: usize) -> Option<usize> {
         let first = i.min(j);
         let d = i.abs_diff(j);
-        let idx = Self::idx(d);
+        let idx = Self::idx(d, first);
         let (loc_d, loc_start, loc_lcp) = self.cache[idx];
         if d == loc_d && first >= loc_start && first <= loc_start + loc_lcp {
             Some(loc_lcp - (first - loc_start))
