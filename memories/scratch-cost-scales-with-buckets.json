@@ -1,0 +1,10 @@
+{
+  "slug": "scratch-cost-scales-with-buckets",
+  "text": "On dna-10.fa, 6 distinct bytes, 4 threads, medians of 5: the occupancy-ranked encoder with a 32768 budget makes the same 7776 buckets as the nucleic table at 80d74c0, and partition (23 ms), sort (376 ms) and peak RSS (65 MiB) match it. With the 65536 budget it makes 46656 buckets: partition 48 ms, sort 336 ms, wall 0.40 s against 0.42, RSS 107 MiB. The per-bucket Vecs in Scratch cost the memory and the partition time, not the encode loop. Measured 2026-11-05.",
+  "created_at": "2026-11-05T06:05:37.746414932Z",
+  "updated_at": "2026-11-05T06:05:37.746414932Z",
+  "stamp": {
+    "commit": "80d74c0",
+    "branch": "construction"
+  }
+}
