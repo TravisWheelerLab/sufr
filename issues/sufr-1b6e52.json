@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T06:39:24.960142016Z",
-  "updated_at": "2026-11-05T10:19:12.121257129Z",
+  "updated_at": "2026-11-05T11:27:25.06018501Z",
   "closed_at": "2026-11-05T10:19:12.121257129Z",
   "close_reason": "Landed as 01aa478 (count, turns, no scratch), 159f5a2 (64-bit key sort) and 276640b (LCP cache keyed by distance and block) on construction. The boards are in the notes above.",
   "resolution": "done",
@@ -64,6 +64,14 @@
       "author": "Jack Roddy/22668672",
       "text": "The long-repeats blowup was the LCP cache, not the sort. Instrumented on `long-repeats-10.fa`: 16 million comparisons each walking about a million characters, 15.9 trillion characters in all, 11 million cache hits against 3 billion probes, the same on the whole-partition merge and on the key sort, and `origin/dev` did not finish the 100 MiB fixture in 13 minutes either. The cache had one slot per distance, and an entry covers only the copy it was made in, so ten copies of a unit thrashed the slot.\n\n`LcpCache::idx` now keys a slot by the distance and the 64 KiB block of the smaller position. 8 threads, one run each, every output identical:\n\n| fixture | whole-partition merge, before → after | key sort, before → after |\n|---|---|---|\n| long-repeats-10.fa | 11.6 s → 3.7 s | 27.7 s → 0.22 s |\n| long-repeats-100.fa | over 15 min → 77 s | over 9 min → 3.2 s |\n| dna-1024.fa | | 8.75 s → 9.1 s |\n\nThe key sort beats the whole-partition merge on repeats once the cache works, because it makes a third as many LCP calls. An entry could still be extended backward to the start of its copy for one walk per block instead of about a dozen; not done.",
       "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "806e17fb",
+      "at": "2026-11-05T11:27:25.06018396Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Paper table rerun on catalyst (memory `catalyst-sufr-benchmarks`), 32 threads, 2000 partitions, no cap, no --dna, sufr at 276640b, outputs verified byte for byte against the old build's:\n\n| input | sufr | libsais | pdivsufsort | CaPS-SA | divsufsort |\n|---|---|---|---|---|---|\n| hg38noN, 3110 MB | 44.1 s, 9.7 GB | 80.3 s, 26.8 GB | 106.3 s | 122.5 s | 384.2 s |\n| hs1, 3180 MB | 49.1 s, 9.5 GB | 79.9 s, 27.4 GB | 113.7 s | 120.1 s | 372.8 s |\n| hg38 with N, 3273 MB | 98.6 s, 12.0 GB | 79.6 s, 28.2 GB | 108.7 s | | 364.4 s |\n| uniprot_sprot, 288 MB | 2.1 s, 0.8 GB | 4.2 s, 1.8 GB | 8.3 s | | 13.4 s |\n\nThe paper's sufr: 113.7, 115.0, 129.5 and 5.2 s. Against branch spaced-seed-radix-rebased on dna-1024.fa, 8 threads: its radix sort takes 13.7 s at a cap of 12 and 15.7 s at 21; this build takes 8.8 s uncapped and 8.6 s at 21, with identical output at each cap, and 19.0 s at a cap of 12 (sufr-cap-path).",
+      "commit": "276640b",
       "branch": "construction"
     }
   ],
