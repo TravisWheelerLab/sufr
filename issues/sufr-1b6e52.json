@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-05T06:54:29.800770025Z",
   "defer_until": null,
   "created_at": "2026-11-05T06:39:24.960142016Z",
-  "updated_at": "2026-11-05T08:06:17.535345973Z",
+  "updated_at": "2026-11-05T08:19:40.522709063Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -31,6 +31,14 @@
       "at": "2026-11-05T08:06:17.535345313Z",
       "author": "Jack Roddy/22668672",
       "text": "Second board, after the scratch file went. `/tmp` is tmpfs here, so every earlier \"disk\" number was RAM (memory `tmp-is-tmpfs`).\n\n| build | before sort | sort | wall | peak RSS |\n|---|---|---|---|---|\n| temp file in tmpfs, buckets stored | place 1.9 s | 44.5 s | 48.0 s | 1507 MiB |\n| suffixes waiting in the output file's own slots, 512 KiB chunks | place 10.6 s | 45.1 s | 58.4 s | 1364 MiB |\n| same, 4 MiB chunks | place 4.3 s | 46.5 s | 53.1 s | 1590 MiB |\n| no scratch: one scan per turn of partitions under a 1 GiB budget | 7 scans, 5.3 s | 44.7 s | 51.5 s | 2413 MiB |\n\nThe in-place slots pay btrfs for millions of small positioned writes. The turns design writes nothing before the sorted arrays and reads nothing back; its cost is one scan of the text per turn, 0.6 to 1.0 s each here, and its peak memory is the text plus the budget plus the sort's working arrays. `with_memory_budget` on the builder sets the budget, default 1 GiB; a smaller budget means more scans.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "64f8b5db",
+      "at": "2026-11-05T08:19:40.522708263Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Budget sweep on `benchmarks/runs/dna-1024.fa`, 8 threads, one run each, `create --dna --memory-budget`, every output identical:\n\n| budget MiB | turns | scans s | sort s | wall s | peak RSS MiB |\n|---|---|---|---|---|---|\n| 100 | 64 | 38.6 | 48.2 | 88.5 | 1335 |\n| 200 | 32 | 19.9 | 48.3 | 69.7 | 1579 |\n| 400 | 16 | 10.7 | 47.2 | 59.5 | 1772 |\n| 800 | 8 | 6.1 | 46.8 | 54.4 | 2154 |\n| 1600 | 4 | 3.9 | 47.0 | 52.5 | 2957 |\n| 3200 | 2 | 2.5 | 47.6 | 51.7 | 4404 |\n| 6400 | 1 | 1.2 | 44.9 | 47.5 | 7426 |\n\nA scan costs 0.6 s whatever the budget, so the scan total is 0.6 s times the number of turns. The sort total barely moves. Peak RSS is the 1 GiB text plus the budget plus about 250 MiB of working arrays.",
       "commit": "80d74c0",
       "branch": "construction"
     }
