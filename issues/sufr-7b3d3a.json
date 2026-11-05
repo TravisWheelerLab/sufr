@@ -1,0 +1,28 @@
+{
+  "id": "sufr-7b3d3a",
+  "title": "Scratch is one struct instead of an enum over DiskScratch and a Vec",
+  "body": "`Scratch<W>` in `libsufr/src/build/scratch.rs` is the build's staging for the unsorted buckets and the sorted partitions, in memory or in a temp file by `ScratchKind`. It is the enum from before `sufr-cad4f6`, put back by 80d74c0 after the `Buffer` trait was split into `Source` and this.\n\n- `Scratch` is an enum that forwards `extend_from_slice`, `flush`, `count` and `consume` to `DiskScratch` or to a `Vec`, and `DiskScratch` holds its own `Vec` as the pending tail.\n- `DiskScratch::open` creates the temp file with `NamedTempFile::new` then `keep`, so the path is a `PathBuf` removed by hand in `consume` and again in `Drop`.\n- `read` returns a `Cow` that `consume` turns into a `Vec` either way, copying the tail where a move would do, and sizes the read from the file's metadata when `count` is known.\n\n## Proposal\n\nOne struct: a `Vec` of pending values, an `Option<TempPath>` created at the first flush and removed on drop, the count written, and the kind. The memory kind never flushes. `consume` reads `count` values from the file and moves the tail in. The lazy creation stays: a DNA build has up to 32768 buckets, most empty, and creating a file per bucket up front cost 15% of a build when `sufr-cad4f6` tried it.\n\n## Cost\n\n`partition` and `sort_partition` are hot loops, so the build goes on the board before and after.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T04:51:22.593137006Z",
+  "updated_at": "2026-11-05T04:51:22.593137006Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "80d74c0",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
