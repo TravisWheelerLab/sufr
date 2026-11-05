@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T21:44:46.349840224Z",
-  "updated_at": "2026-11-05T21:44:46.349840224Z",
+  "updated_at": "2026-11-05T21:58:04.532407138Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "bdeb42f5",
+      "at": "2026-11-05T21:58:04.532406328Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "Kept open by Jack on 2026-11-05. A query length cap is a first-class feature and the benchmark suite has no row with one, so the suite's four rows do not measure the case this and the floor in sufr-1422ef are for. On dna-100.fa with --dna -m 20 the floor alone took the build from 1.21 to 1.15 s. The working tree is back at 8a05eb2; both patches are under tmp-claude/2026-11-05-construct-refactor/.",
+      "commit": "8a05eb2",
+      "branch": "construction"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "8a05eb2",
