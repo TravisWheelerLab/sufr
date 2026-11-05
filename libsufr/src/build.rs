@@ -616,25 +616,51 @@ fn read_sequence_file(path: &Path, sequence_delimiter: u8) -> Result<SequenceFil
 
 /// Find the runs of at least 1000 `N`s in `text`.
 fn find_n_ranges(text: &[u8]) -> Vec<Range<usize>> {
-    let mut n_ranges: Vec<Range<usize>> = vec![];
-    let mut n_start: Option<usize> = None;
-    let min_n = 1000;
     let now = Instant::now();
-    for (i, &byte) in text.iter().enumerate() {
-        if byte == b'N' {
-            if n_start.is_none() {
-                n_start = Some(i);
-            }
-        } else {
-            if let Some(prev) = n_start {
-                if i - prev >= min_n {
-                    n_ranges.push(prev..i);
+    let min_n = 1000;
+    let mut n_ranges = text
+        .par_chunks(CHUNK_SIZE)
+        .enumerate()
+        .map(|(c, chunk)| {
+            let offset = c * CHUNK_SIZE;
+
+            // a run that touches an end of the chunk is kept
+            // whatever its length, since the chunk next to it
+            // may continue the run
+            let mut runs: Vec<Range<usize>> = vec![];
+            let mut i = 0;
+            while i < chunk.len() {
+                if chunk[i] != b'N' {
+                    i += 1;
+                    continue;
+                }
+                let start = i;
+                while i < chunk.len() && chunk[i] == b'N' {
+                    i += 1;
+                }
+                if i - start >= min_n || start == 0 || i == chunk.len() {
+                    runs.push(offset + start..offset + i);
                 }
             }
-            n_start = None;
-        }
-    }
-    info!("Scanned for runs of Ns in {:?}", now.elapsed());
+            runs
+        })
+        .reduce(Vec::new, |mut runs, more| {
+            let mut more = more.into_iter().peekable();
+            if let (Some(last), Some(first)) = (runs.last_mut(), more.peek()) {
+                if last.end == first.start {
+                    last.end = first.end;
+                    more.next();
+                }
+            }
+            runs.extend(more);
+            runs
+        });
+    n_ranges.retain(|run| run.len() >= min_n);
+    info!(
+        "Scanned for runs of Ns, found {}, in {:?}",
+        n_ranges.len(),
+        now.elapsed()
+    );
     n_ranges
 }
 
