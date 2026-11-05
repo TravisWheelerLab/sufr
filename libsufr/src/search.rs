@@ -1,9 +1,9 @@
 //! Search a suffix array
 
 use crate::{
-    buffer::Buffer,
     io::Int,
     lcp::{lcp, mask_offset, masked_lcp},
+    source::Source,
     typed::TypedSuffixArray,
     SuffixArray,
 };
@@ -142,7 +142,7 @@ struct Comparison {
     lcp: usize,
 }
 
-impl<W: Int, T: Buffer<u8>, S: Buffer<W>> TypedSuffixArray<W, T, S> {
+impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     /// The ranks of the suffixes matching `query`, empty when none match.
     pub(crate) fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>> {
         let n = self.num_searched();

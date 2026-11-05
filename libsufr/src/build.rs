@@ -1,9 +1,9 @@
 mod partition;
+mod scratch;
 mod sort;
 mod write;
 
 use crate::{
-    buffer::{Buffer, Disk, Memory},
     format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION},
     io::Int,
 };
@@ -11,6 +11,7 @@ use anyhow::Result;
 use log::info;
 use needletail::parse_fastx_file;
 use partition::{group_buffers, partition, PrefixEncoder};
+use scratch::ScratchKind;
 use sort::{first_lcps, sort_partitions};
 use std::{mem, ops::Range, path::Path, time::Instant};
 use write::write;
@@ -163,18 +164,21 @@ impl SuffixArrayBuilder {
     pub fn build_to_file(self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
-        match (fits_u32, self.memory_scratch) {
-            (true, true) => self.construct::<u32, Memory<u32>>(path),
-            (true, false) => self.construct::<u32, Disk<u32>>(path),
-            (false, true) => self.construct::<u64, Memory<u64>>(path),
-            (false, false) => self.construct::<u64, Disk<u64>>(path),
+        if fits_u32 {
+            self.construct::<u32>(path)
+        } else {
+            self.construct::<u64>(path)
         }
     }
 
     /// Build the suffix array of the text with `W` per suffix and LCP and
-    /// the unsorted and sorted suffixes held in `S`, and write it to
-    /// `path`.
-    fn construct<W: Int, S: Buffer<W>>(self, path: &Path) -> Result<()> {
+    /// write it to `path`.
+    fn construct<W: Int>(self, path: &Path) -> Result<()> {
+        let scratch = if self.memory_scratch {
+            ScratchKind::Memory
+        } else {
+            ScratchKind::Disk
+        };
         let mut text = self.text;
         let occupancy = normalize(&mut text, &self.alphabet);
         let keep = keep_table(&self.alphabet);
@@ -188,7 +192,7 @@ impl SuffixArrayBuilder {
         let encoder = PrefixEncoder::from_occupancy(occupancy);
         let mask = self.seed_mask.as_ref();
 
-        let partitioned = partition::<W, S>(&text, &encoder, &keep, mask)?;
+        let partitioned = partition::<W>(&text, &encoder, &keep, mask, scratch)?;
         let header = header(
             &self.alphabet,
             &self.sequences,
@@ -207,6 +211,7 @@ impl SuffixArrayBuilder {
             self.max_query_len,
             &n_ranges,
             self.write_lcp,
+            scratch,
         )?;
         let first_lcps = if self.write_lcp {
             first_lcps(&text, &partitions, mask, self.max_query_len, &n_ranges)

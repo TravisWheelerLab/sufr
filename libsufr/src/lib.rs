@@ -18,12 +18,12 @@
 //! * Jack Roddy <jroddy@arizona.edu>
 //! * Travis Wheeler <twheeler@arizona.edu>
 
-mod buffer;
 mod build;
 mod format;
 mod io;
 mod lcp;
 mod search;
+mod source;
 mod typed;
 
 pub use build::{Alphabet, SuffixArrayBuilder};
@@ -33,10 +33,10 @@ pub use typed::{Metadata, Storage};
 
 #[cfg(feature = "typed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
-pub use buffer::{Buffer, Disk, Memory};
+pub use io::Int;
 #[cfg(feature = "typed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
-pub use io::Int;
+pub use source::{DiskSource, MemorySource, Source};
 #[cfg(feature = "typed")]
 #[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
 pub use typed::TypedSuffixArray;
@@ -179,7 +179,7 @@ impl SuffixArray {
 #[cfg(test)]
 mod tests {
     use super::{
-        buffer::{Disk, Memory},
+        source::{DiskSource, MemorySource},
         typed::TypedSuffixArray,
         Alphabet, Hits, SeedMask, SuffixArray, SuffixArrayBuilder, SuffixSortType,
         OUTFILE_VERSION,
@@ -204,7 +204,7 @@ mod tests {
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
             &outpath, None, false,
         )?;
         assert_eq!(index.header.version, OUTFILE_VERSION);
@@ -241,7 +241,7 @@ mod tests {
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index = TypedSuffixArray::<u64, Memory<u8>, Disk<u64>>::open(
+        let index = TypedSuffixArray::<u64, MemorySource<u8>, DiskSource<u64>>::open(
             &outpath, None, false,
         )?;
         assert_eq!(index.header.version, OUTFILE_VERSION);
@@ -275,7 +275,7 @@ mod tests {
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
             &outpath, None, false,
         )?;
         assert_eq!(index.header.num_suffixes, 364);
@@ -356,7 +356,7 @@ mod tests {
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
             &outpath, None, false,
         )?;
         assert_eq!(index.header.num_suffixes, 8);
@@ -402,7 +402,7 @@ mod tests {
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
             &outpath, None, false,
         )?;
         assert_eq!(index.header.num_suffixes, 17);
@@ -433,7 +433,7 @@ mod tests {
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index = TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
             &outpath, None, false,
         )?;
         assert_eq!(index.header.num_suffixes, 43);

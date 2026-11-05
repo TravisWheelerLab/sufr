@@ -1,10 +1,10 @@
 //! A _.sufr_ file opened for queries
 
 use crate::{
-    buffer::{Buffer, Disk, Memory},
     format::{read_text_length, Header, SeedMask, SuffixSortType},
     io::{as_bytes, as_bytes_mut, Int},
     search::{Context, Extraction, Location},
+    source::{DiskSource, MemorySource, Source},
     OpenOptions,
 };
 use anyhow::{anyhow, bail, Result};
@@ -133,7 +133,7 @@ impl Metadata {
 /// A _.sufr_ file opened for queries, with its text in `T` and its
 /// suffix array in `S`.
 #[derive(Debug)]
-pub struct TypedSuffixArray<W: Int, T: Buffer<u8>, S: Buffer<W>> {
+pub struct TypedSuffixArray<W: Int, T: Source<u8>, S: Source<W>> {
     /// The _.sufr_ filename.
     pub(crate) filename: String,
 
@@ -147,7 +147,7 @@ pub struct TypedSuffixArray<W: Int, T: Buffer<u8>, S: Buffer<W>> {
     /// The LCP array, if the file has one.
     //
     // always on disk: no search reads it, and no mode loads it
-    pub(crate) lcps: Option<Disk<W>>,
+    pub(crate) lcps: Option<DiskSource<W>>,
 
     /// The suffixes a search runs over instead of the whole array, when
     /// `max_query_len` is shorter than the sort.
@@ -175,7 +175,7 @@ impl<W: Int> Subsample<W> {
     }
 }
 
-impl<W: Int, T: Buffer<u8>, S: Buffer<W>> TypedSuffixArray<W, T, S> {
+impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     /// Open a _.sufr_ file whose arrays hold `W` values, with its text in
     /// `T` and its suffix array in `S`. `max_query_len` limits how many
     /// characters of a query are compared. With `subsample`, the first
@@ -193,7 +193,7 @@ impl<W: Int, T: Buffer<u8>, S: Buffer<W>> TypedSuffixArray<W, T, S> {
             S::open(path, header.suffix_array_pos as u64, header.num_suffixes)?;
         let lcps = match header.lcp_pos {
             Some(lcp_pos) => {
-                Some(Disk::open(path, lcp_pos as u64, header.num_suffixes)?)
+                Some(DiskSource::open(path, lcp_pos as u64, header.num_suffixes)?)
             }
             None => None,
         };
@@ -525,7 +525,7 @@ pub(crate) trait Queryable: Debug + Send + Sync {
     ) -> Result<Vec<Extraction<'_>>>;
 }
 
-impl<W: Int, T: Buffer<u8>, S: Buffer<W>> Queryable for TypedSuffixArray<W, T, S> {
+impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S> {
     fn header(&self) -> &Header {
         &self.header
     }
@@ -582,38 +582,46 @@ pub(crate) fn open(
     let suffixes = if subsample { D } else { options.suffixes };
 
     let inner: Box<dyn Queryable> = match (wide, options.text, suffixes) {
-        (false, D, D) => Box::new(TypedSuffixArray::<u32, Disk<u8>, Disk<u32>>::open(
-            filename, cap, subsample,
-        )?),
-        (false, M, D) => {
-            Box::new(TypedSuffixArray::<u32, Memory<u8>, Disk<u32>>::open(
-                filename, cap, subsample,
-            )?)
-        }
-        (false, D, M) => {
-            Box::new(TypedSuffixArray::<u32, Disk<u8>, Memory<u32>>::open(
-                filename, cap, subsample,
-            )?)
-        }
-        (false, M, M) => {
-            Box::new(TypedSuffixArray::<u32, Memory<u8>, Memory<u32>>::open(
-                filename, cap, subsample,
-            )?)
-        }
-        (true, D, D) => Box::new(TypedSuffixArray::<u64, Disk<u8>, Disk<u64>>::open(
-            filename, cap, subsample,
-        )?),
-        (true, M, D) => Box::new(TypedSuffixArray::<u64, Memory<u8>, Disk<u64>>::open(
-            filename, cap, subsample,
-        )?),
-        (true, D, M) => Box::new(TypedSuffixArray::<u64, Disk<u8>, Memory<u64>>::open(
-            filename, cap, subsample,
-        )?),
-        (true, M, M) => {
-            Box::new(TypedSuffixArray::<u64, Memory<u8>, Memory<u64>>::open(
-                filename, cap, subsample,
-            )?)
-        }
+        (false, D, D) => Box::new(TypedSuffixArray::<
+            u32,
+            DiskSource<u8>,
+            DiskSource<u32>,
+        >::open(filename, cap, subsample)?),
+        (false, M, D) => Box::new(TypedSuffixArray::<
+            u32,
+            MemorySource<u8>,
+            DiskSource<u32>,
+        >::open(filename, cap, subsample)?),
+        (false, D, M) => Box::new(TypedSuffixArray::<
+            u32,
+            DiskSource<u8>,
+            MemorySource<u32>,
+        >::open(filename, cap, subsample)?),
+        (false, M, M) => Box::new(TypedSuffixArray::<
+            u32,
+            MemorySource<u8>,
+            MemorySource<u32>,
+        >::open(filename, cap, subsample)?),
+        (true, D, D) => Box::new(TypedSuffixArray::<
+            u64,
+            DiskSource<u8>,
+            DiskSource<u64>,
+        >::open(filename, cap, subsample)?),
+        (true, M, D) => Box::new(TypedSuffixArray::<
+            u64,
+            MemorySource<u8>,
+            DiskSource<u64>,
+        >::open(filename, cap, subsample)?),
+        (true, D, M) => Box::new(TypedSuffixArray::<
+            u64,
+            DiskSource<u8>,
+            MemorySource<u64>,
+        >::open(filename, cap, subsample)?),
+        (true, M, M) => Box::new(TypedSuffixArray::<
+            u64,
+            MemorySource<u8>,
+            MemorySource<u64>,
+        >::open(filename, cap, subsample)?),
     };
     Ok(inner)
 }
@@ -670,21 +678,22 @@ pub(crate) fn subsample_len(header: &Header, max_query_len: Option<usize>) -> us
 mod tests {
     use super::TypedSuffixArray;
     use crate::{
-        buffer::{Buffer, Disk, Memory},
         format::{SeedMask, SuffixSortType},
+        source::{DiskSource, MemorySource, Source},
         Alphabet, SuffixArrayBuilder,
     };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use tempfile::NamedTempFile;
 
-    type Index = TypedSuffixArray<u32, Memory<u8>, Disk<u32>>;
+    type Index = TypedSuffixArray<u32, MemorySource<u8>, DiskSource<u32>>;
 
     #[test]
     fn test_text_byte() -> Result<()> {
         let file = "../data/inputs/1.sufr";
-        let on_disk =
-            TypedSuffixArray::<u32, Disk<u8>, Disk<u32>>::open(file, None, false)?;
+        let on_disk = TypedSuffixArray::<u32, DiskSource<u8>, DiskSource<u32>>::open(
+            file, None, false,
+        )?;
         let in_memory = Index::open(file, None, false)?;
         let text_len = on_disk.header.text_len;
         assert_eq!(on_disk.text_byte(text_len - 1)?, Some(b'$'));
@@ -697,8 +706,9 @@ mod tests {
     #[test]
     fn test_text_range() -> Result<()> {
         let file = "../data/inputs/1.sufr";
-        let on_disk =
-            TypedSuffixArray::<u32, Disk<u8>, Disk<u32>>::open(file, None, false)?;
+        let on_disk = TypedSuffixArray::<u32, DiskSource<u8>, DiskSource<u32>>::open(
+            file, None, false,
+        )?;
         let in_memory = Index::open(file, None, false)?;
         assert_eq!(on_disk.text(0..5)?, b"ACGTN");
         assert_eq!(in_memory.text(0..5)?, b"ACGTN");
@@ -712,11 +722,12 @@ mod tests {
     fn test_subsample_at_the_sort_length_is_the_whole_array() -> Result<()> {
         let file = "../data/inputs/1.sufr";
         for max_query_len in [None, Some(0), Some(11), Some(20)] {
-            let index = TypedSuffixArray::<u32, Memory<u8>, Memory<u32>>::open(
-                file,
-                max_query_len,
-                true,
-            )?;
+            let index =
+                TypedSuffixArray::<u32, MemorySource<u8>, MemorySource<u32>>::open(
+                    file,
+                    max_query_len,
+                    true,
+                )?;
             let subsample = index.subsample.as_ref().unwrap();
             assert_eq!(subsample.suffixes, index.suffixes.0);
             assert_eq!(subsample.ranks, (0..9).collect::<Vec<u32>>());

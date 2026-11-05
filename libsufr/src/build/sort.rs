@@ -1,6 +1,8 @@
-use super::partition::Partition;
+use super::{
+    partition::Partition,
+    scratch::{Scratch, ScratchKind},
+};
 use crate::{
-    buffer::Buffer,
     format::SeedMask,
     io::Int,
     lcp::{mask_offset, masked_lcp, suffix_lcp, LcpCache},
@@ -19,17 +21,18 @@ use thread_local::ThreadLocal;
 
 /// Sort the suffixes of each group of buffers into one partition, in
 /// order, dropping the groups that hold none.
-pub(super) fn sort_partitions<W: Int, S: Buffer<W>>(
+pub(super) fn sort_partitions<W: Int>(
     text: &[u8],
-    groups: Vec<Vec<S>>,
+    groups: Vec<Vec<Scratch<W>>>,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
     write_lcp: bool,
-) -> Result<Vec<Partition<S>>> {
+    kind: ScratchKind,
+) -> Result<Vec<Partition<W>>> {
     let num_partitions = groups.len();
     let total_sort_time = Instant::now();
-    let mut partitions: Vec<Option<Partition<S>>> =
+    let mut partitions: Vec<Option<Partition<W>>> =
         (0..num_partitions).map(|_| None).collect();
 
     let lcp_cache: ThreadLocal<RefCell<LcpCache>> = ThreadLocal::new();
@@ -46,6 +49,7 @@ pub(super) fn sort_partitions<W: Int, S: Buffer<W>>(
                 max_query_len,
                 n_ranges,
                 write_lcp,
+                kind,
                 &lcp_cache,
             )?;
             Ok(())
@@ -68,23 +72,21 @@ pub(super) fn sort_partitions<W: Int, S: Buffer<W>>(
 /// Sort the suffixes in `buffers` into the partition at `order`, or
 /// `None` when there are none.
 #[allow(clippy::too_many_arguments)]
-fn sort_partition<W: Int, S: Buffer<W>>(
+fn sort_partition<W: Int>(
     text: &[u8],
     order: usize,
-    buffers: Vec<S>,
+    buffers: Vec<Scratch<W>>,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
     write_lcp: bool,
+    kind: ScratchKind,
     lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
-) -> Result<Option<Partition<S>>> {
+) -> Result<Option<Partition<W>>> {
     let mut part_sa = vec![];
-    for buffer in &buffers {
-        part_sa.extend_from_slice(&buffer.range(0..buffer.len())?);
+    for buffer in buffers {
+        part_sa.extend_from_slice(&buffer.consume()?);
     }
-
-    // frees the memory, or the temp files, of the input
-    drop(buffers);
 
     let len = part_sa.len();
     if len == 0 {
@@ -110,10 +112,10 @@ fn sort_partition<W: Int, S: Buffer<W>>(
         lcp_cache,
     );
 
-    let mut sa_buffer = S::empty()?;
+    let mut sa_buffer = Scratch::new(kind);
     sa_buffer.extend_from_slice(&part_sa)?;
     let lcp_buffer = if write_lcp {
-        let mut lcp_buffer = S::empty()?;
+        let mut lcp_buffer = Scratch::new(kind);
         lcp_buffer.extend_from_slice(&lcp)?;
         Some(lcp_buffer)
     } else {
@@ -378,9 +380,9 @@ fn merge<W: Int>(
 
 /// The LCP of each partition's first suffix with the last suffix of the
 /// partition before it, or `None` for the first partition.
-pub(super) fn first_lcps<W: Int, S: Buffer<W>>(
+pub(super) fn first_lcps<W: Int>(
     text: &[u8],
-    partitions: &[Partition<S>],
+    partitions: &[Partition<W>],
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
