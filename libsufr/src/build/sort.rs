@@ -1,10 +1,7 @@
-use super::{
-    partition::Partition,
-    scratch::{Scratch, ScratchKind},
-};
+use super::partition::{counting_sort, Layout};
 use crate::{
-    format::SeedMask,
-    io::Int,
+    format::{Header, SeedMask},
+    io::{as_bytes, write_all_at, Int},
     lcp::{mask_offset, masked_lcp, suffix_lcp, LcpCache},
 };
 use anyhow::Result;
@@ -13,123 +10,94 @@ use rayon::prelude::*;
 use std::{
     cell::RefCell,
     cmp::{max, min, Ordering},
+    fs::File,
     mem,
     ops::Range,
     time::Instant,
 };
 use thread_local::ThreadLocal;
 
-/// Sort the suffixes of each group of buffers into one partition, in
-/// order, dropping the groups that hold none.
+/// The first and last suffix of a sorted partition.
+pub(super) struct Partition {
+    pub(super) first_suffix: usize,
+    pub(super) last_suffix: usize,
+}
+
+/// Sort the `gathered` suffixes of each partition from `first`, writing
+/// each with its LCPs to `file` where `header` puts them.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn sort_partitions<W: Int>(
     text: &[u8],
-    groups: Vec<Vec<Scratch<W>>>,
+    layout: &Layout,
+    first: usize,
+    gathered: Vec<(Vec<W>, Vec<u16>)>,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
-    write_lcp: bool,
-    kind: ScratchKind,
-) -> Result<Vec<Partition<W>>> {
-    let num_partitions = groups.len();
-    let total_sort_time = Instant::now();
-    let mut partitions: Vec<Option<Partition<W>>> =
-        (0..num_partitions).map(|_| None).collect();
-
+    file: &File,
+    header: &Header,
+) -> Result<Vec<Partition>> {
+    let now = Instant::now();
+    let count = gathered.len();
     let lcp_cache: ThreadLocal<RefCell<LcpCache>> = ThreadLocal::new();
-    partitions
-        .par_iter_mut()
-        .zip(groups)
+    let partitions = gathered
+        .into_par_iter()
         .enumerate()
-        .try_for_each(|(order, (partition, buffers))| -> Result<()> {
-            *partition = sort_partition(
+        .map(|(i, (sa, bucket_of))| -> Result<Partition> {
+            let range = &layout.ranges[first + i];
+            let buckets = &layout.buckets[first + i];
+
+            // the merge sort does less work from runs that share
+            // a prefix: on 1 GiB of DNA, a partition in bucket
+            // order sorted in 48.7 s against 54.8 s in the order
+            // the chunks placed it
+            let (mut sa, _) = counting_sort(&sa, buckets.len(), |i| {
+                bucket_of[i] as usize - buckets.start
+            });
+            drop(bucket_of);
+
+            let len = sa.len();
+            let mut sa_w = sa.clone();
+            let mut lcp = vec![W::default(); len];
+            let mut lcp_w = vec![W::default(); len];
+            merge_sort(
                 text,
-                order,
-                buffers,
+                Arrays {
+                    sa: &mut sa_w,
+                    lcp: &mut lcp_w,
+                },
+                Arrays {
+                    sa: &mut sa,
+                    lcp: &mut lcp,
+                },
                 mask,
                 max_query_len,
                 n_ranges,
-                write_lcp,
-                kind,
                 &lcp_cache,
+            );
+
+            let offset = range.start * mem::size_of::<W>();
+            write_all_at(
+                file,
+                as_bytes(&sa),
+                (header.suffix_array_pos + offset) as u64,
             )?;
-            Ok(())
-        })?;
+            if let Some(lcp_pos) = header.lcp_pos {
+                write_all_at(file, as_bytes(&lcp), (lcp_pos + offset) as u64)?;
+            }
+            Ok(Partition {
+                first_suffix: sa[0].to_usize(),
+                last_suffix: sa[len - 1].to_usize(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    // drop the empty partitions and put the rest in order
-    let mut partitions: Vec<_> = partitions.into_iter().flatten().collect();
-    partitions.sort_by_key(|p| p.order);
-
-    let sizes: Vec<_> = partitions.iter().map(|p| p.len).collect();
-    let total_size = sizes.iter().sum::<usize>();
     info!(
-        "Sorted {total_size} suffixes in {num_partitions} partitions (avg {}) in {:?}",
-        total_size / num_partitions,
-        total_sort_time.elapsed()
+        "Sorted partitions {first}..{} in {:?}",
+        first + count,
+        now.elapsed()
     );
     Ok(partitions)
-}
-
-/// Sort the suffixes in `buffers` into the partition at `order`, or
-/// `None` when there are none.
-#[allow(clippy::too_many_arguments)]
-fn sort_partition<W: Int>(
-    text: &[u8],
-    order: usize,
-    buffers: Vec<Scratch<W>>,
-    mask: Option<&SeedMask>,
-    max_query_len: usize,
-    n_ranges: &[Range<usize>],
-    write_lcp: bool,
-    kind: ScratchKind,
-    lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
-) -> Result<Option<Partition<W>>> {
-    let mut part_sa = vec![];
-    for buffer in buffers {
-        part_sa.extend_from_slice(&buffer.consume()?);
-    }
-
-    let len = part_sa.len();
-    if len == 0 {
-        return Ok(None);
-    }
-
-    let mut sa_w = part_sa.clone();
-    let mut lcp = vec![W::default(); len];
-    let mut lcp_w = vec![W::default(); len];
-    merge_sort(
-        text,
-        Arrays {
-            sa: &mut sa_w,
-            lcp: &mut lcp_w,
-        },
-        Arrays {
-            sa: &mut part_sa,
-            lcp: &mut lcp,
-        },
-        mask,
-        max_query_len,
-        n_ranges,
-        lcp_cache,
-    );
-
-    let mut sa_buffer = Scratch::new(kind);
-    sa_buffer.extend_from_slice(&part_sa)?;
-    let lcp_buffer = if write_lcp {
-        let mut lcp_buffer = Scratch::new(kind);
-        lcp_buffer.extend_from_slice(&lcp)?;
-        Some(lcp_buffer)
-    } else {
-        None
-    };
-
-    Ok(Some(Partition {
-        order,
-        len,
-        first_suffix: part_sa.first().unwrap().to_usize(),
-        last_suffix: part_sa.last().unwrap().to_usize(),
-        sa_buffer,
-        lcp_buffer,
-    }))
 }
 
 /// A slice of the suffix array and the LCPs beside it.
@@ -382,7 +350,7 @@ fn merge<W: Int>(
 /// partition before it, or `None` for the first partition.
 pub(super) fn first_lcps<W: Int>(
     text: &[u8],
-    partitions: &[Partition<W>],
+    partitions: &[Partition],
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],

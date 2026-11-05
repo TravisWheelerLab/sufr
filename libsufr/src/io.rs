@@ -149,21 +149,27 @@ pub(crate) fn read_exact_at(
 
 /// Write all of `buf` at `offset`, in parallel 64 MB chunks.
 pub(crate) fn write_all_at(file: &File, buf: &[u8], offset: u64) -> Result<()> {
-    let chunk_len = 1 << 26;
-    buf.par_chunks(chunk_len)
+    const CHUNK_LEN: usize = 1 << 26;
+    if buf.len() <= CHUNK_LEN {
+        return write_whole_at(file, buf, offset);
+    }
+    buf.par_chunks(CHUNK_LEN)
         .enumerate()
-        .try_for_each(|(i, mut chunk)| -> Result<()> {
-            let mut pos = offset + (i * chunk_len) as u64;
-            while !chunk.is_empty() {
-                let n = write_at(file, chunk, pos)?;
-                if n == 0 {
-                    bail!("Failed to write to output file");
-                }
-                chunk = &chunk[n..];
-                pos += n as u64;
-            }
-            Ok(())
+        .try_for_each(|(i, chunk)| {
+            write_whole_at(file, chunk, offset + (i * CHUNK_LEN) as u64)
         })
+}
+
+fn write_whole_at(file: &File, mut buf: &[u8], mut offset: u64) -> Result<()> {
+    while !buf.is_empty() {
+        let n = write_at(file, buf, offset)?;
+        if n == 0 {
+            bail!("Failed to write to output file");
+        }
+        buf = &buf[n..];
+        offset += n as u64;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

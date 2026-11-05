@@ -1,20 +1,16 @@
 mod partition;
-mod scratch;
 mod sort;
-mod write;
 
 use crate::{
     format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION},
-    io::Int,
+    io::{as_bytes, write_all_at, Int},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use log::info;
 use needletail::parse_fastx_file;
-use partition::{group_buffers, partition, PrefixEncoder};
-use scratch::ScratchKind;
+use partition::{gather, Layout, PrefixEncoder};
 use sort::{first_lcps, sort_partitions};
-use std::{mem, ops::Range, path::Path, time::Instant};
-use write::write;
+use std::{fs::File, mem, ops::Range, path::Path, time::Instant};
 
 /// The character placed at the end of the text, which must not occur in
 /// the text.
@@ -59,7 +55,10 @@ pub struct SuffixArrayBuilder {
     max_query_len: usize,
 
     num_partitions: usize,
-    memory_scratch: bool,
+
+    /// The most bytes of suffixes to hold in memory while sorting, or
+    /// `None` for the length of the text.
+    memory_budget: Option<usize>,
     force_64bit: bool,
     write_lcp: bool,
 }
@@ -100,7 +99,7 @@ impl SuffixArrayBuilder {
             seed_mask: None,
             max_query_len: 0,
             num_partitions: 1024,
-            memory_scratch: false,
+            memory_budget: None,
             force_64bit: false,
             write_lcp: false,
         }
@@ -139,18 +138,19 @@ impl SuffixArrayBuilder {
         self
     }
 
-    /// Set whether to keep the partitions in memory during construction
-    /// instead of in temporary files (default: `false`).
-    pub fn with_memory_scratch(mut self, memory_scratch: bool) -> Self {
-        self.memory_scratch = memory_scratch;
-        self
-    }
-
     // only TypedSuffixArray::<u64> can read a small text written this
     // way, so this is for tests
     #[cfg(test)]
     pub(crate) fn with_force_64bit(mut self, force_64bit: bool) -> Self {
         self.force_64bit = force_64bit;
+        self
+    }
+
+    /// Set the most bytes of suffixes to hold in memory while sorting
+    /// (default: the length of the text); a text whose suffixes need
+    /// more is scanned once per that many.
+    pub fn with_memory_budget(mut self, bytes: usize) -> Self {
+        self.memory_budget = Some(bytes);
         self
     }
 
@@ -174,11 +174,6 @@ impl SuffixArrayBuilder {
     /// Build the suffix array of the text with `W` per suffix and LCP and
     /// write it to `path`.
     fn construct<W: Int>(self, path: &Path) -> Result<()> {
-        let scratch = if self.memory_scratch {
-            ScratchKind::Memory
-        } else {
-            ScratchKind::Disk
-        };
         let mut text = self.text;
         let occupancy = normalize(&mut text, &self.alphabet);
         let keep = keep_table(&self.alphabet);
@@ -191,34 +186,69 @@ impl SuffixArrayBuilder {
         };
         let encoder = PrefixEncoder::from_occupancy(occupancy);
         let mask = self.seed_mask.as_ref();
-
-        let partitioned = partition::<W>(&text, &encoder, &keep, mask, scratch)?;
+        let layout = Layout::new(&text, &encoder, &keep, mask, self.num_partitions);
         let header = header(
             &self.alphabet,
             &self.sequences,
             text.len(),
-            partitioned.num_suffixes,
+            layout.num_suffixes(),
             mask,
             self.max_query_len,
             self.write_lcp,
             mem::size_of::<W>(),
         );
-        let groups = group_buffers(partitioned, self.num_partitions)?;
-        let partitions = sort_partitions(
-            &text,
-            groups,
-            mask,
-            self.max_query_len,
-            &n_ranges,
-            self.write_lcp,
-            scratch,
-        )?;
-        let first_lcps = if self.write_lcp {
-            first_lcps(&text, &partitions, mask, self.max_query_len, &n_ranges)
-        } else {
-            vec![]
-        };
-        write(path, &header, &text, partitions, &first_lcps)
+
+        let now = Instant::now();
+        let file =
+            File::create(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+        write_all_at(&file, &text, header.text_pos as u64)?;
+
+        // each turn scans the text for the suffixes of as many
+        // partitions as the budget holds, and sorts them from memory
+        let per_suffix = mem::size_of::<W>() + mem::size_of::<u16>();
+        let budget = self.memory_budget.unwrap_or(text.len());
+        let mut partitions = vec![];
+        for turn in layout.turns(budget / per_suffix) {
+            let gathered =
+                gather::<W>(&text, &encoder, &keep, mask, &layout, turn.clone())?;
+            partitions.extend(sort_partitions::<W>(
+                &text,
+                &layout,
+                turn.start,
+                gathered,
+                mask,
+                self.max_query_len,
+                &n_ranges,
+                &file,
+                &header,
+            )?);
+        }
+
+        // the LCP at each partition's start is against the partition
+        // before, which is known once both are sorted
+        if let Some(lcp_pos) = header.lcp_pos {
+            let first_lcps = first_lcps::<W>(
+                &text,
+                &partitions,
+                mask,
+                self.max_query_len,
+                &n_ranges,
+            );
+            for (range, first_lcp) in layout.ranges.iter().zip(first_lcps) {
+                if let Some(first_lcp) = first_lcp {
+                    let at = lcp_pos + range.start * mem::size_of::<W>();
+                    write_all_at(&file, as_bytes(&[first_lcp]), at as u64)?;
+                }
+            }
+        }
+
+        header.write(&file)?;
+        info!(
+            "Wrote suffix array to '{}' in {:?}",
+            path.display(),
+            now.elapsed()
+        );
+        Ok(())
     }
 }
 
@@ -387,7 +417,7 @@ mod test {
     use crate::SuffixArray;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
-    use std::{fs, path::Path};
+    use std::path::Path;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -437,20 +467,6 @@ mod test {
             every_byte
         );
         assert_eq!(kept(Alphabet::Bytes), every_byte);
-    }
-
-    #[test]
-    fn test_memory_scratch_matches_disk() -> Result<()> {
-        let build = |memory_scratch| -> Result<Vec<u8>> {
-            let outfile = NamedTempFile::new()?;
-            SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
-                .with_memory_scratch(memory_scratch)
-                .with_write_lcp(true)
-                .build_to_file(outfile.path())?;
-            Ok(fs::read(outfile.path())?)
-        };
-        assert_eq!(build(true)?, build(false)?);
-        Ok(())
     }
 
     #[test]

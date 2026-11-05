@@ -73,6 +73,12 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "NUM_PARTS", default_value = "1024")]
     pub num_partitions: usize,
 
+    /// MiB of suffixes held in memory while sorting, default the
+    /// text's size; a text whose suffixes need more is scanned once
+    /// per that many
+    #[arg(long, value_name = "MIB")]
+    pub memory_budget: Option<usize>,
+
     /// Max context
     #[arg(short, long, value_name = "CONTEXT", conflicts_with = "seed_mask")]
     pub max_query_len: Option<usize>,
@@ -348,6 +354,9 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     )?
     .with_alphabet(alphabet)
     .with_num_partitions(args.num_partitions);
+    if let Some(mib) = args.memory_budget {
+        builder = builder.with_memory_budget(mib << 20);
+    }
 
     match (args.max_query_len, &args.seed_mask) {
         (Some(_), Some(_)) => bail!("Cannot use max_query_len and seed_mask together"),
