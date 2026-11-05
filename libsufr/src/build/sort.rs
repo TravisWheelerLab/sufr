@@ -1,4 +1,4 @@
-use super::partition::{counting_sort, Layout};
+use super::partition::{Layout, PrefixEncoder};
 use crate::{
     format::{Header, SeedMask},
     io::{as_bytes, write_all_at, Int},
@@ -29,8 +29,9 @@ pub(super) struct Partition {
 pub(super) fn sort_partitions<W: Int>(
     text: &[u8],
     layout: &Layout,
+    encoder: &PrefixEncoder,
     first: usize,
-    gathered: Vec<(Vec<W>, Vec<u16>)>,
+    gathered: Vec<(Vec<W>, Vec<u64>)>,
     mask: Option<&SeedMask>,
     max_query_len: usize,
     n_ranges: &[Range<usize>],
@@ -43,38 +44,46 @@ pub(super) fn sort_partitions<W: Int>(
     let partitions = gathered
         .into_par_iter()
         .enumerate()
-        .map(|(i, (sa, bucket_of))| -> Result<Partition> {
+        .map(|(i, (suffixes, keys))| -> Result<Partition> {
             let range = &layout.ranges[first + i];
-            let buckets = &layout.buckets[first + i];
+            let len = suffixes.len();
 
-            // the merge sort does less work from runs that share
-            // a prefix: on 1 GiB of DNA, a partition in bucket
-            // order sorted in 48.7 s against 54.8 s in the order
-            // the chunks placed it
-            let (mut sa, _) = counting_sort(&sa, buckets.len(), |i| {
-                bucket_of[i] as usize - buckets.start
-            });
-            drop(bucket_of);
-
-            let len = sa.len();
-            let mut sa_w = sa.clone();
+            // by key is by the first key_chars characters, so only a
+            // run of equal keys is left for the merge sort, and the
+            // LCP across unequal keys is read off the keys
+            let mut keyed: Vec<(u64, W)> = keys.into_iter().zip(suffixes).collect();
+            keyed.sort_unstable_by_key(|&(key, _)| key);
+            let mut sa: Vec<W> = keyed.iter().map(|&(_, s)| s).collect();
             let mut lcp = vec![W::default(); len];
-            let mut lcp_w = vec![W::default(); len];
-            merge_sort(
-                text,
-                Arrays {
-                    sa: &mut sa_w,
-                    lcp: &mut lcp_w,
-                },
-                Arrays {
-                    sa: &mut sa,
-                    lcp: &mut lcp,
-                },
-                mask,
-                max_query_len,
-                n_ranges,
-                &lcp_cache,
-            );
+            let mut run = 0;
+            for i in 1..=len {
+                if i < len && keyed[i].0 == keyed[run].0 {
+                    continue;
+                }
+                if i - run > 1 {
+                    merge_sort(
+                        text,
+                        Arrays {
+                            sa: &mut sa[run..i].to_vec(),
+                            lcp: &mut lcp[run..i].to_vec(),
+                        },
+                        Arrays {
+                            sa: &mut sa[run..i],
+                            lcp: &mut lcp[run..i],
+                        },
+                        mask,
+                        max_query_len,
+                        n_ranges,
+                        &lcp_cache,
+                    );
+                }
+                if run > 0 {
+                    lcp[run] =
+                        W::from_usize(encoder.shared(keyed[run - 1].0, keyed[run].0));
+                }
+                run = i;
+            }
+            drop(keyed);
 
             let offset = range.start * mem::size_of::<W>();
             write_all_at(

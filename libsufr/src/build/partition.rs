@@ -4,100 +4,118 @@ use log::info;
 use rayon::prelude::*;
 use std::{ops::Range, sync::Mutex, time::Instant};
 
-/// The most bucket numbers a text is partitioned into.
-const MAX_BUCKETS: usize = 1 << 16;
-
 /// The suffixes one task of a pass over the text takes.
 const CHUNK_SIZE: usize = 1 << 19;
 
-/// The rank of each byte of the text in byte order, and how many leading
-/// characters a bucket number is made of.
+/// The rank of each byte of the text in byte order, packed into a key:
+/// the ranks of a suffix's first `key_chars` characters at `bits` each
+/// from the top of a `u64`, so keys compare as the characters do and
+/// two keys share `leading_zeros(a ^ b) / bits` characters.
 pub(super) struct PrefixEncoder {
     table: [u8; 256],
 
-    /// The number of ranks, which is the base a bucket number is
-    /// written in.
-    radix: usize,
+    /// The bits per rank.
+    bits: u32,
 
-    /// The number of leading characters in a bucket number.
-    count: usize,
+    /// The characters in a key.
+    key_chars: usize,
 
-    /// The weight of the top digit, `radix^(count-1)`.
-    top: usize,
+    /// The characters in a bucket number, the key's top ones.
+    bucket_chars: usize,
 
-    buckets: usize,
+    /// The unused low bits of a key.
+    shift: u32,
+
+    /// Keeps the first `max_query_len` characters of a key, or all.
+    cap: u64,
 }
 
 impl PrefixEncoder {
-    /// The encoder for a text whose bytes `occupancy` marks.
-    pub(super) fn from_occupancy(occupancy: [bool; 256]) -> Self {
+    /// The encoder for a text whose bytes `occupancy` marks, sorted by
+    /// its first `max_query_len` characters, or all of them for 0.
+    pub(super) fn from_occupancy(occupancy: [bool; 256], max_query_len: usize) -> Self {
         let mut table = [0u8; 256];
-        let mut radix = 0;
+        let mut radix: usize = 0;
         for (c, &seen) in occupancy.iter().enumerate() {
             if seen {
                 table[c] = radix as u8;
                 radix += 1;
             }
         }
-
-        // as many characters as keep the bucket numbers under
-        // MAX_BUCKETS; the cap is for a radix of 1, which never
-        // reaches it
-        let mut count = 0;
-        let mut buckets = 1;
-        while count < 16 && buckets * radix <= MAX_BUCKETS {
-            buckets *= radix;
-            count += 1;
-        }
-        info!("{radix} distinct bytes: {count}-character prefix, {buckets} buckets");
-
+        let bits = radix.next_power_of_two().trailing_zeros().max(1);
+        let key_chars = 64 / bits as usize;
+        let bucket_chars = 16 / bits as usize;
+        let shift = 64 - bits * key_chars as u32;
+        let cap = if max_query_len > 0 && max_query_len < key_chars {
+            u64::MAX << (64 - bits * max_query_len as u32)
+        } else {
+            u64::MAX
+        };
+        info!(
+            "{radix} distinct bytes at {bits} bits: {key_chars}-character keys, \
+             {bucket_chars}-character buckets"
+        );
         Self {
             table,
-            radix,
-            count,
-            top: buckets / radix.max(1),
-            buckets,
+            bits,
+            key_chars,
+            bucket_chars,
+            shift,
+            cap,
         }
     }
 
     /// The number of distinct bucket numbers.
     pub(super) fn num_buckets(&self) -> usize {
-        self.buckets
+        1 << (self.bits * self.bucket_chars as u32)
     }
 
-    /// The bucket number of the suffix at `i`: the ranks of its first
-    /// `count` characters, or of those at the care positions of `mask`,
-    /// as the digits of a base-`radix` number.
+    /// `key` with the characters past `max_query_len` cleared.
     #[inline(always)]
-    pub(super) fn encode(&self, text: &[u8], i: usize, mask: Option<&SeedMask>) -> u16 {
-        let mut key = 0;
-        for j in 0..self.count {
+    pub(super) fn capped(&self, key: u64) -> u64 {
+        key & self.cap
+    }
+
+    /// The bucket number of a suffix with the capped key `key`.
+    #[inline(always)]
+    pub(super) fn bucket(&self, key: u64) -> usize {
+        (key >> (64 - self.bits * self.bucket_chars as u32)) as usize
+    }
+
+    /// The characters two suffixes with the unequal keys `a` and `b`
+    /// share.
+    #[inline(always)]
+    pub(super) fn shared(&self, a: u64, b: u64) -> usize {
+        ((a ^ b).leading_zeros() / self.bits) as usize
+    }
+
+    /// The key of the suffix at `i` before the cap: its first
+    /// `key_chars` characters, or those at the care positions of `mask`.
+    pub(super) fn encode(&self, text: &[u8], i: usize, mask: Option<&SeedMask>) -> u64 {
+        let mut key = 0u64;
+        for j in 0..self.key_chars {
             // a character past the end of the text or the mask
             // ranks 0, so a short suffix keeps every digit
             let c = match mask {
                 Some(mask) => mask.positions.get(j).and_then(|&off| text.get(i + off)),
                 None => text.get(i + j),
             };
-            let rank = c.map_or(0, |&c| self.table[c as usize] as usize);
-            key = key * self.radix + rank;
+            let rank = c.map_or(0, |&c| self.table[c as usize] as u64);
+            key = (key << self.bits) | rank;
         }
-        key as u16
+        key << self.shift
     }
 
-    /// The bucket number of the suffix after the one at `i` with
-    /// bucket number `key`, without a mask.
+    /// The key of the suffix after the one at `i` with the key `key`
+    /// before the cap, without a mask: the first character shifts out
+    /// of the top and the character `key_chars` ahead comes in at the
+    /// bottom.
     #[inline(always)]
-    pub(super) fn roll(&self, text: &[u8], i: usize, key: usize) -> usize {
-        // the next suffix drops this one's first character from the
-        // top digit and takes the character `count` ahead as its last:
-        //
-        //     key(i+1) = (key(i) - rank(text[i]) × radix^(count-1)) × radix
-        //              + rank(text[i+count])
-        let out = self.table[text[i] as usize] as usize;
+    pub(super) fn roll(&self, text: &[u8], i: usize, key: u64) -> u64 {
         let incoming = text
-            .get(i + self.count)
-            .map_or(0, |&c| self.table[c as usize] as usize);
-        (key - out * self.top) * self.radix + incoming
+            .get(i + self.key_chars)
+            .map_or(0, |&c| self.table[c as usize] as u64);
+        (key << self.bits) | (incoming << self.shift)
     }
 }
 
@@ -139,15 +157,15 @@ impl Layout {
                             for i in start..end {
                                 if keep[text[i] as usize] {
                                     let key = encoder.encode(text, i, Some(mask));
-                                    counts[key as usize] += 1;
+                                    counts[encoder.bucket(encoder.capped(key))] += 1;
                                 }
                             }
                         }
                         None => {
-                            let mut key = encoder.encode(text, start, None) as usize;
+                            let mut key = encoder.encode(text, start, None);
                             for i in start..end {
                                 if keep[text[i] as usize] {
-                                    counts[key] += 1;
+                                    counts[encoder.bucket(encoder.capped(key))] += 1;
                                 }
                                 key = encoder.roll(text, i, key);
                             }
@@ -260,8 +278,8 @@ pub(super) fn counting_sort<T: Copy + Default>(
     (ordered, starts)
 }
 
-/// The suffixes of each partition of `partitions` with their buckets,
-/// from one scan of `text` keeping those whose first byte `keep` marks.
+/// The suffixes of each partition of `partitions` with their keys, from
+/// one scan of `text` keeping those whose first byte `keep` marks.
 pub(super) fn gather<W: Int>(
     text: &[u8],
     encoder: &PrefixEncoder,
@@ -269,17 +287,18 @@ pub(super) fn gather<W: Int>(
     mask: Option<&SeedMask>,
     layout: &Layout,
     partitions: Range<usize>,
-) -> Result<Vec<(Vec<W>, Vec<u16>)>> {
+) -> Result<Vec<(Vec<W>, Vec<u64>)>> {
     let now = Instant::now();
     let first = partitions.start;
     let count = partitions.len();
+
     // one compare for "in this turn's buckets", so the branch is
-    // rarely taken whichever turn this is; as lo <= key && key < hi
+    // rarely taken whichever turn this is; as lo <= b && b < hi
     // the first test is a coin flip in the middle turns and the
     // scan ran three times slower there
     let lo = layout.buckets[first].start;
     let width = layout.buckets[partitions.end - 1].end - lo;
-    let gathered: Vec<Mutex<(Vec<W>, Vec<u16>)>> = partitions
+    let gathered: Vec<Mutex<(Vec<W>, Vec<u64>)>> = partitions
         .map(|p| {
             let len = layout.ranges[p].len();
             Mutex::new((Vec::with_capacity(len), Vec::with_capacity(len)))
@@ -291,28 +310,34 @@ pub(super) fn gather<W: Int>(
     (0..text.len().div_ceil(CHUNK_SIZE))
         .into_par_iter()
         .try_for_each_init(
-            || (vec![W::default(); CHUNK_SIZE], vec![0u16; CHUNK_SIZE]),
-            |(suffixes, buckets), chunk| -> Result<()> {
+            || (vec![W::default(); CHUNK_SIZE], vec![0u64; CHUNK_SIZE]),
+            |(suffixes, keys), chunk| -> Result<()> {
                 let start = chunk * CHUNK_SIZE;
                 let end = (start + CHUNK_SIZE).min(text.len());
                 let mut n = 0;
                 match mask {
                     Some(mask) => {
                         for i in start..end {
-                            let key = encoder.encode(text, i, Some(mask)) as usize;
-                            if keep[text[i] as usize] && key.wrapping_sub(lo) < width {
+                            let key =
+                                encoder.capped(encoder.encode(text, i, Some(mask)));
+                            let bucket = encoder.bucket(key);
+                            if keep[text[i] as usize] && bucket.wrapping_sub(lo) < width
+                            {
                                 suffixes[n] = W::from_usize(i);
-                                buckets[n] = key as u16;
+                                keys[n] = key;
                                 n += 1;
                             }
                         }
                     }
                     None => {
-                        let mut key = encoder.encode(text, start, None) as usize;
+                        let mut key = encoder.encode(text, start, None);
                         for i in start..end {
-                            if keep[text[i] as usize] && key.wrapping_sub(lo) < width {
+                            let capped = encoder.capped(key);
+                            let bucket = encoder.bucket(capped);
+                            if keep[text[i] as usize] && bucket.wrapping_sub(lo) < width
+                            {
                                 suffixes[n] = W::from_usize(i);
-                                buckets[n] = key as u16;
+                                keys[n] = capped;
                                 n += 1;
                             }
                             key = encoder.roll(text, i, key);
@@ -320,18 +345,18 @@ pub(super) fn gather<W: Int>(
                     }
                 }
                 let suffixes = &suffixes[..n];
-                let buckets = &buckets[..n];
+                let keys = &keys[..n];
 
                 let partition =
-                    |i: usize| layout.partition_of[buckets[i] as usize] - first;
+                    |i: usize| layout.partition_of[encoder.bucket(keys[i])] - first;
                 let (suffixes, starts) = counting_sort(suffixes, count, partition);
-                let (buckets, _) = counting_sort(buckets, count, partition);
+                let (keys, _) = counting_sort(keys, count, partition);
                 for (p, run) in starts.windows(2).enumerate() {
                     let run = run[0]..run[1];
                     if !run.is_empty() {
                         let mut g = gathered[p].lock().map_err(|e| anyhow!("{e}"))?;
                         g.0.extend_from_slice(&suffixes[run.clone()]);
-                        g.1.extend_from_slice(&buckets[run]);
+                        g.1.extend_from_slice(&keys[run]);
                     }
                 }
                 Ok(())
@@ -358,78 +383,102 @@ mod test {
     use anyhow::Result;
     use pretty_assertions::assert_eq;
 
-    fn encoder(text: &[u8]) -> PrefixEncoder {
+    fn encoder(text: &[u8], max_query_len: usize) -> PrefixEncoder {
         let mut occupancy = [false; 256];
         for &b in text {
             occupancy[b as usize] = true;
         }
-        PrefixEncoder::from_occupancy(occupancy)
+        PrefixEncoder::from_occupancy(occupancy, max_query_len)
+    }
+
+    /// `ranks` packed from the top of a u64 at `bits` each.
+    fn packed(ranks: &[u64], bits: u32) -> u64 {
+        ranks
+            .iter()
+            .enumerate()
+            .map(|(j, &r)| r << (64 - bits * (j as u32 + 1)))
+            .sum()
     }
 
     #[test]
-    fn test_count_fits_the_budget() {
-        // 7 bytes: 7^5 = 16807 fits, 7^6 does not
-        let dna = encoder(b"$%ACGNT");
-        assert_eq!((dna.radix, dna.count, dna.num_buckets()), (7, 5, 16807));
+    fn test_widths() {
+        let dna = encoder(b"$%ACGNT", 0);
+        assert_eq!((dna.bits, dna.key_chars, dna.bucket_chars), (3, 21, 5));
+        assert_eq!(dna.num_buckets(), 32768);
 
-        // 25 bytes: 25^3 = 15625 fits, 25^4 does not
-        let protein = encoder(b"$%*-ABCDEFGHIKLMNPQRSTVWY");
+        let protein = encoder(b"$%*-ABCDEFGHIKLMNPQRSTVWY", 0);
         assert_eq!(
-            (protein.radix, protein.count, protein.num_buckets()),
-            (25, 3, 15625)
+            (protein.bits, protein.key_chars, protein.bucket_chars),
+            (5, 12, 3)
         );
 
-        // 256 bytes: 256^2 is the budget exactly
         let bytes: Vec<u8> = (0..=255).collect();
-        let bytes = encoder(&bytes);
-        assert_eq!(
-            (bytes.radix, bytes.count, bytes.num_buckets()),
-            (256, 2, 65536)
-        );
+        let bytes = encoder(&bytes, 0);
+        assert_eq!((bytes.bits, bytes.key_chars, bytes.bucket_chars), (8, 8, 2));
+        assert_eq!(bytes.num_buckets(), 65536);
 
-        // one byte: every key is 0, and count stops at the cap
-        let one = encoder(b"$");
-        assert_eq!((one.radix, one.count, one.num_buckets()), (1, 16, 1));
+        let one = encoder(b"$", 0);
+        assert_eq!((one.bits, one.key_chars, one.bucket_chars), (1, 64, 16));
     }
 
-    // the keys are written digit by digit, 1 × 6 included
-    #[allow(clippy::identity_op)]
     #[test]
     fn test_encode() -> Result<()> {
-        // ranks in byte order: $=0 A=1 C=2 G=3 N=4 T=5, so radix 6
-        // and 6 characters
+        // ranks in byte order: $=0 A=1 C=2 G=3 N=4 T=5, 3 bits each
         let text = b"ACGTNA$";
-        let encoder = encoder(text);
-        assert_eq!(encoder.num_buckets(), 46656);
+        let encoder = encoder(text, 0);
 
-        // A C G T N A = 1 2 3 5 4 1
-        let key = ((((1 * 6 + 2) * 6 + 3) * 6 + 5) * 6 + 4) * 6 + 1;
-        assert_eq!(encoder.encode(text, 0, None), key);
+        // A C G T N A $ and 14 characters past the end
+        let key = encoder.encode(text, 0, None);
+        assert_eq!(key, packed(&[1, 2, 3, 5, 4, 1, 0], 3));
+        assert_eq!(
+            encoder.bucket(key),
+            packed(&[1, 2, 3, 5, 4], 3) as usize >> 49
+        );
 
-        // N A $ and three characters past the end: 4 1 0 0 0 0
-        let key = (4 * 6 + 1) * 6 * 6 * 6 * 6;
-        assert_eq!(encoder.encode(text, 4, None), key);
+        // N A $ and the rest past the end
+        assert_eq!(encoder.encode(text, 4, None), packed(&[4, 1, 0], 3));
 
-        // care positions 0, 1 and 3, then three past the mask
+        // care positions 0, 1 and 3, then past the mask: A C T
         let mask = SeedMask::new("1101")?;
-        // A C T = 1 2 5
-        let key = ((1 * 6 + 2) * 6 + 5) * 6 * 6 * 6;
-        assert_eq!(encoder.encode(text, 0, Some(&mask)), key);
-        // A $ and position 8 past the end: 1 0 0
-        let key = 6 * 6 * 6 * 6 * 6;
-        assert_eq!(encoder.encode(text, 5, Some(&mask)), key);
+        assert_eq!(encoder.encode(text, 0, Some(&mask)), packed(&[1, 2, 5], 3));
+        // A $ and position 8 past the end
+        assert_eq!(encoder.encode(text, 5, Some(&mask)), packed(&[1], 3));
+
+        // a cap keeps that many characters
+        let capped = super::test::encoder(text, 2);
+        assert_eq!(
+            capped.capped(capped.encode(text, 0, None)),
+            packed(&[1, 2], 3)
+        );
         Ok(())
     }
 
     #[test]
-    fn test_roll_reaches_the_same_bucket_as_encode() {
-        let text = b"ACGTNACGTTTGANNA$";
-        let encoder = encoder(text);
-        let mut key = encoder.encode(text, 0, None) as usize;
-        for i in 0..text.len() {
-            assert_eq!(key, encoder.encode(text, i, None) as usize, "at {i}");
-            key = encoder.roll(text, i, key);
+    fn test_roll_reaches_the_same_key_as_encode() {
+        let text = b"ACGTNACGTTTGANNACGTACGTACGTAAA$";
+        for max_query_len in [0, 4] {
+            let encoder = encoder(text, max_query_len);
+            let mut key = encoder.encode(text, 0, None);
+            for i in 0..text.len() {
+                assert_eq!(key, encoder.encode(text, i, None), "at {i}");
+                key = encoder.roll(text, i, key);
+            }
         }
+    }
+
+    #[test]
+    fn test_shared_counts_equal_leading_characters() {
+        let text = b"ACGTACGA$";
+        let encoder = encoder(text, 0);
+        let a = encoder.encode(text, 0, None);
+        let b = encoder.encode(text, 4, None);
+        // ACGTACGA$ and ACGA$ share ACG
+        assert_eq!(encoder.shared(a, b), 3);
+        // the lowest bit of a character deciding is still that character
+        let c = packed(&[1, 2, 3, 4], 3);
+        let d = packed(&[1, 2, 3, 5], 3);
+        assert_eq!(encoder.shared(c, d), 3);
+        assert_eq!(encoder.shared(a, encoder.encode(text, 8, None)), 0);
     }
 
     #[test]
@@ -454,14 +503,6 @@ mod test {
     }
 
     #[test]
-    fn test_counting_sort() {
-        let keys = [2, 0, 2, 1, 0];
-        let (ordered, starts) = counting_sort(&[10u32, 11, 12, 13, 14], 4, |i| keys[i]);
-        assert_eq!(ordered, [11, 14, 13, 10, 12]);
-        assert_eq!(starts, [0, 2, 3, 5, 5]);
-    }
-
-    #[test]
     fn test_turns() {
         let layout = Layout::cut(&[3, 2, 1, 6, 2, 2], 3);
         assert_eq!(layout.turns(100), vec![0..3; 1]);
@@ -472,22 +513,35 @@ mod test {
     }
 
     #[test]
+    fn test_counting_sort() {
+        let keys = [2, 0, 2, 1, 0];
+        let (ordered, starts) = counting_sort(&[10u32, 11, 12, 13, 14], 4, |i| keys[i]);
+        assert_eq!(ordered, [11, 14, 13, 10, 12]);
+        assert_eq!(starts, [0, 2, 3, 5, 5]);
+    }
+
+    #[test]
     fn test_gather_fills_each_partition() -> Result<()> {
         let text = b"GATTACA$";
-        let encoder = encoder(text);
+        let encoder = encoder(text, 0);
         let keep = [true; 256];
 
-        // 5 ranks and 6 characters: every suffix is its own bucket,
-        // in suffix order
+        // 5 ranks at 3 bits, 5-character buckets: every suffix is its
+        // own bucket, in suffix order
         let layout = Layout::new(text, &encoder, &keep, None, 3);
         assert_eq!(layout.ranges, [0..3, 3..6, 6..8]);
 
         let mut parts = vec![];
         for turn in layout.turns(4) {
-            for (mut suffixes, buckets) in
+            for (mut suffixes, keys) in
                 gather::<u32>(text, &encoder, &keep, None, &layout, turn)?
             {
-                assert_eq!(buckets.len(), suffixes.len());
+                for (&s, &k) in suffixes.iter().zip(&keys) {
+                    assert_eq!(
+                        k,
+                        encoder.capped(encoder.encode(text, s as usize, None))
+                    );
+                }
                 suffixes.sort();
                 parts.push(suffixes);
             }

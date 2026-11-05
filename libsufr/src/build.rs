@@ -184,7 +184,7 @@ impl SuffixArrayBuilder {
             } => find_n_ranges(&text),
             _ => vec![],
         };
-        let encoder = PrefixEncoder::from_occupancy(occupancy);
+        let encoder = PrefixEncoder::from_occupancy(occupancy, self.max_query_len);
         let mask = self.seed_mask.as_ref();
         let layout = Layout::new(&text, &encoder, &keep, mask, self.num_partitions);
         let header = header(
@@ -205,7 +205,7 @@ impl SuffixArrayBuilder {
 
         // each turn scans the text for the suffixes of as many
         // partitions as the budget holds, and sorts them from memory
-        let per_suffix = mem::size_of::<W>() + mem::size_of::<u16>();
+        let per_suffix = mem::size_of::<W>() + mem::size_of::<u64>();
         let budget = self.memory_budget.unwrap_or(text.len());
         let mut partitions = vec![];
         for turn in layout.turns(budget / per_suffix) {
@@ -214,6 +214,7 @@ impl SuffixArrayBuilder {
             partitions.extend(sort_partitions::<W>(
                 &text,
                 &layout,
+                &encoder,
                 turn.start,
                 gathered,
                 mask,
