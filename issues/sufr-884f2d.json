@@ -3,20 +3,20 @@
   "title": "normalize runs branch-free and in parallel",
   "body": "`normalize` in `libsufr/src/build.rs` is the first pass over the text. For each byte it tests `is_ascii_lowercase`, then tests `ignore_softmask` to pick `N` or the upper-case byte, and sets `occupancy[byte]`. It runs on one thread. `find_n_ranges`, run right after it for DNA with `allow_ambiguity`, is a second single-threaded pass over the same bytes.\n\nOn `benchmarks/runs/dna-1024.fa` (1 GiB, 4 threads, page cache warm) the log stamps the read at 21:13:59 and the bucket count at 21:14:00, so `normalize`, `keep_table` and `find_n_ranges` together take at most about a second of a 12.7 s build. The log has no line of its own for `normalize`.\n\n## Proposal\n\n- Build a 256-entry table once from the alphabet. Lower-case bytes map to `N` or to their upper-case byte, every other byte to itself. The loop becomes `*b = table[*b as usize]` and `occupancy[*b as usize] = true`, with no branch per byte.\n- Split the text with `par_chunks_mut`, one `occupancy` per chunk, reduced with OR.\n\n## Open\n\nWhether `find_n_ranges` rides the same pass. A run of `N` can cross a chunk boundary, so the parallel version needs a join step. CLAUDE.md names `normalize` as the pass that other per-byte work rides on.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/fdde2c6d",
-  "lease_expires": "2026-11-05T21:34:24.460509539Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T21:15:15.293728744Z",
-  "updated_at": "2026-11-05T21:33:50.719842941Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-05T21:37:40.616885153Z",
+  "closed_at": "2026-11-05T21:37:40.616885153Z",
+  "close_reason": "Both passes landed: normalize through a table over parallel chunks in e47dab8, and the N scan as its own parallel pass in 8a05eb2. The numbers are in the notes.",
+  "resolution": "done",
   "notes": [
     {
       "id": "58d32bb0",
@@ -41,6 +41,9 @@
       "commit": "1462051",
       "branch": "construction"
     },
-    "closed": null
+    "closed": {
+      "commit": "8a05eb2",
+      "branch": "construction"
+    }
   }
 }
