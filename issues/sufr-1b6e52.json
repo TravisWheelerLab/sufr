@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-05T06:54:29.800770025Z",
   "defer_until": null,
   "created_at": "2026-11-05T06:39:24.960142016Z",
-  "updated_at": "2026-11-05T06:39:29.800770025Z",
+  "updated_at": "2026-11-05T07:01:21.726127634Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "1bb6dc35",
+      "at": "2026-11-05T07:01:21.726127014Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Board on `benchmarks/runs/dna-1024.fa`, 8 threads, one run each, every output byte-identical:\n\n| build | before sort | sort | wall | peak RSS |\n|---|---|---|---|---|\n| encoder only (old scratch) | 0.97 s | 44.5 s | 47.4 s | 1521 MiB |\n| count + place, chunk order | 1.60 s | 54.8 s | 57.6 s | 1389 MiB |\n| count + place, bucket order (experiment) | 1.59 s | 48.7 s | 51.5 s | 1418 MiB |\n| lean: one struct, counting_sort by bucket in the sort task | 1.57 s | 50.6 s | 53.4 s | 1500 MiB |\n\nThe order a partition reaches the merge sort in costs about 6 s: the old scratch handed it over grouped by bucket through its bucket files, and chunk order undoes that. The sort task now groups by bucket with `counting_sort` before `merge_sort`. The lean build is still 6 s behind the old scratch at the sort step, which now also holds the partition read and the output write.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "80d74c0",
