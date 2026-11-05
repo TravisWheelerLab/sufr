@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-05T21:34:24.460509539Z",
   "defer_until": null,
   "created_at": "2026-11-05T21:15:15.293728744Z",
-  "updated_at": "2026-11-05T21:19:24.460509539Z",
+  "updated_at": "2026-11-05T21:22:04.872872753Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "58d32bb0",
+      "at": "2026-11-05T21:22:04.872872033Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "Done in the working tree, not yet committed: a 256-entry table from the alphabet, applied over par_chunks_mut(CHUNK_SIZE) with one occupancy per chunk ORed in the reduce, and a log line for the pass. On benchmarks/runs/dna-1024.fa at 4 threads, three runs each: 208, 208 and 212 ms before, 75, 78 and 76 ms after. The .sufr outputs are identical. find_n_ranges is still its own pass; whether it rides this one is the open question.",
+      "commit": "1462051",
+      "branch": "construction"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "1462051",
