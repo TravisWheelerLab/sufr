@@ -1,0 +1,10 @@
+{
+  "slug": "hg38non-lcp-cost-and-release-run",
+  "text": "On catalyst at 276640b with 32 threads, 2000 partitions and no cap, create on hg38noN takes 43.8 s without --write-lcp and 45.1 s with it. vendor/sufr/sufr-main there, the release-era binary from August 2026 that always writes the LCP, took 368 s on the same input and wrote a byte-identical 26.2 GB .sufr. The 113.7 s sufr row in results/paper1gen.tbl was not made with sufr-main; what made it is unknown. Measured 2026-11-05.",
+  "created_at": "2026-11-05T21:31:56.564436107Z",
+  "updated_at": "2026-11-05T21:31:56.564436107Z",
+  "stamp": {
+    "commit": "e47dab8",
+    "branch": "construction"
+  }
+}
