@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T06:39:24.960142016Z",
-  "updated_at": "2026-11-05T09:04:21.085420856Z",
+  "updated_at": "2026-11-05T09:56:14.273275528Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -47,6 +47,14 @@
       "at": "2026-11-05T09:04:21.085419956Z",
       "author": "Jack Roddy/22668672",
       "text": "Scan cost after the rolling encode and the one-compare turn test, `dna-1024.fa`, 8 threads, one run each, outputs identical:\n\n| budget MiB | turns | scans s | per scan s | sort s | wall s | peak RSS MiB |\n|---|---|---|---|---|---|---|\n| 100 | 64 | 10.2 | 0.16 | 47.0 | 58.5 | 1345 |\n| 400 | 16 | 3.7 | 0.18 to 0.25 | 45.4 | 50.3 | 1800 |\n| 6400 | 1 | 0.9 | 0.93 | 44.4 | 46.7 | 7546 |\n\nThree things got the scan from 0.6 s to 0.16 s. `PrefixEncoder::roll` computes the next key from the current one with two table lookups instead of six. The per-chunk buffers are per-thread and written by index, so the loop holds no call. And the test for \"key in this turn's buckets\" is one unsigned compare: as `lo <= key && key < hi` the first branch was a coin flip in the middle turns and a scan there took three times as long as in the first turn. The count pass is 0.14 s, so a scan is at the floor and SIMD has nothing left to take from it.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "e3440a40",
+      "at": "2026-11-05T09:56:14.273274708Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Key sort board. The sort task sorts each partition by a 64-bit key of its first 21 characters (3 bits a rank, left-aligned), reads the LCP of unequal neighbours off the keys, and merge-sorts each run of equal keys. 8 threads, one run each, every output identical to the build before it.\n\n| fixture | build before the key sort | key-sort build |\n|---|---|---|\n| dna-1024.fa, default budget | sort 44.7 s, wall 48.4 s | sort 4.3 s, 13 scans 3.1 s, wall 8.75 s, 2381 MiB |\n| long-repeats-10.fa | sort 11.6 s, wall 11.6 s | sort 27.5 s, wall 27.7 s |\n| long-repeats-100.fa | over 15 min, run stopped | over 9 min, run stopped |\n\nOn ten copies of a unit nearly every suffix is in a run of ten equal keys, and a merge sort of ten copies compares copy against copy at every level, each comparison reading at least 1024 characters before the LCP cache answers. The whole-partition merge met the copies only at its upper levels with LCP values in hand. That reading is not instrumented; the 11.6 s against 27.5 s is the measurement.",
       "commit": "80d74c0",
       "branch": "construction"
     }
