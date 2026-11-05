@@ -1,0 +1,10 @@
+{
+  "slug": "search-timing-setup",
+  "text": "tmp-claude/2026-11-04-buffer/ holds a worktree at fc5db36 under before/ with a release build, and under runs/ the suite's 10 MiB fixtures, dna-10.sufr built from dna-10.fa with --dna --write-lcp, queries.txt of 20000 random 12 to 30-mers, and home/ to point HOME at so the subsample cache stays out of ~/.sufr. count over queries.txt, median of 3, at 80d74c0: default 0.011 s, -l 0.072 s, -v 0.086 s. A search change is timed there beside the suite, which times create only.",
+  "created_at": "2026-11-05T04:51:22.636621416Z",
+  "updated_at": "2026-11-05T04:51:22.636621416Z",
+  "stamp": {
+    "commit": "80d74c0",
+    "branch": "refactor"
+  }
+}
