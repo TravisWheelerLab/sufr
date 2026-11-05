@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-05T21:34:24.460509539Z",
   "defer_until": null,
   "created_at": "2026-11-05T21:15:15.293728744Z",
-  "updated_at": "2026-11-05T21:28:40.584995713Z",
+  "updated_at": "2026-11-05T21:33:50.719842941Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -30,9 +30,10 @@
       "id": "8114de8c",
       "at": "2026-11-05T21:28:40.584994953Z",
       "author": "Jack Roddy/fdde2c6d",
-      "text": "The N-run scan now rides the normalize pass, in the working tree and not committed. Each chunk keeps its runs of 1000 or more plus any run touching a chunk end, the reduce joins runs across a boundary, and a final retain drops the short ones. On long-n-1024.fa with --dna -a at 4 threads: normalize plus scan took 517 ms before and the one pass takes 125 to 138 ms after; the log reports 3 runs, which an independent count confirms, and the outputs are identical. Cost on the path with no tracking: dna-1024.fa normalize went from 76 ms to 109 ms, so the per-byte compare behind track_n is not hoisted. Options: a second loop without the compare, or accept it.",
+      "text": "find_n_ranges stays its own pass and is now parallel, in the working tree and not committed. Each chunk keeps its runs of 1000 or more plus any run touching a chunk end, the reduce joins a run across a boundary, and a final retain drops the short ones. On long-n-1024.fa with --dna -a at 4 threads, three runs: 252, 321 and 265 ms before, 59, 60 and 59 ms after. The log reports 3 runs, which an independent count confirms, and the outputs are identical. A first attempt folded the scan into normalize; Jack wanted the passes kept separate, and the fold cost 33 ms per GiB on the path with no N tracking.",
       "commit": "e47dab8",
-      "branch": "construction"
+      "branch": "construction",
+      "edited_at": "2026-11-05T21:33:50.719842641Z"
     }
   ],
   "stamps": {
