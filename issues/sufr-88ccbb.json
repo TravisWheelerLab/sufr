@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T00:31:15.465573815Z",
-  "updated_at": "2026-11-06T14:32:22.656957663Z",
+  "updated_at": "2026-11-06T15:23:11.255359235Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -63,6 +63,14 @@
       "at": "2026-11-06T14:32:22.656956963Z",
       "author": "Jack Roddy/fdde2c6d",
       "text": "atb-5000 again from a clean concatenation (awk 1 adds the missing newline; the file is one byte longer): --dna, no mask, no LCP, 16 threads, dev build 1691 s, new build 709 s, sha256 equal. So the 15,498 s on the glued file was the 10-character keys and not the genomes; with 21-character keys the new build is 2.4x faster here, against 3.4x at 1,000 genomes. The thread-state reading in the earlier note stands as the mechanism, the cause of the ties was the alphabet.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "9e0838ee",
+      "at": "2026-11-06T15:23:11.255358305Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "atb-5000 clean, the masked cells at 16 threads: 12 of 17 dev 962 s and new 436 s, hashes equal; PatternHunter new 413 s; 20 of 29 new 585 s. The clean concatenation of all 20,903 genomes is ready at /virt-data/jack/inputs/atb-all-clean.fa, 90 GB, with no build run on it yet.",
       "commit": "cabe70c",
       "branch": "construction"
     }
