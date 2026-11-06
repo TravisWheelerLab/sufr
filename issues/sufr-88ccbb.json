@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T00:31:15.465573815Z",
-  "updated_at": "2026-11-06T00:31:15.465573815Z",
+  "updated_at": "2026-11-06T01:08:31.45393872Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "faf8d505",
+      "at": "2026-11-06T01:08:31.45393808Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "uniprot_sprot.fa (288 MB, all of Swiss-Prot) on catalyst at 16 threads, dev build beside cabe70c, one run per cell: no mask 7.6 and 2.9 s; 101 4.8 and 3.7; 1101 5.9 and 3.9; 10111011 7.5 and 4.3; PatternHunter 8.4 and 5.0; 12 of 17 8.3 and 5.0; weight 11 8.1 and 5.0; weight 12 8.0 and 5.2. All 27 buildable cells match the dev build byte for byte across the plain, -n 1 and --memory-budget 4 flag sets; the 12 cells with masks past the 12-position cap are refused. Before cabe70c the masked cells took 5.2 to 6.5 s. What is left above the unmasked time is the masked scan.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "cabe70c",
