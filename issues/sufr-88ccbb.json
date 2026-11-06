@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T00:31:15.465573815Z",
-  "updated_at": "2026-11-06T12:01:51.512564481Z",
+  "updated_at": "2026-11-06T12:39:53.706873989Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -47,6 +47,14 @@
       "at": "2026-11-06T12:01:51.512563721Z",
       "author": "Jack Roddy/fdde2c6d",
       "text": "The atb-5000 masked cells were refused: the new build reports a key of 10 characters for this text. One of the 5,000 files, /data/AllTheBacteria/sampling_2024/SAMEA12547485.fa, has no trailing newline, so cat glued its last sequence line to the next file's header and some sixty header bytes became sequence, taking the alphabet past 32 distinct bytes. The 10-character keys also leave far more ties for the merge sort, so an unknown part of the 6.5x on the unmasked cell is this file. atb-1000 is clean. The concat for atb-5000 and atb-all has to add the missing newline, which awk 1 does; both are to be rerun from a clean file.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "c1726da4",
+      "at": "2026-11-06T12:39:53.706873269Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "mgy_proteins_1.fa (21.5 GB, 100 million records, 64-bit), bytes alphabet, no mask, no LCP, 16 threads: dev build 1616 s, new build 505 s, sha256 of the outputs equal. The 100 million record names in memory and in the header gave no trouble.",
       "commit": "cabe70c",
       "branch": "construction"
     }
