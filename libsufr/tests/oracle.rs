@@ -249,6 +249,23 @@ fn table() -> Vec<Case> {
             }
         }
     }
+    // a key holds 21 characters of DNA at 3 bits and 12 of protein at
+    // 5, so a mask's care positions fall short of the key or fill it;
+    // the PatternHunter seed is the usual shape
+    for input in ["2", "smol", "spaced_input"] {
+        for mask in [
+            "111111111111111111101",
+            "1111111111111111111101",
+            "111010010100110111",
+        ] {
+            for allow_ambiguity in [false, true] {
+                cases.push(Case {
+                    mask: Some(mask),
+                    ..dna(input, allow_ambiguity, false)
+                });
+            }
+        }
+    }
     for partitions in [1, 2, 3] {
         cases.push(Case {
             partitions: Some(partitions),
@@ -270,10 +287,17 @@ fn table() -> Vec<Case> {
     cases.push(dna(n_runs, true, false));
     cases.push(bytes("abba"));
     cases.push(bytes("uniprot"));
-    cases.push(Case {
-        mask: Some("10111011"),
-        ..bytes("uniprot")
-    });
+    for mask in [
+        "10111011",
+        "111111111101",
+        "1111111111101",
+        "111010010100110111",
+    ] {
+        cases.push(Case {
+            mask: Some(mask),
+            ..bytes("uniprot")
+        });
+    }
     cases
 }
 

@@ -1,15 +1,15 @@
 use crate::{
     format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION},
     io::{as_bytes, write_all_at, Int},
-    lcp::{mask_offset, masked_lcp, suffix_lcp, LcpCache},
+    lcp::{masked_lcp, suffix_lcp, LcpCache},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use log::info;
 use needletail::parse_fastx_file;
 use rayon::prelude::*;
 use std::{
     cell::RefCell,
-    cmp::{max, min, Ordering},
+    cmp::{max, min, Ordering, Reverse},
     fs::File,
     mem,
     ops::Range,
@@ -178,6 +178,18 @@ impl SuffixArrayBuilder {
         let encoder = PrefixEncoder::from_occupancy(occupancy);
         let mask = self.seed_mask.as_ref();
 
+        // a key holds every care position of a mask, so the sort by
+        // key is the whole sort under one; a longer mask is refused
+        if let Some(mask) = mask {
+            if mask.positions.len() > encoder.key_chars {
+                bail!(
+                    "the seed mask has {} care positions, and a key holds {} characters of this alphabet",
+                    mask.positions.len(),
+                    encoder.key_chars
+                );
+            }
+        }
+
         // ---
         // count the suffixes of each bucket, those whose first byte
         // `keep` marks, and cut the buckets into partitions
@@ -195,13 +207,14 @@ impl SuffixArrayBuilder {
                         Some(mask) => {
                             for i in start..end {
                                 if keep[text[i] as usize] {
-                                    let key = encoder.encode(text, i, Some(mask));
+                                    let key =
+                                        encoder.encode_masked(text, i, &mask.positions);
                                     counts[encoder.bucket(key)] += 1;
                                 }
                             }
                         }
                         None => {
-                            let mut key = encoder.encode(text, start, None);
+                            let mut key = encoder.encode(text, start);
                             for i in start..end {
                                 if keep[text[i] as usize] {
                                     counts[encoder.bucket(key)] += 1;
@@ -313,7 +326,8 @@ impl SuffixArrayBuilder {
                         match mask {
                             Some(mask) => {
                                 for i in start..end {
-                                    let key = encoder.encode(text, i, Some(mask));
+                                    let key =
+                                        encoder.encode_masked(text, i, &mask.positions);
                                     let bucket = encoder.bucket(key);
                                     if keep[text[i] as usize]
                                         && bucket.wrapping_sub(lo) < width
@@ -325,7 +339,7 @@ impl SuffixArrayBuilder {
                                 }
                             }
                             None => {
-                                let mut key = encoder.encode(text, start, None);
+                                let mut key = encoder.encode(text, start);
                                 for i in start..end {
                                     let bucket = encoder.bucket(key);
                                     if keep[text[i] as usize]
@@ -381,40 +395,18 @@ impl SuffixArrayBuilder {
                 .map(|(i, (suffixes, keys))| -> Result<(usize, usize)> {
                     let range = &ranges[first + i];
                     let len = suffixes.len();
-
-                    // by key is by the first key_chars characters, so only a
-                    // run of equal keys is left for the merge sort, and the
-                    // LCP across unequal keys is read off the keys
-                    let mut keyed: Vec<(u64, W)> =
-                        keys.into_iter().zip(suffixes).collect();
-                    keyed.sort_unstable_by_key(|&(key, _)| key);
-                    let mut sa: Vec<W> = keyed.iter().map(|&(_, s)| s).collect();
-                    let mut lcp = vec![W::default(); len];
-                    let mut run = 0;
-                    for i in 1..=len {
-                        if i < len && keyed[i].0 == keyed[run].0 {
-                            continue;
-                        }
-                        if i - run > 1 {
-                            merge_sort(
-                                text,
-                                &mut sa[run..i].to_vec(),
-                                &mut lcp[run..i].to_vec(),
-                                &mut sa[run..i],
-                                &mut lcp[run..i],
-                                mask,
-                                &n_ranges,
-                                &lcp_cache,
-                            );
-                        }
-                        if run > 0 {
-                            lcp[run] = W::from_usize(
-                                encoder.shared(keyed[run - 1].0, keyed[run].0),
-                            );
-                        }
-                        run = i;
-                    }
-                    drop(keyed);
+                    let (sa, lcp) = match mask {
+                        Some(mask) => sort_masked_partition(
+                            &encoder,
+                            &mask.positions,
+                            text.len(),
+                            suffixes,
+                            keys,
+                        ),
+                        None => sort_partition(
+                            text, &encoder, suffixes, keys, &n_ranges, &lcp_cache,
+                        ),
+                    };
 
                     let offset = range.start * mem::size_of::<W>();
                     write_all_at(
@@ -449,16 +441,15 @@ impl SuffixArrayBuilder {
             let first_lcps: Vec<W> = (1..first_suffixes.len())
                 .into_par_iter()
                 .map(|i| {
-                    find_lcp(
-                        text,
-                        last_suffixes[i - 1],
-                        first_suffixes[i],
-                        W::from_usize(text.len()),
-                        0,
-                        mask,
-                        &n_ranges,
-                        None,
-                    )
+                    let (last, first) = (last_suffixes[i - 1], first_suffixes[i]);
+                    W::from_usize(match mask {
+                        Some(mask) => {
+                            masked_lcp(&text[last..], &text[first..], &mask.positions)
+                        }
+                        None => {
+                            find_lcp(text, last, first, text.len(), 0, &n_ranges, None)
+                        }
+                    })
                 })
                 .collect();
             for (range, first_lcp) in ranges.iter().skip(1).zip(first_lcps) {
@@ -708,21 +699,48 @@ impl PrefixEncoder {
         ((a ^ b).leading_zeros() / self.bits) as usize
     }
 
-    /// The key of the suffix at `i`: its first
-    /// `key_chars` characters, or those at the care positions of `mask`.
-    pub(super) fn encode(&self, text: &[u8], i: usize, mask: Option<&SeedMask>) -> u64 {
+    /// The key of the suffix at `i`: its first `key_chars` characters.
+    pub(super) fn encode(&self, text: &[u8], i: usize) -> u64 {
         let mut key = 0u64;
         for j in 0..self.key_chars {
-            // a character past the end of the text or the mask
-            // ranks 0, so a short suffix keeps every digit
-            let c = match mask {
-                Some(mask) => mask.positions.get(j).and_then(|&off| text.get(i + off)),
-                None => text.get(i + j),
-            };
-            let rank = c.map_or(0, |&c| self.table[c as usize] as u64);
+            // a character past the end of the text ranks 0,
+            // so a short suffix keeps every digit
+            let rank = text
+                .get(i + j)
+                .map_or(0, |&c| self.table[c as usize] as u64);
             key = (key << self.bits) | rank;
         }
         key << self.shift
+    }
+
+    /// The key of the suffix at `i` under a mask: the characters at its
+    /// first `key_chars` care positions, `positions`, with those past the
+    /// mask ranking 0.
+    #[inline(always)]
+    pub(super) fn encode_masked(
+        &self,
+        text: &[u8],
+        i: usize,
+        positions: &[usize],
+    ) -> u64 {
+        let chars = positions.len().min(self.key_chars);
+        let positions = &positions[..chars];
+        let mut key = 0u64;
+        // the mask lies inside the text at every position but the
+        // last few, where a character past the end ranks 0
+        if i + positions[chars - 1] < text.len() {
+            for &off in positions {
+                key = (key << self.bits) | self.table[text[i + off] as usize] as u64;
+            }
+        } else {
+            for &off in positions {
+                let rank = text
+                    .get(i + off)
+                    .map_or(0, |&c| self.table[c as usize] as u64);
+                key = (key << self.bits) | rank;
+            }
+        }
+        key << (self.shift + self.bits * (self.key_chars - chars) as u32)
     }
 
     /// The key of the suffix after the one at `i` with the key `key`,
@@ -817,6 +835,80 @@ pub(super) fn counting_sort<T: Copy + Default>(
     (ordered, starts)
 }
 
+/// Sort the `suffixes` of a partition, each with its key, and give each
+/// its LCP with the one before it: by key, then a merge sort of each
+/// run of equal keys, which share the key's characters.
+fn sort_partition<W: Int>(
+    text: &[u8],
+    encoder: &PrefixEncoder,
+    suffixes: Vec<W>,
+    keys: Vec<u64>,
+    n_ranges: &[Range<usize>],
+    lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
+) -> (Vec<W>, Vec<W>) {
+    let len = suffixes.len();
+    let mut keyed: Vec<(u64, W)> = keys.into_iter().zip(suffixes).collect();
+    keyed.sort_unstable_by_key(|&(key, _)| key);
+    let mut sa: Vec<W> = keyed.iter().map(|&(_, s)| s).collect();
+    let mut lcp = vec![W::default(); len];
+    let mut run = 0;
+    for i in 1..=len {
+        if i < len && keyed[i].0 == keyed[run].0 {
+            continue;
+        }
+        if i - run > 1 {
+            merge_sort(
+                text,
+                &mut sa[run..i].to_vec(),
+                &mut lcp[run..i].to_vec(),
+                &mut sa[run..i],
+                &mut lcp[run..i],
+                n_ranges,
+                lcp_cache,
+            );
+        }
+        // the LCP across unequal keys is read off the keys
+        if run > 0 {
+            lcp[run] = W::from_usize(encoder.shared(keyed[run - 1].0, keyed[run].0));
+        }
+        run = i;
+    }
+    (sa, lcp)
+}
+
+/// Sort the `suffixes` of a partition under a mask whose care
+/// `positions` all fit in a key, each with its key, and give each its
+/// LCP with the one before it. Equal keys agree at every care position,
+/// so they go shortest first, with the LCP the positions that fit the
+/// shorter; across unequal keys the LCP is read off the keys.
+fn sort_masked_partition<W: Int>(
+    encoder: &PrefixEncoder,
+    positions: &[usize],
+    text_len: usize,
+    suffixes: Vec<W>,
+    keys: Vec<u64>,
+) -> (Vec<W>, Vec<W>) {
+    let len = suffixes.len();
+    let mut keyed: Vec<(u64, W)> = keys.into_iter().zip(suffixes).collect();
+    keyed.sort_unstable_by_key(|&(key, s)| (key, Reverse(s)));
+    let sa: Vec<W> = keyed.iter().map(|&(_, s)| s).collect();
+    let mut lcp = vec![W::default(); len];
+    let last = positions[positions.len() - 1];
+    for k in 1..len {
+        let (prev_key, prev) = keyed[k - 1];
+        let key = keyed[k].0;
+        let shorter = prev.to_usize();
+        lcp[k] = W::from_usize(if key != prev_key {
+            encoder.shared(prev_key, key)
+        } else if shorter + last < text_len {
+            positions.len()
+        } else {
+            positions.partition_point(|&p| shorter + p < text_len)
+        });
+    }
+    (sa, lcp)
+}
+
 /// Sort the suffixes in `out` with their LCPs, using `work`, which
 /// starts with the same suffixes, as scratch space.
 #[allow(clippy::too_many_arguments)]
@@ -826,7 +918,6 @@ fn merge_sort<W: Int>(
     work_lcp: &mut [W],
     out_sa: &mut [W],
     out_lcp: &mut [W],
-    mask: Option<&SeedMask>,
     n_ranges: &[Range<usize>],
     lcp_cache: &ThreadLocal<RefCell<LcpCache>>,
 ) {
@@ -845,25 +936,23 @@ fn merge_sort<W: Int>(
         // roles, so the merge below reads `work`
         if mid < NESTED_PAR_GRAIN_SIZE {
             merge_sort(
-                text, out_sa_l, out_lcp_l, work_sa_l, work_lcp_l, mask, n_ranges,
-                lcp_cache,
+                text, out_sa_l, out_lcp_l, work_sa_l, work_lcp_l, n_ranges, lcp_cache,
             );
             merge_sort(
-                text, out_sa_r, out_lcp_r, work_sa_r, work_lcp_r, mask, n_ranges,
-                lcp_cache,
+                text, out_sa_r, out_lcp_r, work_sa_r, work_lcp_r, n_ranges, lcp_cache,
             );
         } else {
             rayon::join(
                 || {
                     merge_sort(
-                        text, out_sa_l, out_lcp_l, work_sa_l, work_lcp_l, mask,
-                        n_ranges, lcp_cache,
+                        text, out_sa_l, out_lcp_l, work_sa_l, work_lcp_l, n_ranges,
+                        lcp_cache,
                     )
                 },
                 || {
                     merge_sort(
-                        text, out_sa_r, out_lcp_r, work_sa_r, work_lcp_r, mask,
-                        n_ranges, lcp_cache,
+                        text, out_sa_r, out_lcp_r, work_sa_r, work_lcp_r, n_ranges,
+                        lcp_cache,
                     )
                 },
             );
@@ -876,7 +965,6 @@ fn merge_sort<W: Int>(
             mid,
             out_sa,
             out_lcp,
-            mask,
             n_ranges,
             &mut lcp_cache.get_or_default().borrow_mut(),
         );
@@ -892,7 +980,6 @@ fn merge<W: Int>(
     mid: usize,
     target_sa: &mut [W],
     target_lcp: &mut [W],
-    mask: Option<&SeedMask>,
     n_ranges: &[Range<usize>],
     lcp_cache: &mut LcpCache,
 ) {
@@ -923,45 +1010,31 @@ fn merge<W: Int>(
                 let shorter_suffix = max(x[idx_x], y[idx_y]);
                 let max_n = W::from_usize(text.len()) - shorter_suffix;
 
-                let context = match mask {
-                    Some(seed_mask) => W::from_usize(
-                        seed_mask
-                            .positions
-                            .iter()
-                            .filter(|&i| *i < max_n.to_usize())
-                            .count(),
-                    ),
-                    None => max_n,
-                };
+                let context = max_n;
 
                 // LCP(X_i, Y_j)
-                let (len_lcp, full_len_lcp) = if m < context {
-                    let lcp = find_lcp(
+                let len_lcp = if m < context {
+                    find_lcp(
                         text,
                         x[idx_x].to_usize(),
                         y[idx_y].to_usize(),
-                        context - m,
+                        (context - m).to_usize(),
                         m.to_usize(), // skip
-                        mask,
                         n_ranges,
                         Some(lcp_cache),
-                    );
-                    let full_lcp = match mask {
-                        Some(seed_mask) => mask_offset(lcp.to_usize(), seed_mask),
-                        None => lcp.to_usize(),
-                    };
-                    (lcp, W::from_usize(full_lcp))
+                    )
                 } else {
-                    (context, context)
+                    context.to_usize()
                 };
+                let len_lcp = W::from_usize(len_lcp);
 
                 // an LCP reaching the context sorts the shorter suffix
                 // first, and otherwise the byte after the LCP decides
                 if len_lcp >= context {
                     target_sa[idx_target] = shorter_suffix;
                 } else {
-                    let cmp = text[(x[idx_x] + full_len_lcp).to_usize()]
-                        .cmp(&text[(y[idx_y] + full_len_lcp).to_usize()]);
+                    let cmp = text[(x[idx_x] + len_lcp).to_usize()]
+                        .cmp(&text[(y[idx_y] + len_lcp).to_usize()]);
 
                     match cmp {
                         Ordering::Equal => {
@@ -1022,30 +1095,16 @@ fn merge<W: Int>(
 
 /// The LCP of the suffixes at `start1` and `start2`, which share their
 /// first `skip` characters, comparing at most `len` characters.
-#[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn find_lcp<W: Int>(
+fn find_lcp(
     text: &[u8],
     start1: usize,
     start2: usize,
-    len: W,
+    len: usize,
     skip: usize,
-    mask: Option<&SeedMask>,
     n_ranges: &[Range<usize>],
     lcp_cache: Option<&mut LcpCache>,
-) -> W {
-    // with a mask, `len` is not consulted: the comparison
-    // stops at the end of the mask or of the text
-    if let Some(mask) = mask {
-        return W::from_usize(
-            skip + masked_lcp(
-                &text[start1..],
-                &text[start2..],
-                &mask.positions[skip..],
-            ),
-        );
-    }
-
+) -> usize {
     let mut skip = skip;
     if let (Some(end1), Some(end2)) =
         (find_n_run(n_ranges, start1), find_n_run(n_ranges, start2))
@@ -1053,19 +1112,12 @@ fn find_lcp<W: Int>(
         let (run1, run2) = (end1 - start1, end2 - start2);
         if run1 != run2 {
             // the byte after the shorter run is N against not N
-            return W::from_usize(min(run1, run2));
+            return min(run1, run2);
         }
         // equal runs end together, so compare on from there
         skip = max(skip, run1);
     }
-    W::from_usize(suffix_lcp(
-        text,
-        start1,
-        start2,
-        skip,
-        len.to_usize(),
-        lcp_cache,
-    ))
+    suffix_lcp(text, start1, start2, skip, len, lcp_cache)
 }
 
 /// The end of the run of `N`s in `n_ranges` holding `suffix`, if it is
@@ -1207,7 +1259,7 @@ mod test {
         let encoder = encoder(text);
 
         // A C G T N A $ and 14 characters past the end
-        let key = encoder.encode(text, 0, None);
+        let key = encoder.encode(text, 0);
         assert_eq!(key, packed(&[1, 2, 3, 5, 4, 1, 0], 3));
         assert_eq!(
             encoder.bucket(key),
@@ -1215,13 +1267,19 @@ mod test {
         );
 
         // N A $ and the rest past the end
-        assert_eq!(encoder.encode(text, 4, None), packed(&[4, 1, 0], 3));
+        assert_eq!(encoder.encode(text, 4), packed(&[4, 1, 0], 3));
 
         // care positions 0, 1 and 3, then past the mask: A C T
         let mask = SeedMask::new("1101")?;
-        assert_eq!(encoder.encode(text, 0, Some(&mask)), packed(&[1, 2, 5], 3));
+        assert_eq!(
+            encoder.encode_masked(text, 0, &mask.positions),
+            packed(&[1, 2, 5], 3)
+        );
         // A $ and position 8 past the end
-        assert_eq!(encoder.encode(text, 5, Some(&mask)), packed(&[1], 3));
+        assert_eq!(
+            encoder.encode_masked(text, 5, &mask.positions),
+            packed(&[1], 3)
+        );
         Ok(())
     }
 
@@ -1229,9 +1287,9 @@ mod test {
     fn test_roll_reaches_the_same_key_as_encode() {
         let text = b"ACGTNACGTTTGANNACGTACGTACGTAAA$";
         let encoder = encoder(text);
-        let mut key = encoder.encode(text, 0, None);
+        let mut key = encoder.encode(text, 0);
         for i in 0..text.len() {
-            assert_eq!(key, encoder.encode(text, i, None), "at {i}");
+            assert_eq!(key, encoder.encode(text, i), "at {i}");
             key = encoder.roll(text, i, key);
         }
     }
@@ -1240,15 +1298,15 @@ mod test {
     fn test_shared_counts_equal_leading_characters() {
         let text = b"ACGTACGA$";
         let encoder = encoder(text);
-        let a = encoder.encode(text, 0, None);
-        let b = encoder.encode(text, 4, None);
+        let a = encoder.encode(text, 0);
+        let b = encoder.encode(text, 4);
         // ACGTACGA$ and ACGA$ share ACG
         assert_eq!(encoder.shared(a, b), 3);
         // the lowest bit of a character deciding is still that character
         let c = packed(&[1, 2, 3, 4], 3);
         let d = packed(&[1, 2, 3, 5], 3);
         assert_eq!(encoder.shared(c, d), 3);
-        assert_eq!(encoder.shared(a, encoder.encode(text, 8, None)), 0);
+        assert_eq!(encoder.shared(a, encoder.encode(text, 8)), 0);
     }
 
     #[test]
@@ -1288,6 +1346,21 @@ mod test {
     }
 
     #[test]
+    fn a_mask_past_the_key_is_refused() -> Result<()> {
+        // 5 distinct bytes at 3 bits: 21 characters in a key
+        let text = b"ACGTACGTAC$".to_vec();
+        let outfile = NamedTempFile::new()?;
+        let build = |mask: &str| {
+            SuffixArrayBuilder::from_data(text.clone(), vec![(0, "s".to_string())])
+                .with_seed_mask(SeedMask::new(mask)?)
+                .build_to_file(outfile.path())
+        };
+        assert!(build(&format!("{}01", "1".repeat(20))).is_ok());
+        assert!(build(&format!("{}01", "1".repeat(21))).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn test_find_lcp_no_seed_mask() -> Result<()> {
         //           012345
         let text = b"TTTAGC";
@@ -1295,52 +1368,30 @@ mod test {
         // 0: TTTAGC
         // 1:  TTAGC
         // 6: len of text
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 6, 0, None, &[], None), 2);
+        assert_eq!(find_lcp(text, 0, 1, 6, 0, &[], None), 2);
 
         // 0: TTTAGC
         // 2:   TAGC
         // 6: len of text
-        assert_eq!(find_lcp::<u32>(text, 0, 2, 6, 0, None, &[], None), 1);
+        assert_eq!(find_lcp(text, 0, 2, 6, 0, &[], None), 1);
 
         // 0: TTTAGC
         // 1:  TTAGC
         // 1: compare one byte
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 1, 0, None, &[], None), 1);
+        assert_eq!(find_lcp(text, 0, 1, 1, 0, &[], None), 1);
 
         // 0: TTTAGC
         // 3:    AGC
         // 6: len of text
-        assert_eq!(find_lcp::<u32>(text, 0, 3, 6, 0, None, &[], None), 0);
+        assert_eq!(find_lcp(text, 0, 3, 6, 0, &[], None), 0);
 
         // two runs of four N with the same remaining length: the
         // match goes on past them, GA against GAT
         let text = b"NNNNGA%NNNNGAT";
         let n_ranges = [0..4, 7..11];
-        assert_eq!(find_lcp::<u32>(text, 0, 7, 14, 0, None, &n_ranges, None), 6);
+        assert_eq!(find_lcp(text, 0, 7, 14, 0, &n_ranges, None), 6);
         // runs of different remaining length end at the shorter
-        assert_eq!(find_lcp::<u32>(text, 1, 7, 14, 0, None, &n_ranges, None), 3);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_find_lcp_with_seed_mask() -> Result<()> {
-        //           012345
-        let text = b"TTTTTA";
-        let mask = SeedMask::new("1101")?;
-        let mask = Some(&mask);
-
-        // 0: TTTTTA
-        // 1:  TTTTA
-        assert_eq!(find_lcp::<u32>(text, 0, 1, 3, 0, mask, &[], None), 3);
-
-        // 0: TTTTTA
-        // 2:   TTTA
-        assert_eq!(find_lcp::<u32>(text, 0, 2, 3, 0, mask, &[], None), 2);
-
-        // 0: TTTTTA
-        // 5:      A
-        assert_eq!(find_lcp::<u32>(text, 0, 5, 3, 0, mask, &[], None), 0);
+        assert_eq!(find_lcp(text, 1, 7, 14, 0, &n_ranges, None), 3);
 
         Ok(())
     }
