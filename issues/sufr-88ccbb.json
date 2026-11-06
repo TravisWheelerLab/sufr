@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T00:31:15.465573815Z",
-  "updated_at": "2026-11-06T05:35:55.639131359Z",
+  "updated_at": "2026-11-06T11:39:14.099567591Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -31,6 +31,14 @@
       "at": "2026-11-06T05:35:55.639130609Z",
       "author": "Jack Roddy/fdde2c6d",
       "text": "hg38 with --dna -a and no mask: old 289 s, new 107 s, and the outputs differ from rank 2,148,348,353 on, where the suffixes beginning with N and the delimiter start. The dev build at c69cc0a lists them in descending position with LCP 1, putting N%TAAT before N%NNNN, which byte order forbids; the new build has them in text order with LCPs that follow the text. On a three-record input whose first two records end in runs of N, the dev build puts N%TTGA before N%GATTACA with LCP 1 and the new build puts G before T with LCP 2; the oracle's reference sort agrees with the new build, and that input is now a case in libsufr/tests/oracle.rs. So every --dna -a cell on hg38 will read NO against the dev build, and the dev build is the one that is wrong.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "f50e6d57",
+      "at": "2026-11-06T11:39:14.099566751Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "atb-5000, the first 5,000 AllTheBacteria genomes concatenated (19.5 GB, 64-bit), --dna, no mask, no LCP, 16 threads: dev build 2390 s, new build 15,498 s, sha256 of the outputs equal. At 1,000 genomes (4.5 GB) the same cell was 366 s against 106 s. During the new build one thread was running and sixteen sleeping for most of the time, with the output file growing in bursts: the partitions of a turn sort in parallel but each partition's merge is serial, and a partition holding thousands of near-identical copies with LCPs in the thousands holds up its turn. That is a reading of the thread states, not a profile.",
       "commit": "cabe70c",
       "branch": "construction"
     }
