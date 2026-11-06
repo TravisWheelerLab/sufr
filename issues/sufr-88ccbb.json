@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T00:31:15.465573815Z",
-  "updated_at": "2026-11-06T15:23:11.255359235Z",
+  "updated_at": "2026-11-06T23:45:17.8418509Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -72,6 +72,14 @@
       "author": "Jack Roddy/fdde2c6d",
       "text": "atb-5000 clean, the masked cells at 16 threads: 12 of 17 dev 962 s and new 436 s, hashes equal; PatternHunter new 413 s; 20 of 29 new 585 s. The clean concatenation of all 20,903 genomes is ready at /virt-data/jack/inputs/atb-all-clean.fa, 90 GB, with no build run on it yet.",
       "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "a4701f83",
+      "at": "2026-11-06T23:45:17.84185004Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "The masked scan now rolls windows and compacts the care positions with pext (commit after ebafb6e). chr21 at 4 threads, before and after: PatternHunter 1.18 and 0.64 s, 12 of 17 1.28 and 0.66 s, weight 21 1.70 and 0.67 s, unmasked 0.77 and 0.82 s. Swiss-Prot locally: 12 of 17 5.72 and 3.39 s, unmasked 4.76 and 4.91 s. A masked build is now under the unmasked one. Not yet rerun on catalyst; the next full run there picks it up.",
+      "commit": "1995d7c",
       "branch": "construction"
     }
   ],
