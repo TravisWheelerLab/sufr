@@ -285,6 +285,15 @@ fn table() -> Vec<Case> {
     );
     let n_runs: &'static str = Box::leak(n_runs.into_boxed_str());
     cases.push(dna(n_runs, true, false));
+    // runs of N that end at a record boundary, so suffixes start
+    // with N and the delimiter from runs of different lengths
+    let n_ends = format!(
+        ">a\nACGT{long}\n>b\nGATTACA{short}\n>c\nTTGA\n",
+        long = "N".repeat(1200),
+        short = "N".repeat(1100)
+    );
+    let n_ends: &'static str = Box::leak(n_ends.into_boxed_str());
+    cases.push(dna(n_ends, true, false));
     cases.push(bytes("abba"));
     cases.push(bytes("uniprot"));
     for mask in [
