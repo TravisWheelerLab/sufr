@@ -1,0 +1,28 @@
+{
+  "id": "sufr-88ccbb",
+  "title": "The build is timed on full genomes and the large protein sets under several masks",
+  "body": "The sweep script at `tmp-claude/2026-11-05-sweep/sweep.sh` builds an input under every flag set and mask with the dev build and the new one, times both and compares the bytes. It has run on `uniprot.fa`, chm13 chr21 and `uniprot_sprot.fa`. The real-sized inputs are on catalyst.\n\n| input | size | suffix width | .sufr with LCP | without |\n|---|---|---|---|---|\n| hg38.fa, hs1.fa | 3.1 Gbase | 32-bit | 28 GB | 15 GB |\n| /data/mgnify/fa/mgy_proteins_1.fa | 21.5 GB, 100 M records | 64-bit | 366 GB | 194 GB |\n| /data/AllTheBacteria/sampling_2024, 20,903 genomes concatenated | 84 GB | 64-bit | 1.4 TB | 760 GB |\n\nOn 2026-11-05 catalyst had 1.4 TB free on /home at 90% and 4.4 TB free on the root partition. Jack is running a backup and cleanup pass on /home first.\n\n## Proposal\n\n- Masks: none, 12 of 17 (`11011011011011011`), PatternHunter 11 of 18, and a 20 of 29 for DNA. DNA with `--dna` and `--dna -a`.\n- Every output under a scratch directory on the root partition, deleted after its comparison.\n- For mgnify and AllTheBacteria: no LCP, and one output at a time, compared by sha256 rather than `cmp`, since old and new cannot both be held.\n- AllTheBacteria in steps of 1,000 and 5,000 genomes before the full set, so the old build's time at 84 GB is known before it is paid.\n- The old build on the unmasked and 12-of-17 cells; sais64 through the harness's `measure` binary for its time only, since it sorts the raw text without sufr's delimiters.\n\n## Open\n\n- The mgnify file's 100 million record names are held in memory and written into the header; nothing has exercised that.\n- Where the scratch directory goes once the cleanup is done.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-06T00:31:15.465573815Z",
+  "updated_at": "2026-11-06T00:31:15.465573815Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}
