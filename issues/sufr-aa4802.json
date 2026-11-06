@@ -1,0 +1,28 @@
+{
+  "id": "sufr-aa4802",
+  "title": "A stray byte in a DNA text halves the key",
+  "body": "`PrefixEncoder::from_occupancy` in `libsufr/src/build.rs` sets the bits per rank from the number of distinct bytes in the whole text, rounded up to a power of two, and the key holds 64 divided by that many characters. On a DNA text of A, C, G, T, N, the sentinel and the delimiter that is 3 bits and 21 characters. One stray byte past the eighth makes it 4 bits and 16 characters; past the sixteenth, 5 bits and 12; past the thirty-second, 6 bits and 10.\n\nOn 2026-11-06 a concatenation of 5,000 bacterial genomes carried about sixty header bytes glued into one sequence by a file with no trailing newline. The text had over 32 distinct bytes, the key fell to 10 characters, a 12-of-17 mask was refused, and the unmasked build left far more ties to the merge sort.\n\n## Proposal\n\nOptions, each with its cost:\n\n- Leave it, and let the refusal message say which bytes are in the text, so the cause is visible. Costs nothing and fixes nothing.\n- Under `--dna`, rank only A, C, G, T, N, the sentinel and the delimiter, and give every other byte one shared rank. The key stays at 21 characters whatever the text holds. Bytes that share a rank are not ordered by the key, so a tie run may hold suffixes that differ at a key position; the merge sort orders them by the text, but the LCP read off two unequal keys could then overcount, and the masked sort, which never compares the text, would be wrong for those suffixes. That needs a rule for the shared rank, such as treating it as a tie that the masked sort refuses or sends to the merge sort.\n- Under `--dna` without `--allow-ambiguity`, drop suffixes starting with those bytes already; the bytes inside suffixes still widen the alphabet, so this alone does not help.\n\n## Open\n\nWhether real inputs other than a bad concatenation carry such bytes: IUPAC codes beyond N are common in assemblies.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-06T12:01:51.522341991Z",
+  "updated_at": "2026-11-06T12:01:51.522341991Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}
