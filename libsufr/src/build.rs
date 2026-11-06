@@ -175,11 +175,12 @@ impl SuffixArrayBuilder {
             } => find_n_ranges(text),
             _ => vec![],
         };
-        let encoder = PrefixEncoder::from_occupancy(occupancy);
+        let mut encoder = PrefixEncoder::from_occupancy(occupancy);
         let mask = self.seed_mask.as_ref();
 
         // a key holds every care position of a mask, so the sort by
-        // key is the whole sort under one; a longer mask is refused
+        // key is the whole sort under one; a longer mask is refused,
+        // as is one spanning more windows than the scan rolls
         if let Some(mask) = mask {
             if mask.positions.len() > encoder.key_chars {
                 bail!(
@@ -188,7 +189,16 @@ impl SuffixArrayBuilder {
                     encoder.key_chars
                 );
             }
+            if mask.bytes.len() > MAX_WINDOWS * encoder.key_chars {
+                bail!(
+                    "the seed mask spans {} characters, and the scan covers {} of this alphabet",
+                    mask.bytes.len(),
+                    MAX_WINDOWS * encoder.key_chars
+                );
+            }
+            encoder = encoder.with_mask(&mask.positions);
         }
+        let bmi2 = has_bmi2();
 
         // ---
         // count the suffixes of each bucket, those whose first byte
@@ -204,15 +214,25 @@ impl SuffixArrayBuilder {
                     let start = chunk * CHUNK_SIZE;
                     let end = (start + CHUNK_SIZE).min(text.len());
                     match mask {
-                        Some(mask) => {
-                            for i in start..end {
-                                if keep[text[i] as usize] {
-                                    let key =
-                                        encoder.encode_masked(text, i, &mask.positions);
-                                    counts[encoder.bucket(key)] += 1;
-                                }
+                        Some(_) if bmi2 => {
+                            // SAFETY: bmi2 is available
+                            unsafe {
+                                count_masked_bmi2(
+                                    text,
+                                    &encoder,
+                                    &keep,
+                                    start..end,
+                                    &mut counts,
+                                )
                             }
                         }
+                        Some(_) => count_masked::<false>(
+                            text,
+                            &encoder,
+                            &keep,
+                            start..end,
+                            &mut counts,
+                        ),
                         None => {
                             let mut key = encoder.encode(text, start);
                             for i in start..end {
@@ -324,19 +344,32 @@ impl SuffixArrayBuilder {
                         let end = (start + CHUNK_SIZE).min(text.len());
                         let mut n = 0;
                         match mask {
-                            Some(mask) => {
-                                for i in start..end {
-                                    let key =
-                                        encoder.encode_masked(text, i, &mask.positions);
-                                    let bucket = encoder.bucket(key);
-                                    if keep[text[i] as usize]
-                                        && bucket.wrapping_sub(lo) < width
-                                    {
-                                        suffixes[n] = W::from_usize(i);
-                                        keys[n] = key;
-                                        n += 1;
-                                    }
-                                }
+                            Some(_) if bmi2 => {
+                                // SAFETY: bmi2 is available
+                                n = unsafe {
+                                    gather_masked_bmi2(
+                                        text,
+                                        &encoder,
+                                        &keep,
+                                        start..end,
+                                        lo,
+                                        width,
+                                        suffixes,
+                                        keys,
+                                    )
+                                };
+                            }
+                            Some(_) => {
+                                n = gather_masked::<W, false>(
+                                    text,
+                                    &encoder,
+                                    &keep,
+                                    start..end,
+                                    lo,
+                                    width,
+                                    suffixes,
+                                    keys,
+                                );
                             }
                             None => {
                                 let mut key = encoder.encode(text, start);
@@ -651,7 +684,23 @@ pub(super) struct PrefixEncoder {
 
     /// The unused low bits of a key.
     shift: u32,
+
+    /// The windows of `key_chars` characters a mask spans, 0 without one.
+    windows: usize,
+
+    /// The fields of each window at the mask's care positions.
+    extract: [u64; MAX_WINDOWS],
+
+    /// The bits below each window's care positions in a masked key,
+    /// those of the windows after it.
+    window_shift: [u32; MAX_WINDOWS],
+
+    /// The unused low bits of a masked key.
+    mask_shift: u32,
 }
+
+/// The most windows of `key_chars` characters a mask may span.
+const MAX_WINDOWS: usize = 4;
 
 impl PrefixEncoder {
     /// The encoder for a text whose bytes `occupancy` marks.
@@ -678,7 +727,95 @@ impl PrefixEncoder {
             key_chars,
             bucket_chars,
             shift,
+            windows: 0,
+            extract: [0; MAX_WINDOWS],
+            window_shift: [0; MAX_WINDOWS],
+            mask_shift: 0,
         }
+    }
+
+    /// The encoder with the tables for a mask whose care positions are
+    /// `positions`, at most `key_chars` of them within `MAX_WINDOWS`
+    /// windows.
+    pub(super) fn with_mask(mut self, positions: &[usize]) -> Self {
+        let span = positions[positions.len() - 1] + 1;
+        self.windows = span.div_ceil(self.key_chars);
+        let field = (1u64 << self.bits) - 1;
+        for &p in positions {
+            let (window, j) = (p / self.key_chars, p % self.key_chars);
+            self.extract[window] |= field << (64 - self.bits * (j as u32 + 1));
+        }
+        // a window's fields sit above those of the windows after it
+        let mut below = 0;
+        for window in (0..self.windows).rev() {
+            self.window_shift[window] = below;
+            below += self.bits * self.extract[window].count_ones() / self.bits;
+        }
+        self.mask_shift = 64 - self.bits * positions.len() as u32;
+        self
+    }
+
+    /// The windows of the suffix at `i`: the keys of the suffixes at
+    /// `i`, `i + key_chars` and so on, one per window of the mask.
+    #[inline(always)]
+    pub(super) fn windows_at(&self, text: &[u8], i: usize) -> [u64; MAX_WINDOWS] {
+        let mut windows = [0; MAX_WINDOWS];
+        for (w, window) in windows.iter_mut().enumerate().take(self.windows) {
+            *window = self.encode(text, i + w * self.key_chars);
+        }
+        windows
+    }
+
+    /// Roll each window from the suffix at `i` to the one after it.
+    #[inline(always)]
+    pub(super) fn roll_windows(
+        &self,
+        text: &[u8],
+        i: usize,
+        windows: &mut [u64; MAX_WINDOWS],
+    ) {
+        for (w, window) in windows.iter_mut().enumerate().take(self.windows) {
+            *window = self.roll(text, i + w * self.key_chars, *window);
+        }
+    }
+
+    /// The masked key of the suffix whose windows these are: the fields
+    /// at the care positions, packed from the top in order, by pext
+    /// when `PEXT` and otherwise field by field.
+    #[inline(always)]
+    pub(super) fn compact<const PEXT: bool>(
+        &self,
+        windows: &[u64; MAX_WINDOWS],
+    ) -> u64 {
+        let mut key = 0;
+        let tables = self.extract.iter().zip(&self.window_shift);
+        for (&window, (&extract, &shift)) in
+            windows.iter().zip(tables).take(self.windows)
+        {
+            let fields = if PEXT {
+                #[cfg(target_arch = "x86_64")]
+                // SAFETY: PEXT is true only inside a function compiled
+                //         with bmi2 enabled
+                unsafe {
+                    std::arch::x86_64::_pext_u64(window, extract)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                unreachable!()
+            } else {
+                let mut fields = 0;
+                let mut left = extract;
+                while left != 0 {
+                    let top = left.leading_zeros();
+                    let at = 64 - top - self.bits;
+                    fields = (fields << self.bits)
+                        | ((window >> at) & ((1 << self.bits) - 1));
+                    left &= !(((1u64 << self.bits) - 1) << at);
+                }
+                fields
+            };
+            key |= fields << shift;
+        }
+        key << self.mask_shift
     }
 
     /// The number of distinct bucket numbers.
@@ -713,36 +850,6 @@ impl PrefixEncoder {
         key << self.shift
     }
 
-    /// The key of the suffix at `i` under a mask: the characters at its
-    /// first `key_chars` care positions, `positions`, with those past the
-    /// mask ranking 0.
-    #[inline(always)]
-    pub(super) fn encode_masked(
-        &self,
-        text: &[u8],
-        i: usize,
-        positions: &[usize],
-    ) -> u64 {
-        let chars = positions.len().min(self.key_chars);
-        let positions = &positions[..chars];
-        let mut key = 0u64;
-        // the mask lies inside the text at every position but the
-        // last few, where a character past the end ranks 0
-        if i + positions[chars - 1] < text.len() {
-            for &off in positions {
-                key = (key << self.bits) | self.table[text[i + off] as usize] as u64;
-            }
-        } else {
-            for &off in positions {
-                let rank = text
-                    .get(i + off)
-                    .map_or(0, |&c| self.table[c as usize] as u64);
-                key = (key << self.bits) | rank;
-            }
-        }
-        key << (self.shift + self.bits * (self.key_chars - chars) as u32)
-    }
-
     /// The key of the suffix after the one at `i` with the key `key`,
     /// without a mask: the first character shifts out
     /// of the top and the character `key_chars` ahead comes in at the
@@ -754,6 +861,103 @@ impl PrefixEncoder {
             .map_or(0, |&c| self.table[c as usize] as u64);
         (key << self.bits) | (incoming << self.shift)
     }
+}
+
+/// Whether the CPU has bmi2, for pext.
+fn has_bmi2() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        is_x86_feature_detected!("bmi2")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    false
+}
+
+/// Count the suffixes of `positions` whose first byte `keep` marks into
+/// `counts` by bucket, under the encoder's mask.
+#[inline(always)]
+fn count_masked<const PEXT: bool>(
+    text: &[u8],
+    encoder: &PrefixEncoder,
+    keep: &[bool; 256],
+    positions: Range<usize>,
+    counts: &mut [usize],
+) {
+    let mut windows = encoder.windows_at(text, positions.start);
+    for i in positions {
+        if keep[text[i] as usize] {
+            counts[encoder.bucket(encoder.compact::<PEXT>(&windows))] += 1;
+        }
+        encoder.roll_windows(text, i, &mut windows);
+    }
+}
+
+/// `count_masked` with pext.
+///
+/// # Safety
+///
+/// The CPU must support BMI2.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "bmi2")]
+unsafe fn count_masked_bmi2(
+    text: &[u8],
+    encoder: &PrefixEncoder,
+    keep: &[bool; 256],
+    positions: Range<usize>,
+    counts: &mut [usize],
+) {
+    count_masked::<true>(text, encoder, keep, positions, counts)
+}
+
+/// Gather the suffixes of `positions` whose first byte `keep` marks and
+/// whose bucket is within `width` of `lo`, with their keys under the
+/// encoder's mask, into `suffixes` and `keys`; the number gathered.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn gather_masked<W: Int, const PEXT: bool>(
+    text: &[u8],
+    encoder: &PrefixEncoder,
+    keep: &[bool; 256],
+    positions: Range<usize>,
+    lo: usize,
+    width: usize,
+    suffixes: &mut [W],
+    keys: &mut [u64],
+) -> usize {
+    let mut windows = encoder.windows_at(text, positions.start);
+    let mut n = 0;
+    for i in positions {
+        let key = encoder.compact::<PEXT>(&windows);
+        let bucket = encoder.bucket(key);
+        if keep[text[i] as usize] && bucket.wrapping_sub(lo) < width {
+            suffixes[n] = W::from_usize(i);
+            keys[n] = key;
+            n += 1;
+        }
+        encoder.roll_windows(text, i, &mut windows);
+    }
+    n
+}
+
+/// `gather_masked` with pext.
+///
+/// # Safety
+///
+/// The CPU must support BMI2.
+#[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
+#[target_feature(enable = "bmi2")]
+unsafe fn gather_masked_bmi2<W: Int>(
+    text: &[u8],
+    encoder: &PrefixEncoder,
+    keep: &[bool; 256],
+    positions: Range<usize>,
+    lo: usize,
+    width: usize,
+    suffixes: &mut [W],
+    keys: &mut [u64],
+) -> usize {
+    gather_masked::<W, true>(text, encoder, keep, positions, lo, width, suffixes, keys)
 }
 
 /// The suffixes of each partition as a range of the suffix array, and
@@ -1271,16 +1475,70 @@ mod test {
 
         // care positions 0, 1 and 3, then past the mask: A C T
         let mask = SeedMask::new("1101")?;
-        assert_eq!(
-            encoder.encode_masked(text, 0, &mask.positions),
-            packed(&[1, 2, 5], 3)
-        );
+        let encoder = encoder.with_mask(&mask.positions);
+        let masked = |i| encoder.compact::<false>(&encoder.windows_at(text, i));
+        assert_eq!(masked(0), packed(&[1, 2, 5], 3));
         // A $ and position 8 past the end
-        assert_eq!(
-            encoder.encode_masked(text, 5, &mask.positions),
-            packed(&[1], 3)
-        );
+        assert_eq!(masked(5), packed(&[1], 3));
         Ok(())
+    }
+
+    /// The masked key by lookup: the characters at the care positions.
+    fn lookup(
+        encoder: &PrefixEncoder,
+        text: &[u8],
+        i: usize,
+        positions: &[usize],
+    ) -> u64 {
+        let mut key = 0u64;
+        for &off in positions {
+            let rank = text
+                .get(i + off)
+                .map_or(0, |&c| encoder.table[c as usize] as u64);
+            key = (key << encoder.bits) | rank;
+        }
+        key << (64 - encoder.bits * positions.len() as u32)
+    }
+
+    #[test]
+    fn compact_matches_the_lookup_at_every_position() -> Result<()> {
+        let text = b"ACGTNACGTTTGANNACGTACGTACGTAAAGATTACAGATTACACCCGGGTTTAAANNNNACGT$";
+        for mask in [
+            "101",
+            "1101",
+            "11011011011011011",
+            "111010010100110111",
+            "11011011011011011011011011011",
+            "1000000000000000000000000000000000000000001",
+        ] {
+            let positions = SeedMask::new(mask)?.positions;
+            let encoder = encoder(text).with_mask(&positions);
+            let mut windows = encoder.windows_at(text, 0);
+            for i in 0..text.len() {
+                let expected = lookup(&encoder, text, i, &positions);
+                assert_eq!(
+                    encoder.compact::<false>(&windows),
+                    expected,
+                    "{mask} at {i}"
+                );
+                if super::has_bmi2() {
+                    // SAFETY: bmi2 is available
+                    let pext = unsafe { compact_bmi2(&encoder, &windows) };
+                    assert_eq!(pext, expected, "{mask} at {i} by pext");
+                }
+                encoder.roll_windows(text, i, &mut windows);
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "bmi2")]
+    unsafe fn compact_bmi2(
+        encoder: &PrefixEncoder,
+        windows: &[u64; super::MAX_WINDOWS],
+    ) -> u64 {
+        encoder.compact::<true>(windows)
     }
 
     #[test]
