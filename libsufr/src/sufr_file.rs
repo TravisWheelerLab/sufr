@@ -282,7 +282,7 @@ impl<T: Int> SufrFile<T> {
     /// use libsufr::SufrFile;
     ///
     /// fn main() -> Result<()> {
-    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
+    ///     let sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
     ///
     ///     // The last character will be the sentinel `$`
     ///     assert_eq!(
@@ -293,7 +293,7 @@ impl<T: Int> SufrFile<T> {
     /// }
     ///
     /// ```
-    pub fn get_text(&mut self, pos: usize) -> Option<u8> {
+    pub fn get_text(&self, pos: usize) -> Option<u8> {
         if self.text.is_empty() {
             self.text_file.get(pos)
         } else {
@@ -314,7 +314,7 @@ impl<T: Int> SufrFile<T> {
     /// use libsufr::SufrFile;
     ///
     /// fn main() -> Result<()> {
-    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
+    ///     let sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
     ///
     ///     let bytes: Vec<u8> = vec![65, 67, 71, 84, 78];
     ///     assert_eq!(bytes, sufr.get_text_range(0..5)?);
@@ -328,7 +328,7 @@ impl<T: Int> SufrFile<T> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_text_range(&mut self, pos: Range<usize>) -> Result<Vec<u8>> {
+    pub fn get_text_range(&self, pos: Range<usize>) -> Result<Vec<u8>> {
         if self.text.is_empty() {
             self.text_file.get_range(pos)
         } else {
@@ -352,14 +352,14 @@ impl<T: Int> SufrFile<T> {
     /// use libsufr::{types::Int, SufrFile};
     ///
     /// fn main() -> Result<()> {
-    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
+    ///     let sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
     ///     let lcp = sufr.find_lcp(0, 6, sufr.text_len.to_usize() - 1);
     ///     assert_eq!(4, lcp);
     ///     Ok(())
     /// }
     /// ```
     ///
-    pub fn find_lcp(&mut self, start1: usize, start2: usize, len: usize) -> usize {
+    pub fn find_lcp(&self, start1: usize, start2: usize, len: usize) -> usize {
         let end1 = min(start1 + len, len);
         let end2 = min(start2 + len, len);
         (start1..end1)
@@ -383,7 +383,7 @@ impl<T: Int> SufrFile<T> {
     /// use libsufr::SufrFile;
     ///
     /// fn main() -> Result<()> {
-    ///     let mut sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
+    ///     let sufr = SufrFile::<u32>::read("../data/inputs/1.sufr", true)?;
     ///
     ///     // This will print the entire input text
     ///     assert_eq!("ACGTNNACGT$", sufr.string_at(0, None)?);
@@ -393,7 +393,7 @@ impl<T: Int> SufrFile<T> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
+    pub fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
         let text_len = self.text_len.to_usize();
         let end = len.map_or(text_len, |n| {
             let end = pos + n;
@@ -403,8 +403,7 @@ impl<T: Int> SufrFile<T> {
                 end
             }
         });
-        let bytes = self.get_text_range(pos..end)?;
-        Ok(String::from_utf8(bytes.to_vec())?)
+        Ok(String::from_utf8(self.get_text_range(pos..end)?)?)
     }
 
     // --------------------------------------------------
@@ -792,7 +791,7 @@ impl<T: Int> SufrFile<T> {
             .into_iter()
             .map(|res| CountResult {
                 query_num: res.query_num,
-                query: res.query.clone(),
+                query: res.query,
                 count: res.locations.map_or(0, |loc| loc.ranks.len()),
             })
             .collect();
@@ -885,11 +884,10 @@ impl<T: Int> SufrFile<T> {
 
         let mut res: Vec<_> = args
             .queries
-            .clone()
-            .into_par_iter()
+            .par_iter()
             .enumerate()
             .flat_map(|(query_num, query)| -> Result<SearchResult<T>> {
-                searcher.search(query_num, &query, args.find_suffixes)
+                searcher.search(query_num, query, args.find_suffixes)
             })
             .collect();
         res.sort_by_key(|r| r.query_num);
@@ -970,9 +968,9 @@ impl<T: Int> SufrFile<T> {
             low_memory: args.low_memory,
             find_suffixes: true,
         };
-        let search_result = &self.suffix_search(&search_args)?;
-        let seq_starts = self.sequence_starts.clone();
-        let seq_names = self.sequence_names.clone();
+        let search_result = self.suffix_search(&search_args)?;
+        let seq_starts = &self.sequence_starts;
+        let seq_names = &self.sequence_names;
         let text_len = self.text_len.to_usize();
         let now = Instant::now();
 
@@ -984,7 +982,7 @@ impl<T: Int> SufrFile<T> {
                     Some(locs) => locs
                         .ranks
                         .clone()
-                        .zip(locs.suffixes.clone())
+                        .zip(locs.suffixes.iter().copied())
                         .map(|(rank, suffix)| {
                             let i =
                                 seq_starts.partition_point(|&val| val <= suffix) - 1;
@@ -1018,7 +1016,7 @@ impl<T: Int> SufrFile<T> {
 
                 ExtractResult {
                     query_num: res.query_num,
-                    query: res.query.clone(),
+                    query: res.query,
                     sequences,
                 }
             })
@@ -1078,7 +1076,7 @@ impl<T: Int> SufrFile<T> {
     /// }
     /// ```
     ///
-    pub fn list(&mut self, args: ListOptions) -> Result<()> {
+    pub fn list(&self, args: ListOptions) -> Result<()> {
         if args.show_lcp && !self.has_lcp {
             bail!(
                 "{} has no LCP array; rebuild with --write-lcp to show LCP values",
@@ -1220,9 +1218,9 @@ impl<T: Int> SufrFile<T> {
             max_query_len: args.max_query_len,
             find_suffixes: true,
         };
-        let search_result = &self.suffix_search(&search_opts)?;
-        let seq_starts = self.sequence_starts.clone();
-        let seq_names = self.sequence_names.clone();
+        let search_result = self.suffix_search(&search_opts)?;
+        let seq_starts = &self.sequence_starts;
+        let seq_names = &self.sequence_names;
         let mut locate_result: Vec<LocateResult> = vec![];
         let now = Instant::now();
 
@@ -1230,7 +1228,9 @@ impl<T: Int> SufrFile<T> {
         for res in search_result {
             let mut positions = vec![];
             if let Some(locs) = &res.locations {
-                for (rank, suffix) in locs.ranks.clone().zip(locs.suffixes.clone()) {
+                for (rank, suffix) in
+                    locs.ranks.clone().zip(locs.suffixes.iter().copied())
+                {
                     let i = seq_starts.partition_point(|&val| val <= suffix) - 1;
                     positions.push(LocatePosition {
                         rank,
@@ -1242,7 +1242,7 @@ impl<T: Int> SufrFile<T> {
             }
             locate_result.push(LocateResult {
                 query_num: res.query_num,
-                query: res.query.clone(),
+                query: res.query,
                 positions,
             });
         }

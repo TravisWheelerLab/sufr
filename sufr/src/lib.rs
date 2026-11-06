@@ -416,7 +416,7 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 
 // --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
+    let suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
     let mut ranks: Vec<usize> = vec![];
     for val in &args.ranks {
         let mut parsed: Vec<_> = parse_pos(val)?

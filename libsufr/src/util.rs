@@ -5,7 +5,7 @@ use crate::types::{
 };
 use anyhow::{anyhow, bail, Result};
 use needletail::parse_fastx_file;
-use std::{fs::File, io::Read, path::Path, slice};
+use std::{fs, fs::File, io::Read, path::Path, slice};
 
 // --------------------------------------------------
 /// When using a seed mask, the LCP stored on disk is the number of "care"
@@ -52,7 +52,8 @@ pub fn read_sequence_file(
     sequence_delimiter: u8,
 ) -> Result<SequenceFileData> {
     let mut reader = parse_fastx_file(path)?;
-    let mut seq: Vec<u8> = Vec::with_capacity(u32::MAX as usize);
+    let capacity = fs::metadata(path).map_or(0, |m| m.len() as usize);
+    let mut seq: Vec<u8> = Vec::with_capacity(capacity);
     let mut sequence_names: Vec<String> = vec![];
     let mut start_positions: Vec<usize> = vec![];
     let mut i = 0;

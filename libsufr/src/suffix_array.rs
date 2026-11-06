@@ -12,10 +12,10 @@ use anyhow::Result;
 pub(crate) trait SuffixArrayTrait: Send + Sync {
     fn count(&mut self, args: CountOptions) -> Result<Vec<CountResult>>;
     fn extract(&mut self, args: ExtractOptions) -> Result<Vec<ExtractResult>>;
-    fn list(&mut self, args: ListOptions) -> Result<()>;
+    fn list(&self, args: ListOptions) -> Result<()>;
     fn locate(&mut self, args: LocateOptions) -> Result<Vec<LocateResult>>;
     fn metadata(&self) -> Result<SufrMetadata>;
-    fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String>;
+    fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String>;
 }
 
 // --------------------------------------------------
@@ -36,7 +36,7 @@ impl SuffixArrayTrait for SuffixArray32 {
         self.inner.metadata()
     }
 
-    fn list(&mut self, args: ListOptions) -> Result<()> {
+    fn list(&self, args: ListOptions) -> Result<()> {
         self.inner.list(args)
     }
 
@@ -44,7 +44,7 @@ impl SuffixArrayTrait for SuffixArray32 {
         self.inner.locate(args)
     }
 
-    fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
+    fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
     }
 }
@@ -67,7 +67,7 @@ impl SuffixArrayTrait for SuffixArray64 {
         self.inner.metadata()
     }
 
-    fn list(&mut self, args: ListOptions) -> Result<()> {
+    fn list(&self, args: ListOptions) -> Result<()> {
         self.inner.list(args)
     }
 
@@ -75,7 +75,7 @@ impl SuffixArrayTrait for SuffixArray64 {
         self.inner.locate(args)
     }
 
-    fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
+    fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
     }
 }
@@ -202,7 +202,7 @@ impl SuffixArray {
     /// use tempfile::NamedTempFile;
     ///
     /// fn main() -> Result<()> {
-    ///     let mut suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;
+    ///     let suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;
     ///     let outfile = NamedTempFile::new()?;
     ///     let list_opts = ListOptions {
     ///         ranks: vec![],
@@ -236,7 +236,7 @@ impl SuffixArray {
     /// }
     /// ```
     ///
-    pub fn list(&mut self, args: ListOptions) -> Result<()> {
+    pub fn list(&self, args: ListOptions) -> Result<()> {
         self.inner.list(args)
     }
 
@@ -360,14 +360,14 @@ impl SuffixArray {
     /// use libsufr::SuffixArray;
     ///
     /// fn main() -> Result<()> {
-    ///     let mut suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;
+    ///     let suffix_array = SuffixArray::read("../data/inputs/1.sufr", true)?;
     ///     assert_eq!(suffix_array.string_at(0, None)?, "ACGTNNACGT$".to_string());
     ///     assert_eq!(suffix_array.string_at(6, Some(3))?, "ACG".to_string());
     ///     Ok(())
     /// }
     /// ```
     ///
-    pub fn string_at(&mut self, pos: usize, len: Option<usize>) -> Result<String> {
+    pub fn string_at(&self, pos: usize, len: Option<usize>) -> Result<String> {
         self.inner.string_at(pos, len)
     }
 }

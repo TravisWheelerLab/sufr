@@ -217,8 +217,8 @@ pub struct SearchOptions {
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
-    /// When `true`, the suffix array will be placed into memory.
-    /// When `false`, the suffix array will be read from disk.
+    /// When `true`, the suffix array is read from disk.
+    /// When `false`, the suffix array is loaded into memory.
     pub low_memory: bool,
 
     /// Whether or not to return location information or to simply count
@@ -353,8 +353,8 @@ pub struct CountOptions {
     /// Maximum query length for search
     pub max_query_len: Option<usize>,
 
-    /// When `true`, the suffix array will be placed into memory.
-    /// When `false`, the suffix array will be read from disk.
+    /// When `true`, the suffix array is read from disk.
+    /// When `false`, the suffix array is loaded into memory.
     pub low_memory: bool,
 }
 
@@ -382,8 +382,8 @@ pub struct ExtractOptions {
     /// Maximum query length for search
     pub max_query_len: Option<usize>,
 
-    /// When `true`, the suffix array will be placed into memory.
-    /// When `false`, the suffix array will be read from disk.
+    /// When `true`, the suffix array is read from disk.
+    /// When `false`, the suffix array is loaded into memory.
     pub low_memory: bool,
 
     /// Optional length of prefix to append before found suffixes (context)
@@ -481,8 +481,8 @@ pub struct LocateOptions {
     /// value will be used instead.
     pub max_query_len: Option<usize>,
 
-    /// When `true`, the suffix array will be placed into memory.
-    /// When `false`, the suffix array will be read from disk.
+    /// When `true`, the suffix array is read from disk.
+    /// When `false`, the suffix array is loaded into memory.
     pub low_memory: bool,
 }
 
