@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T00:31:15.465573815Z",
-  "updated_at": "2026-11-07T04:37:17.074409932Z",
+  "updated_at": "2026-11-07T08:29:01.652316792Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -87,6 +87,14 @@
       "at": "2026-11-07T04:37:17.074408492Z",
       "author": "Jack Roddy/fdde2c6d",
       "text": "atb-all, all 20,903 AllTheBacteria genomes concatenated cleanly (90 GB, 64-bit), --dna, no mask, no LCP, 16 threads: dev build 9652 s, new build 6848 s, sha256 equal, 808 GB each. The lead over old narrows as the set grows, 3.4x at 1,000 genomes, 2.4x at 5,000, 1.4x at all of them: more copies of the same sequence mean longer LCPs for the merge sort, which both builds pay.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    {
+      "id": "f2704bfe",
+      "at": "2026-11-07T08:29:01.652315492Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "atb-all masked, cabe70c at 16 threads: 12 of 17 dev 4838 s and new 2233 s, sha256 equal; PatternHunter new 2115 s; 20 of 29 new 2796 s. The baseline over every input is complete. The rerun of every new cell at 1995d7c, new only with old times carried over, started 2026-11-07 01:28 on catalyst as ramp4; results under /virt-data/jack/sweep/rerun/.",
       "commit": "1995d7c",
       "branch": "construction"
     }
