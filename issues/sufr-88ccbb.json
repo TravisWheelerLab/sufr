@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T00:31:15.465573815Z",
-  "updated_at": "2026-11-07T08:57:59.937309692Z",
+  "updated_at": "2026-11-07T21:58:44.845560181Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -103,6 +103,14 @@
       "at": "2026-11-07T08:57:59.937308552Z",
       "author": "Jack Roddy/fdde2c6d",
       "text": "Started over on 2026-11-07 with full capture. Everything sits under /virt-data/jack on catalyst: inputs/ (hg38, hs1, uniprot_sprot, mgy_proteins_1, the three clean AllTheBacteria concatenations), bin/sufr-old (the dev build) and bin/sufr-new (1995d7c), sweep.sh and ramp5.sh, results under sweep/. Each cell records wall seconds, CPU time over wall time, peak RSS in GB and the sha256 for each binary. Masks: DNA weights 6 (11011011), 11 (PatternHunter) and 20 (11011011011011011011011011011); protein weights 6, 8 (11011011011) and 12 (11011011011011011). Old runs beside new on the unmasked cell and PatternHunter for DNA, unmasked and 12 of 17 for protein; the other masks are new only. The earlier results dirs were deleted; their numbers are in the notes above.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    {
+      "id": "4fc2c6d2",
+      "at": "2026-11-07T21:58:44.845558811Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "The full run with capture finished 2026-11-07 14:54; every row is in /virt-data/jack/sweep/*/results.tsv on catalyst. atb-all at 16 threads, old then new, wall s / CPU of 16 / peak GB: none 10674 14.7 158 and 7666 12.6 191, hashes equal; weight 6 new 1135 11.7 188; PatternHunter 4534 13.2 216 and 1238 11.3 189, hashes equal; weight 20 new 1341 11.6 187. Across all inputs every comparable cell matches except hg38 --dna -a unmasked, where the dev build is wrong. Masked new builds run 1.3x to 7x faster than the unmasked new build; new peak RSS is 10 to 20 percent above old on the big inputs and new CPU use is about 12 of 16 against old's 14.",
       "commit": "1995d7c",
       "branch": "construction"
     }
