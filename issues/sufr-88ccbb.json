@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T00:31:15.465573815Z",
-  "updated_at": "2026-11-07T08:29:01.652316792Z",
+  "updated_at": "2026-11-07T08:57:59.937309692Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -95,6 +95,14 @@
       "at": "2026-11-07T08:29:01.652315492Z",
       "author": "Jack Roddy/fdde2c6d",
       "text": "atb-all masked, cabe70c at 16 threads: 12 of 17 dev 4838 s and new 2233 s, sha256 equal; PatternHunter new 2115 s; 20 of 29 new 2796 s. The baseline over every input is complete. The rerun of every new cell at 1995d7c, new only with old times carried over, started 2026-11-07 01:28 on catalyst as ramp4; results under /virt-data/jack/sweep/rerun/.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    {
+      "id": "03af6b02",
+      "at": "2026-11-07T08:57:59.937308552Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "Started over on 2026-11-07 with full capture. Everything sits under /virt-data/jack on catalyst: inputs/ (hg38, hs1, uniprot_sprot, mgy_proteins_1, the three clean AllTheBacteria concatenations), bin/sufr-old (the dev build) and bin/sufr-new (1995d7c), sweep.sh and ramp5.sh, results under sweep/. Each cell records wall seconds, CPU time over wall time, peak RSS in GB and the sha256 for each binary. Masks: DNA weights 6 (11011011), 11 (PatternHunter) and 20 (11011011011011011011011011011); protein weights 6, 8 (11011011011) and 12 (11011011011011011). Old runs beside new on the unmasked cell and PatternHunter for DNA, unmasked and 12 of 17 for protein; the other masks are new only. The earlier results dirs were deleted; their numbers are in the notes above.",
       "commit": "1995d7c",
       "branch": "construction"
     }
