@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-05T20:11:49.28810297Z",
   "defer_until": null,
   "created_at": "2026-11-05T19:56:45.851102011Z",
-  "updated_at": "2026-11-05T21:15:15.311192732Z",
+  "updated_at": "2026-11-09T21:05:36.758520282Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "e1295de0",
+      "at": "2026-11-09T21:05:36.758519402Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "State at 1995d7c: construct still runs the pipeline in phases, and the pieces carved since the flatten are sort_partition and sort_masked_partition (two implementations of one step, chosen once per partition), count_masked and gather_masked with their bmi2 wrappers, and the encoder's windows_at, roll_windows and compact. The build-time cap is gone (b3f9104), the merge sort has no mask argument (cabe70c), and normalize and find_n_ranges are parallel passes. Still in construct: the two unmasked scan arms, the header literal, the first_suffixes and last_suffixes vectors and the turn loop. merge_sort and merge take 9 and 10 arguments.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "276640b",
