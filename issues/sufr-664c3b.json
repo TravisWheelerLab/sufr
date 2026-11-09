@@ -1,0 +1,28 @@
+{
+  "id": "sufr-664c3b",
+  "title": "Is the subsample built at open still the right way to search with a max query length?",
+  "body": "`count`, `extract` and `locate` take `-m`/`--max-query-len`, which limits how many characters of a query a search compares. When the suffixes are opened in memory and that limit is shorter than the sort, `typed::open` in `libsufr/src/typed.rs` keeps the whole suffix array on disk and holds a subsample in memory instead. A search runs over the subsample and maps a hit back to ranks in the whole array.\n\nThe subsample is a `Subsample<W>`: the first suffix of each group that shares its first `max_query_len` characters, and that suffix's rank in the whole array. `TypedSuffixArray::subsample` builds it with `keep_differing`, which reads the suffix array in blocks and compares each suffix with the one before it. With an LCP array the comparison reads the LCP. Without one, `subsample_by_text` compares the text, or the care positions under a seed mask. `subsample_with_cache` writes the result to `~/.sufr/locate-<max_query_len>-<basename>` and reads it back on a later open, unless the `.sufr` file is newer than the cache file.\n\nCommit b3f9104 removed the build-time max query length, so an unmasked file is now always sorted on its full suffixes. `Header::sorted_len` is the text length for such a file, and any `-m` above 0 on it now builds a subsample. The subsampling code was written when a capped build was the usual way to use `-m`, and nobody has reviewed it since that commit.\n\n## Open\n\n- Whether subsampling should stay at all. Building it reads every suffix and, without an LCP array, compares the text at each one. No one has timed that on a genome-sized file. The alternative is to search the whole array and stop comparing at `max_query_len`.\n- Whether the in-memory subsample is worth the switch to a disk suffix array that the caller did not ask for. A caller who opens the suffixes in memory gets them on disk when `-m` is given.\n- The cache key holds the file's basename and not its path, so two files with one name in different directories share a cache file. The mtime check guards only against a `.sufr` file newer than the cache.\n- Whether a cache belongs in the library. Where it is written is sufr-22b9c3, and the race on creating its directory is sufr-742f13.\n- Which tests pin subsampled results against an unsubsampled search, with and without an LCP array and under a mask. `test_subsample_suffix_array` in `libsufr/src/lib.rs` checks the subsample itself.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T21:20:36.345988337Z",
+  "updated_at": "2026-11-09T21:20:36.345988337Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}
