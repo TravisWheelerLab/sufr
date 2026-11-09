@@ -252,13 +252,12 @@ impl<'a, T: Int> SufrSearch<'a, T> {
             SuffixSortType::MaxQueryLen(mql) => {
                 // The "MaxQueryLen(mql)" refers to how the suffix array
                 // was built, but there may be a runtime value in self.max_query_len.
-                // If both are present, take the lowest.
-                let max_query_len: usize = if mql > &0 && self.max_query_len.is_some() {
-                    min(*mql, self.max_query_len.unwrap_or(0))
-                } else if let Some(val) = self.max_query_len {
-                    val
-                } else {
-                    *mql
+                // If both are present, take the lowest. A runtime 0 is
+                // not given, as in set_suffix_array_mem.
+                let max_query_len: usize = match self.max_query_len {
+                    Some(0) | None => *mql,
+                    Some(val) if *mql > 0 => min(*mql, val),
+                    Some(val) => val,
                 };
 
                 let lcp = if (max_query_len > 0) && (skip >= max_query_len) {

@@ -1262,8 +1262,10 @@ mod test {
             CountOptions, ExtractOptions, ExtractResult, ExtractSequence,
             LocateOptions, LocatePosition, LocateResult,
         },
+        SuffixArrayBuilder,
     };
     use anyhow::Result;
+    use tempfile::NamedTempFile;
 
     // --------------------------------------------------
     #[test]
@@ -1307,6 +1309,31 @@ mod test {
             })?;
             let suffixes: Vec<_> = res[0].positions.iter().map(|p| p.suffix).collect();
             assert_eq!(suffixes, [0]);
+        }
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_count_with_a_cap_of_zero() -> Result<()> {
+        // built on the first 2 bytes, so no search may
+        // compare more: 2.fa has 4 suffixes starting AC
+        let outfile = NamedTempFile::new()?;
+        SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
+            .with_dna_options(true, false, false)
+            .with_max_query_len(2)
+            .build_to_file(outfile.path(), false)?;
+        let path = outfile.path().to_string_lossy().to_string();
+        for low_memory in [true, false] {
+            for max_query_len in [None, Some(0), Some(9)] {
+                let mut sufr_file: SufrFile<u32> = SufrFile::read(&path, low_memory)?;
+                let res = sufr_file.count(CountOptions {
+                    queries: vec!["ACGTX".to_string()],
+                    max_query_len,
+                    low_memory,
+                })?;
+                assert_eq!(res[0].count, 4, "{max_query_len:?} {low_memory}");
+            }
         }
         Ok(())
     }
