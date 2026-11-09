@@ -10,7 +10,7 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 
 const PRG: &str = "sufr";
 const SEQ1: &str = "../data/inputs/1.fa";
@@ -911,6 +911,42 @@ fn list_sufr1_limit_3() -> Result<()> {
         },
         &["$", "ACGT$", "ACGTNNACGT$", ""].join("\n"),
     )
+}
+
+// --------------------------------------------------
+// a cap changes which suffixes a search can tell apart, never how
+// many match a query shorter than it
+#[test]
+fn count_under_a_cap_matches_count_without_one() -> Result<()> {
+    // HOME points at a temp dir, since a cap writes the subsample
+    // cache to ~/.sufr
+    let home = TempDir::new()?;
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    Command::cargo_bin(PRG)?
+        .args(["create", "--dna", "-o", &outpath, "../data/inputs/smol.fa"])
+        .assert()
+        .success();
+
+    for cap in ["", "-m 2", "-m 3"] {
+        let mut args = vec!["count", &outpath, "A", "AC"];
+        args.extend(cap.split_whitespace());
+        let output = Command::cargo_bin(PRG)?
+            .env("HOME", home.path())
+            .args(&args)
+            .output()?;
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout)?, "A 93\nAC 11\n", "{cap}");
+    }
+
+    // the T group is the last one under -m 1
+    let output = Command::cargo_bin(PRG)?
+        .env("HOME", home.path())
+        .args(["count", "-m", "1", SUFR1, "T"])
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout)?, "T 2\n");
+    Ok(())
 }
 
 // --------------------------------------------------

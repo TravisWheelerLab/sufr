@@ -54,6 +54,7 @@ pub struct SufrSearch<'a, T: Int> {
     suffix_array_mem: &'a [T],
     suffix_array_rank_mem: &'a [T],
     len_suffixes: usize,
+    num_suffixes: usize,
     sort_type: &'a SuffixSortType,
     max_query_len: Option<usize>,
 }
@@ -77,6 +78,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
             } else {
                 args.suffix_array.len()
             },
+            num_suffixes: args.len_suffixes,
             sort_type: args.sort_type,
             max_query_len: args.max_query_len,
         }
@@ -110,16 +112,12 @@ impl<'a, T: Int> SufrSearch<'a, T> {
             } else {
                 // This is the case for the compressed/in-memory SA
                 let start_rank = self.suffix_array_rank_mem[start];
-                let end_rank = if start == end {
-                    if start == self.suffix_array_rank_mem.len() - 1 {
-                        // We're on the last rank, so go to end
-                        self.len_suffixes
-                    } else {
-                        // Use the next LCP rank
-                        self.suffix_array_rank_mem[start + 1].to_usize()
-                    }
-                } else {
-                    self.suffix_array_rank_mem[end].to_usize() + 1
+                // the hit ends where the group after the last
+                // matched one begins: len_suffixes here is the
+                // number of samples, not of suffixes
+                let end_rank = match self.suffix_array_rank_mem.get(end + 1) {
+                    Some(next) => next.to_usize(),
+                    None => self.num_suffixes,
                 };
                 start_rank.to_usize()..end_rank
             };
