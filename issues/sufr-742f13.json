@@ -1,0 +1,28 @@
+{
+  "id": "sufr-742f13",
+  "title": "Two concurrent opens race to create the subsample cache directory",
+  "body": "`cache_dir` in `libsufr/src/typed.rs` checks whether `~/.sufr` is a directory and calls `fs::create_dir` when it is not. Two threads that open a file with a search-time cap at the same time both see no directory, and the second `create_dir` fails with `File exists (os error 17)`.\n\nIn `libsufr/tests/search.rs` the tests `the_cap_at_search_time_bounds_the_comparison` and `a_cap_of_zero_at_search_time_means_the_files_cap` share one temporary `HOME` and run in parallel, so `cargo test --workspace` fails about one run in ten with that error on one of them.\n\n## Proposal\n\n`fs::create_dir_all`, which returns `Ok` when the directory exists. Whether the cache lives there at all is sufr-22b9c3.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T06:45:30.432465207Z",
+  "updated_at": "2026-11-05T06:45:30.432465207Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}

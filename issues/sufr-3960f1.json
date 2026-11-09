@@ -1,0 +1,33 @@
+{
+  "id": "sufr-3960f1",
+  "title": "The .sufr header is read and written by one module",
+  "body": "Three pieces of code know the `.sufr` header layout.\n\n- `SuffixArrayBuilder::open_output` and `finish_output` (`libsufr/src/sufr_builder.rs:865` and `:947`) write it into an `Output` struct (`:971`).\n- `SufrFile::read` (`libsufr/src/sufr_file.rs:139-272`) reads it with nine hand-written \"8 bytes little-endian as u64\" blocks.\n- `util::read_text_length` (`libsufr/src/util.rs:95`) reads the version byte and the text length at fixed offsets, separately.\n\nThe two native-endian slice casts `slice_int_to_slice_u8` and `vec_to_slice_u8` (`util.rs:123`, `:139`) are unsafe and carry TODOs. `file_access.rs` holds `FileAccess<T>` (`get` at 67, `get_range` at 89, `Iterator::next` at 133) and the positioned `write_at` and `read_exact_at` shim for unix and windows (177-201). The builder has its own `write_all_at` (`sufr_builder.rs:991`).\n\n## Proposal\n\n- `format.rs` holds one `Header` struct, one function that reads it, one that writes it, and named offsets.\n- `io.rs` holds `FileAccess<T>`, its iterator, the positioned read/write shim and the two slice casts.\n- `SufrFile::read`, the builder's header code and `read_text_length` call `format.rs`. The three copies are deleted.\n\nThe `.sufr` bytes do not change. The byte-diff test from the golden-test step must pass unchanged.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": "sufr-dbce71",
+  "blocked_by": [
+    "sufr-8d9730"
+  ],
+  "related": [],
+  "assignee": "Jack Roddy/4be42394",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:47:46.617741624Z",
+  "updated_at": "2026-11-02T17:58:57.692241467Z",
+  "closed_at": "2026-11-02T17:58:57.692241467Z",
+  "close_reason": "Landed in 2632038: format.rs (Header, read, write, offsets) and io.rs. Header::read still does not check the version against OUTFILE_VERSION; see sufr-b5ee97.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "2632038",
+      "branch": "refactor"
+    }
+  }
+}

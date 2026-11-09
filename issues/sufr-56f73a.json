@@ -1,0 +1,40 @@
+{
+  "id": "sufr-56f73a",
+  "title": "create_empty_dies passes because its input path does not exist",
+  "body": "`create_empty_dies` (`sufr/tests/cli.rs:104-110`) runs `create ../data/expected/empty.sa` and asserts failure. That path is a `.sa` file under `data/expected/` and the survey did not find it there. The empty input in the repository is `data/inputs/empty.fa` (0 bytes). The command probably fails because the file is missing, so the test does not show what the CLI does with an empty input.\n\nSeen by reading the test and listing `data/` in the survey. The command was not run.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:48:29.208729147Z",
+  "updated_at": "2026-11-04T05:38:17.967205492Z",
+  "closed_at": "2026-11-04T05:38:17.967205492Z",
+  "close_reason": "Fixed in 1d4b214: the test is create_empty_input_fails, on data/inputs/empty.fa, asserting failure and an empty output file.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "f8d0a7c6",
+      "at": "2026-11-02T19:59:04.497409353Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the test (`cli.rs:103-109`) passes `../data/expected/empty.sa`, which does not exist. Running `create data/inputs/empty.fa` exits 1 with \"Failed to read the first two bytes. Is the file empty?\". So the CLI handles an empty input, and the test never reaches that code.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "1d4b214",
+      "branch": "refactor"
+    }
+  }
+}

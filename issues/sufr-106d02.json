@@ -1,0 +1,40 @@
+{
+  "id": "sufr-106d02",
+  "title": "max_query_len resolves differently in compare and set_suffix_array_mem",
+  "body": "A search combines the max query length the file was built with (`SuffixSortType::MaxQueryLen(mql)`, where 0 means fully sorted) with the one the caller passes in `SearchOptions::max_query_len`. Two functions do this, and they disagree.\n\n`SufrSearch::compare` in `libsufr/src/sufr_search.rs`:\n\n- built `mql > 0` and caller `Some(v)`: `min(mql, v)`\n- caller `Some(v)` otherwise: `v`\n- caller `None`: `mql`\n- a result of 0 means compare the whole query\n\n`SufrFile::set_suffix_array_mem` in `libsufr/src/sufr_file.rs`:\n\n- treats a built `mql` of 0 as `text_len`\n- treats a caller value of 0 as \"not given\" and uses the built value\n\n| built | caller | `compare` | `set_suffix_array_mem` |\n|---|---|---|---|\n| 20 | `Some(0)` | 0, unbounded | 20 |\n| 0 | `Some(10)` | 10 | 10 |\n| 20 | `None` | 20 | 20 |\n\nIn the first row the binary search compares past position 20 in a suffix array that is only sorted to 20. The order beyond that prefix is arbitrary, so the search may return a wrong range. It is unverified whether any caller passes `Some(0)`.\n\nFound by reading the code. Not reproduced.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-10-28T02:10:00.824698645Z",
+  "updated_at": "2026-11-04T06:52:52.507070762Z",
+  "closed_at": "2026-11-04T06:52:52.507070762Z",
+  "close_reason": "Fixed in fa8eb70: searched_len treats Some(0) like None. a_cap_of_zero_at_search_time_means_the_files_cap in libsufr/tests/search.rs pins it on a file built with max_query_len 2.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "4bf3f60c",
+      "at": "2026-11-02T19:59:04.424315712Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the two sites are `searched_len` (`index.rs:568-574`) and `load_suffixes` (`index.rs:~242-257`).\n\n- `searched_len` maps a built value above 0 with `Some(0)` to 0, meaning unbounded.\n- `load_suffixes` treats a caller 0 as not given and uses the built value.\n\nRows 2 and 3 of the table agree. Row 1 (built 20, `Some(0)`) still differs.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "b4a924a",
+      "branch": "search-api"
+    },
+    "closed": {
+      "commit": "fa8eb70",
+      "branch": "refactor"
+    }
+  }
+}

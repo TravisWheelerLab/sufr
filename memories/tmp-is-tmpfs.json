@@ -1,0 +1,10 @@
+{
+  "slug": "tmp-is-tmpfs",
+  "text": "On this machine /tmp is tmpfs (31 GB of RAM) and /home, where the repo and benchmarks/runs live, is btrfs with compress=zstd:3. A build that keeps scratch in tempfile::tempfile() or NamedTempFile therefore keeps it in RAM, outside its RSS, and never touches disk. A build that writes scratch into its output file writes to btrfs, where 4 million 2 KB positioned writes took 10.6 s against 1.9 s to tmpfs on dna-1024.fa with 8 threads. Checked with df -T on 2026-11-05.",
+  "created_at": "2026-11-05T07:38:50.969687765Z",
+  "updated_at": "2026-11-05T07:38:50.969687765Z",
+  "stamp": {
+    "commit": "80d74c0",
+    "branch": "construction"
+  }
+}

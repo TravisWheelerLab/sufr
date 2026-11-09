@@ -1,0 +1,40 @@
+{
+  "id": "sufr-626e7f",
+  "title": "A query that sorts before the first suffix underflows mid - 1",
+  "body": "`SufrSearch::suffix_search_first` and `suffix_search_last` in `libsufr/src/sufr_search.rs` recurse on `low..=mid - 1` when the query compares less than the suffix at `mid`. When `mid` is 0 that subtraction underflows.\n\n`mid` reaches 0 with a `Less` comparison when the query sorts before the suffix at rank 0. That suffix is normally the sentinel `$`, so any query starting with a byte below `$`, such as a space, `!` or `#`, should reach it. Debug builds panic. In release builds `high` becomes `usize::MAX`, the next `get_suffix` returns `None`, and the `?` turns that into \"not found\". The release result is correct by accident.\n\nFound by reading the code. Not reproduced.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-10-28T02:10:00.803372811Z",
+  "updated_at": "2026-11-04T06:27:43.458594524Z",
+  "closed_at": "2026-11-04T06:27:43.458594524Z",
+  "close_reason": "Fixed in 37f6974: both searches return None at rank 0 instead of recursing on mid - 1. Reproduced in debug by the ! case in libsufr/tests/search.rs; release had wrapped and answered no hits by accident.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "daeb77c2",
+      "at": "2026-11-02T19:59:04.449014283Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the sites are `first_match` (`search.rs:194`) and `last_match` (`search.rs:227`). `sufr locate data/inputs/1.sufr ' '` panics with \"attempt to subtract with overflow\" at `search.rs:194:44` in a debug build.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "b4a924a",
+      "branch": "search-api"
+    },
+    "closed": {
+      "commit": "37f6974",
+      "branch": "refactor"
+    }
+  }
+}

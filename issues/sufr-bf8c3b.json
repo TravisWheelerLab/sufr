@@ -1,0 +1,28 @@
+{
+  "id": "sufr-bf8c3b",
+  "title": "The test fixtures under data/ are reviewed: what each is for, what is dead, and how one is rebuilt",
+  "body": "The test data under `data/` at 56db6ff: 11 FASTA inputs and 4 `.sufr` copies in `data/inputs/`, 16 `.sufr` files and 9 `.out` files in `data/expected/`, 1.8 MB in all. Ken made them in 2024 for the tests of the day; the scripts that rebuilt them, `mk_test_files.py` and the Makefile, were deleted in 56db6ff because nothing ran them and one would have rebuilt the fixtures wrong. This issue reviews what is there and decides what stays.\n\nWhat the inventory on 2026-11-03 found:\n\n- Dead files. `1d.sufr` is format version 4 and cannot be opened; `1m.sufr` fails to open with \"Bytes must be 1 or 0\"; `1s.sufr`, `locate2.out` and `data/inputs/abba.sufr` are read by no test.\n- Copies. `data/inputs/{1,2,3,abba}.sufr` are byte-identical to the `data/expected/` files of the same name. Tests read `inputs/1.sufr` fourteen times and `inputs/2.sufr` and `3.sufr` once each.\n- Names. `1`, `2`, `3`, `1n`, `2ns`, `2d` say nothing about what the input exercises. `1.fa` is `ACGTNnacgt`, one record with an N and lowercase; `2.fa` is two records with lowercase; `3.fa` has a run of ten N; `abba.fa` is a non-DNA text; `mostlya1`, `mostlya2` and `spaced_input` serve the seed-mask tests; `smol.fa` is three short DNA records; `uniprot.fa` is 296 protein records; `long_dna_sequence.fa` has a run of 2000 N.\n- Provenance. Every `.sufr` in `data/expected/` is the tool's own output, committed by Ken; the current code reproduces 13 of them byte for byte through `create_bytes_match_fixtures`. Every `.out` file came from running the binary, per the comments in `sufr/tests/cli.rs`. The oracle in `libsufr/tests/oracle.rs` and the hand-derived tests in `libsufr/tests/search.rs` are the only expectations not produced by the code under test.\n- No way to rebuild. With the scripts gone, the flags each fixture was built with live only in `create_bytes_match_fixtures`.\n\n## Proposal\n\nDecide for each file whether a test needs it, delete the rest, and give what stays a name that says what it is for. Record the build flags of every `.sufr` fixture in one place, the bytes test, so a fixture can be regenerated on purpose when the format or the sort changes.\n\n## Open\n\n- Whether the `.out` files stay, or their tests move to hand-derived expectations like `libsufr/tests/search.rs`.\n- Whether `uniprot.fa` and `long_dna_sequence.fa`, the two real-sized inputs, are the right ones to keep as regression fixtures.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T06:32:37.209874404Z",
+  "updated_at": "2026-11-04T06:32:37.209874404Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "56db6ff",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}

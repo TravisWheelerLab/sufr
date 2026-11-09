@@ -1,0 +1,31 @@
+{
+  "id": "sufr-cdae39",
+  "title": "SuffixArray hides its integer width behind a struct",
+  "body": "`SuffixArray` in `libsufr/src/lib.rs` is `pub enum SuffixArray { U32(Index<u32>), U64(Index<u64>) }`, and `Index<T>` is public with public fields, so the integer width is on the public surface and the docs tell a reader to use `Index` to pick it. The CLI never matches a variant.\n\n## Proposal\n\n```rust\npub struct SuffixArray { inner: SuffixArrayKind }\npub(crate) enum SuffixArrayKind { U32(TypedSuffixArray<u32>), U64(TypedSuffixArray<u64>) }\npub(crate) struct TypedSuffixArray<T: Int> { … }   // today's Index<T>\n```\n\nThe public methods stay as they are. The three matches in `Hits` move onto `SuffixArray` as `pub(crate)` methods, so every forwarding match is in `lib.rs`. `Index`, `Int` and `FileAccess` leave the crate root. `libsufr/tests/header.rs` opens through `SuffixArray`.\n\n## Rejected\n\n- dev's `Box<dyn SuffixArrayTrait>`: two impls, no generic consumer, a vtable call per search.\n- A width parameter on the public type: the user would pick the width, which is what the wrapper exists to prevent.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": "Jack Roddy/5bf3e231",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-03T23:24:26.388590055Z",
+  "updated_at": "2026-11-04T01:09:13.338533913Z",
+  "closed_at": "2026-11-04T01:09:13.338533913Z",
+  "close_reason": "Landed as c6c9b53 on refactor: SuffixArray is a struct over the pub(crate) enum SuffixArrayKind, Index<T> is TypedSuffixArray<T> in typed.rs, and Index, Int and FileAccess left the crate root. Sweep of 7,376 runs identical in stdout, exit codes and .sufr bytes.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "6df218d",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "c6c9b53",
+      "branch": "refactor"
+    }
+  }
+}

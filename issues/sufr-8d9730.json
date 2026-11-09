@@ -1,0 +1,41 @@
+{
+  "id": "sufr-8d9730",
+  "title": "The paths the refactor touches have golden and byte-level tests",
+  "body": "The CLI golden tests in `sufr/tests/cli.rs` (1248 lines) pin stdout for `count` (2 tests), `extract` (8), `list` (7) and `locate` (9). The 13 `create` tests (104-302) compare only the suffix array order read back through `SufrFile::<u32>`, not the bytes, LCP, text or metadata. The `summarize` test (1146-1165) skips any row its regex does not match. The fixtures in `data/expected/` pin `OUTFILE_VERSION` 6 (`libsufr/src/types.rs:16`), so a layout change breaks them.\n\nNothing tests these paths today:\n\n- `-o` on `count`, `extract` and `locate`\n- `list` with RANK arguments, `-o` and `-l`\n- query-file input (`parse_locate_queries`, `sufr/src/lib.rs:439-457`)\n- `create -n`, `-m`, `--write-lcp` and the default output name\n- the header layout, `file_access`, `sufr_search`, the locate cache, partition and merge\n\n## Proposal\n\nAdd tests before any code moves.\n\n- Golden tests for `-o` on `count`, `extract` and `locate`.\n- Golden tests for `list` with RANK arguments, and for query files.\n- Tests for `create -n`, `-m` and `--write-lcp`.\n- A byte-diff test that builds each fixture input and compares the `.sufr` bytes with `data/expected/`.\n- A unit test that writes a header and reads it back.\n\nBehavior that is wrong today is pinned as it is, and the bug is tracked in its own issue. For `list -o` the test records the current output and the bug issue records that it is wrong.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 1,
+  "labels": [],
+  "parent": "sufr-dbce71",
+  "blocked_by": [],
+  "related": [],
+  "assignee": "Jack Roddy/4be42394",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:47:41.524224734Z",
+  "updated_at": "2026-11-02T17:52:30.013056536Z",
+  "closed_at": "2026-11-02T17:52:30.013056536Z",
+  "close_reason": "Landed in d17bed2: 19 CLI tests in sufr/tests/cli.rs and libsufr/tests/header.rs. All 13 fixtures byte-match a fresh build with --write-lcp.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "6ad64c40",
+      "at": "2026-11-02T17:48:55.837121094Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "A fresh `sufr create` is byte-identical to each fixture in `data/expected/*.sufr` when `--write-lcp` is passed. I checked all eight fixture inputs at e8655c9 with a debug build, at `-n 3` and at the default partition count. The byte-level test can therefore compare `sufr create` output to the fixtures directly, which pins the header layout and the whole writer. sufr-c9b319 records why `--write-lcp` is needed.",
+      "commit": "e8655c9",
+      "branch": "refactor",
+      "edited_at": "2026-11-02T17:49:34.744248382Z"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "d17bed2",
+      "branch": "refactor"
+    }
+  }
+}

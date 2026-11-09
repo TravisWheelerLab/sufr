@@ -1,0 +1,31 @@
+{
+  "id": "sufr-eae820",
+  "title": "A query whose search fails is dropped from the results without an error",
+  "body": "`SufrFile::suffix_search` in `libsufr/src/sufr_file.rs` runs each query on rayon and collects the results like this:\n\n```rust\n.flat_map(|(query_num, query)| -> Result<SearchResult<T>> {\n    let mut search = thread_local_search.get_or_try(new_search)?.borrow_mut();\n    search.search(query_num, &query, args.find_suffixes)\n})\n.collect();\n```\n\n`Result` implements `IntoParallelIterator`. An `Ok` yields one item and an `Err` yields none. A query whose `SufrSearch` construction or `search` call fails therefore disappears from the returned `Vec`, and `suffix_search` still returns `Ok`. `count`, `extract` and `locate` all go through `suffix_search`, so a caller of any of them gets fewer results than queries and no error.\n\nFound by reading the code. Not reproduced.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-10-28T02:10:00.774579276Z",
+  "updated_at": "2026-10-28T03:30:36.122273936Z",
+  "closed_at": "2026-10-28T03:30:36.122273936Z",
+  "close_reason": "Fixed in b3e738a. SuffixArray::search_many returns one Result per query, and the CLI passes each error on with ?.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b4a924a",
+      "branch": "search-api"
+    },
+    "closed": {
+      "commit": "98057b3",
+      "branch": "search-api"
+    }
+  }
+}

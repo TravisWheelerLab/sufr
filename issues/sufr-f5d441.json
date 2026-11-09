@@ -1,0 +1,37 @@
+{
+  "id": "sufr-f5d441",
+  "title": "SuffixArrayBuilder is reached from SuffixArray::build",
+  "body": "`SuffixArrayBuilder` (`libsufr/src/build.rs:36`) is reached through its own constructors, `from_sequence_file(path, delimiter)` and `from_data(text, sequences)`, and finished with `build_to_file(path, low_memory) -> Result<SuffixArray>`. `SuffixArray` (`lib.rs`) has `open` and `open_with` but no way to start a build, so a user learns two entry points for one type.\n\n## Proposal\n\n`SuffixArray::build(..)` returns the builder, so a build reads as `SuffixArray::build(..).with_dna_options(..).build_to_file(..)`. Whether `SuffixArrayBuilder` keeps any public constructor of its own is open; the builder may be a type a user only ever receives.\n\n## Open\n\n- What `build` takes: the path, the text and sequences, or one call per source.\n- Whether `from_sequence_file` and `from_data` stay public, become `pub(crate)`, or go.\n\nThis waits on the builder redesign that separates configuration from construction, since that decides what the builder's surface is.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T21:04:02.858857177Z",
+  "updated_at": "2026-11-03T22:53:25.517788887Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [
+    {
+      "id": "9d335674",
+      "at": "2026-11-03T22:53:25.517788307Z",
+      "author": "Jack Roddy/5bf3e231",
+      "text": "The builder's shape was fixed during the reorganization and has landed by 6df218d: SuffixArrayBuilder keeps its constructors, the with_ setters and build_to_file, and nothing else; the names chosen on dev at e8655c9 (SuffixArrayBuilder, from_sequence_file, from_data, with_*, build_to_file) stay; the construction stages are free functions under libsufr/src/build/, each taking the text as &[u8] plus the values it reads, with mask: Option<&SeedMask> and max_query_len: usize as two parameters. This was a section of CLAUDE.md until the file was cut back to rules.",
+      "commit": "efaf30f",
+      "branch": "bench"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "sufr-d95dba",
+  "title": "Source is the query side's read-only array and construction keeps a concrete Scratch",
+  "body": "`Buffer<W>` in `buffer.rs` has two halves. One is a read-only array: `open`, `len`, `get`, `range`, which `TypedSuffixArray` holds for its text and suffix array and the search reads. The other is an append buffer: `empty`, `extend_from_slice`, `flush`, with a pending tail and a temp file inside `Disk`. Only `partition` grows anything; every other use in the build makes an array from a finished `Vec` or reads one whole. The build functions are generic over the storage for that one reason.\n\n## Proposal\n\nThe trait is `Source<W>` in `source.rs`, with `open`, `len`, `get` and `range` and nothing else, implemented by `MemorySource<W>` over a `Vec` and `DiskSource<W>` over a region of a file. `TypedSuffixArray<W, T: Source<u8>, S: Source<W>>` is the only user.\n\nConstruction keeps its own concrete type: `Scratch<W>` in `build/scratch.rs`, the enum of `Memory(Vec)` and `Disk(DiskScratch)` that the build had before `sufr-cad4f6`, chosen by `ScratchKind` from `with_memory_scratch` at runtime and read back with `consume`. `partition`, `sort_partitions`, `write` and `construct` are generic over `W` only, and the kind is passed down as an argument. Nothing under `build/` names `Source`.\n\n`build_to_file` is the one way to build and returns `()`.\n\n## Rejected\n\n- A second trait for the append side that finishes into a `Source`. Jack wants fewer traits, and the append side has one caller.\n- The in-memory build from `sufr-7ca2fd`. Jack reverted the builder to writing a file only on 2026-11-04.\n\n## Cost\n\n- `partition` and `sort_partition` change, so the build is benchmarked before and after.\n- The `typed` feature exports `Source`, `MemorySource`, `DiskSource` in place of `Buffer`, `Memory`, `Disk`.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": "Jack Roddy/707e7014",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T04:41:18.194872349Z",
+  "updated_at": "2026-11-05T04:44:02.70757096Z",
+  "closed_at": "2026-11-05T04:44:02.70757096Z",
+  "close_reason": "Landed as the commit after d8d16f3 on branch source. Source has four methods and one user; Scratch is back under build/ as the enum it was, with the kind passed down.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "d8d16f3",
+      "branch": "source"
+    },
+    "closed": {
+      "commit": "80d74c0",
+      "branch": "source"
+    }
+  }
+}

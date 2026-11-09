@@ -1,0 +1,40 @@
+{
+  "id": "sufr-bbfccb",
+  "title": "The locate cache writes rank bytes past the end of the rank vector",
+  "body": "`SufrFile::set_suffix_array_mem` in `libsufr/src/sufr_file.rs` writes a cache file of the sampled suffix array and its ranks. `suffix_array_rank_mem` is a `Vec<T>`, but the write sizes its byte slice with `usize`:\n\n```rust\nslice::from_raw_parts(\n    self.suffix_array_rank_mem.as_ptr() as *const u8,\n    self.suffix_array_rank_mem.len() * std::mem::size_of::<usize>(),\n)\n```\n\nWith `T = u32` on a 64-bit target the slice is twice as long as the allocation. Writing it reads past the end of the vector, which is undefined behaviour. The file then holds whatever bytes followed the allocation. The read path takes `suffix_array_len` values of `T` from the start of that region, so the ranks it reads back may still be right. The out-of-bounds read happens regardless.\n\nFound by reading the code. Not reproduced.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-10-28T02:10:00.781929599Z",
+  "updated_at": "2026-11-02T19:59:04.375556246Z",
+  "closed_at": "2026-11-02T19:59:04.375556246Z",
+  "close_reason": "Fixed by bd21d2e. At cff9fb6 the cache write goes through `as_bytes` (`io.rs:236`), which sizes the slice with `size_of_val`. The `size_of::<usize>()` multiplication is gone.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "340a2473",
+      "at": "2026-11-02T18:31:30.716976057Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "While reorganizing storage (sufr-b9d61c) the cache write was read again: it sizes its bytes by T through vec_to_slice_u8, so the overrun this issue describes may no longer exist. Check against index.rs before working it.",
+      "commit": "bd21d2e",
+      "branch": "refactor"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "b4a924a",
+      "branch": "search-api"
+    },
+    "closed": {
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  }
+}

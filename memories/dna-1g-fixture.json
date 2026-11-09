@@ -1,0 +1,10 @@
+{
+  "slug": "dna-1g-fixture",
+  "text": "benchmarks/runs/dna-1024.fa is the suite's normal DNA fixture at 1024 MiB: 24 records, 6 distinct bytes, made 2026-11-05 with -s 1024. long-repeats-10.fa and long-repeats-100.fa beside it are ten copies of a unit. At 276640b, 8 threads, one run, default budget, create --dna takes 9.1 s and 2381 MiB peak on dna-1024.fa, 0.22 s on long-repeats-10.fa and 3.2 s on long-repeats-100.fa. At 80d74c0 it took 57.7 s on dna-1024.fa and did not finish long-repeats-100.fa in 15 minutes.",
+  "created_at": "2026-11-05T06:15:37.789649784Z",
+  "updated_at": "2026-11-05T10:19:12.145276136Z",
+  "stamp": {
+    "commit": "276640b",
+    "branch": "construction"
+  }
+}

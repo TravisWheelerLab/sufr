@@ -1,0 +1,37 @@
+{
+  "id": "sufr-2a4368",
+  "title": "The build is carved back up from one function where a piece earns a name",
+  "body": "`construct` in `libsufr/src/build.rs` is the whole build as one function since 1462051. It normalizes the text, counts the buckets and cuts the partitions, writes the header and text, gathers and sorts each turn, and writes the LCP at each partition's start. `PrefixEncoder`, `counting_sort`, `merge_sort`, `merge`, `find_lcp`, `cut_partitions` and `turns` are the functions around it. `partition.rs` and `sort.rs` are gone.\n\nWhat the flat function shows, for the carving order:\n\n- `merge_sort` and `merge` take 9 and 10 arguments: four slices, the mask, the cap, the N runs and the cache.\n- The text scan appears four times: count and gather, each with and without a mask.\n- The alphabet is matched in four places: `normalize`, `keep_table`, the N-run check and the header.\n- `first_suffixes` and `last_suffixes` are carried out of the turn loop only for the boundary LCPs.\n\n## Proposal\n\nCarve a piece out of `construct` only where it earns a name: recursion, use from two places, a test that wants to call it, or a step with more than one implementation chosen at runtime. A step gets its own file only in that last case. Each carve is one commit, pinned by the fixtures and the oracle sweep, with the benchmark board when a hot loop moves.\n\n## Rejected\n\nBundling the arguments of `sort_partitions` and `merge_sort` into structs, one for the comparison settings and one for the build state. It made the calls short and moved the arguments without reducing them, so the module was no simpler.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T19:56:45.851102011Z",
+  "updated_at": "2026-11-09T21:19:02.262493106Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [
+    {
+      "id": "e1295de0",
+      "at": "2026-11-09T21:05:36.758519402Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "State at 1995d7c: construct still runs the pipeline in phases, and the pieces carved since the flatten are sort_partition and sort_masked_partition (two implementations of one step, chosen once per partition), count_masked and gather_masked with their bmi2 wrappers, and the encoder's windows_at, roll_windows and compact. The build-time cap is gone (b3f9104), the merge sort has no mask argument (cabe70c), and normalize and find_n_ranges are parallel passes. Still in construct: the two unmasked scan arms, the header literal, the first_suffixes and last_suffixes vectors and the turn loop. merge_sort and merge take 9 and 10 arguments.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "276640b",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}

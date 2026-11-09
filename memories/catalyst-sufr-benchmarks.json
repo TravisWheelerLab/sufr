@@ -1,0 +1,10 @@
+{
+  "slug": "catalyst-sufr-benchmarks",
+  "text": "~/sufr-benchmarks on catalyst (ssh catalyst: 2 x Xeon 8568Y+, 192 CPUs, 1 TB RAM, shared) is jeb's suffix-bench copied on 2026-11-05 with the paper's inputs hg38, hg38noN, hs1 and uniprot_sprot. sufr/ there is the checkout under test and vendor/sufr/sufr links to its release build. ./run-paper1gen.sh writes results/paper1gen-<commit>.csv and .tbl: 32 threads, 2000 partitions, no cap and no --dna, as the paper's table in results/paper1gen.tbl was run.",
+  "created_at": "2026-11-05T11:07:57.407271141Z",
+  "updated_at": "2026-11-05T11:07:57.407271141Z",
+  "stamp": {
+    "commit": "276640b",
+    "branch": "construction"
+  }
+}

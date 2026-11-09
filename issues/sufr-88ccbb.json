@@ -1,0 +1,128 @@
+{
+  "id": "sufr-88ccbb",
+  "title": "The build is timed on full genomes and the large protein sets under several masks",
+  "body": "The sweep script at `tmp-claude/2026-11-05-sweep/sweep.sh` builds an input under every flag set and mask with the dev build and the new one, times both and compares the bytes. It has run on `uniprot.fa`, chm13 chr21 and `uniprot_sprot.fa`. The real-sized inputs are on catalyst.\n\n| input | size | suffix width | .sufr with LCP | without |\n|---|---|---|---|---|\n| hg38.fa, hs1.fa | 3.1 Gbase | 32-bit | 28 GB | 15 GB |\n| /data/mgnify/fa/mgy_proteins_1.fa | 21.5 GB, 100 M records | 64-bit | 366 GB | 194 GB |\n| /data/AllTheBacteria/sampling_2024, 20,903 genomes concatenated | 84 GB | 64-bit | 1.4 TB | 760 GB |\n\nOn 2026-11-05 catalyst had 1.4 TB free on /home at 90% and 4.4 TB free on the root partition. Jack is running a backup and cleanup pass on /home first.\n\n## Proposal\n\n- Masks: none, 12 of 17 (`11011011011011011`), PatternHunter 11 of 18, and a 20 of 29 for DNA. DNA with `--dna` and `--dna -a`.\n- Every output under a scratch directory on the root partition, deleted after its comparison.\n- For mgnify and AllTheBacteria: no LCP, and one output at a time, compared by sha256 rather than `cmp`, since old and new cannot both be held.\n- AllTheBacteria in steps of 1,000 and 5,000 genomes before the full set, so the old build's time at 84 GB is known before it is paid.\n- The old build on the unmasked and 12-of-17 cells; sais64 through the harness's `measure` binary for its time only, since it sorts the raw text without sufr's delimiters.\n\n## Open\n\n- The mgnify file's 100 million record names are held in memory and written into the header; nothing has exercised that.\n- Where the scratch directory goes once the cleanup is done.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-06T00:31:15.465573815Z",
+  "updated_at": "2026-11-09T21:20:57.72811651Z",
+  "closed_at": "2026-11-09T21:20:57.72811651Z",
+  "close_reason": "Run complete on 2026-11-07 at 1995d7c, 16 threads on catalyst: the final table is in the last notes and every row, with hashes, is under /virt-data/jack/sweep/. Every comparable cell matches the dev build except hg38 --dna -a unmasked, where the dev build is wrong. What it raised lives on in sufr-aa4802 (a stray byte halves the key) and sufr-c9f710 (suite rows for a cap and a mask).",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "faf8d505",
+      "at": "2026-11-06T01:08:31.45393808Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "uniprot_sprot.fa (288 MB, all of Swiss-Prot) on catalyst at 16 threads, dev build beside cabe70c, one run per cell: no mask 7.6 and 2.9 s; 101 4.8 and 3.7; 1101 5.9 and 3.9; 10111011 7.5 and 4.3; PatternHunter 8.4 and 5.0; 12 of 17 8.3 and 5.0; weight 11 8.1 and 5.0; weight 12 8.0 and 5.2. All 27 buildable cells match the dev build byte for byte across the plain, -n 1 and --memory-budget 4 flag sets; the 12 cells with masks past the 12-position cap are refused. Before cabe70c the masked cells took 5.2 to 6.5 s. What is left above the unmasked time is the masked scan.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "549665a0",
+      "at": "2026-11-06T05:35:55.639130609Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "hg38 with --dna -a and no mask: old 289 s, new 107 s, and the outputs differ from rank 2,148,348,353 on, where the suffixes beginning with N and the delimiter start. The dev build at c69cc0a lists them in descending position with LCP 1, putting N%TAAT before N%NNNN, which byte order forbids; the new build has them in text order with LCPs that follow the text. On a three-record input whose first two records end in runs of N, the dev build puts N%TTGA before N%GATTACA with LCP 1 and the new build puts G before T with LCP 2; the oracle's reference sort agrees with the new build, and that input is now a case in libsufr/tests/oracle.rs. So every --dna -a cell on hg38 will read NO against the dev build, and the dev build is the one that is wrong.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "f50e6d57",
+      "at": "2026-11-06T11:39:14.099566751Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "atb-5000, the first 5,000 AllTheBacteria genomes concatenated (19.5 GB, 64-bit), --dna, no mask, no LCP, 16 threads: dev build 2390 s, new build 15,498 s, sha256 of the outputs equal. At 1,000 genomes (4.5 GB) the same cell was 366 s against 106 s. During the new build one thread was running and sixteen sleeping for most of the time, with the output file growing in bursts: the partitions of a turn sort in parallel but each partition's merge is serial, and a partition holding thousands of near-identical copies with LCPs in the thousands holds up its turn. That is a reading of the thread states, not a profile.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "af5c8f8b",
+      "at": "2026-11-06T12:01:51.512563721Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "The atb-5000 masked cells were refused: the new build reports a key of 10 characters for this text. One of the 5,000 files, /data/AllTheBacteria/sampling_2024/SAMEA12547485.fa, has no trailing newline, so cat glued its last sequence line to the next file's header and some sixty header bytes became sequence, taking the alphabet past 32 distinct bytes. The 10-character keys also leave far more ties for the merge sort, so an unknown part of the 6.5x on the unmasked cell is this file. atb-1000 is clean. The concat for atb-5000 and atb-all has to add the missing newline, which awk 1 does; both are to be rerun from a clean file.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "c1726da4",
+      "at": "2026-11-06T12:39:53.706873269Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "mgy_proteins_1.fa (21.5 GB, 100 million records, 64-bit), bytes alphabet, no mask, no LCP, 16 threads: dev build 1616 s, new build 505 s, sha256 of the outputs equal. The 100 million record names in memory and in the header gave no trouble.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "28b8ec8f",
+      "at": "2026-11-06T14:32:22.656956963Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "atb-5000 again from a clean concatenation (awk 1 adds the missing newline; the file is one byte longer): --dna, no mask, no LCP, 16 threads, dev build 1691 s, new build 709 s, sha256 equal. So the 15,498 s on the glued file was the 10-character keys and not the genomes; with 21-character keys the new build is 2.4x faster here, against 3.4x at 1,000 genomes. The thread-state reading in the earlier note stands as the mechanism, the cause of the ties was the alphabet.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "9e0838ee",
+      "at": "2026-11-06T15:23:11.255358305Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "atb-5000 clean, the masked cells at 16 threads: 12 of 17 dev 962 s and new 436 s, hashes equal; PatternHunter new 413 s; 20 of 29 new 585 s. The clean concatenation of all 20,903 genomes is ready at /virt-data/jack/inputs/atb-all-clean.fa, 90 GB, with no build run on it yet.",
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    {
+      "id": "a4701f83",
+      "at": "2026-11-06T23:45:17.84185004Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "The masked scan now rolls windows and compacts the care positions with pext (commit after ebafb6e). chr21 at 4 threads, before and after: PatternHunter 1.18 and 0.64 s, 12 of 17 1.28 and 0.66 s, weight 21 1.70 and 0.67 s, unmasked 0.77 and 0.82 s. Swiss-Prot locally: 12 of 17 5.72 and 3.39 s, unmasked 4.76 and 4.91 s. A masked build is now under the unmasked one. Not yet rerun on catalyst; the next full run there picks it up.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    {
+      "id": "6b469760",
+      "at": "2026-11-07T04:37:17.074408492Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "atb-all, all 20,903 AllTheBacteria genomes concatenated cleanly (90 GB, 64-bit), --dna, no mask, no LCP, 16 threads: dev build 9652 s, new build 6848 s, sha256 equal, 808 GB each. The lead over old narrows as the set grows, 3.4x at 1,000 genomes, 2.4x at 5,000, 1.4x at all of them: more copies of the same sequence mean longer LCPs for the merge sort, which both builds pay.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    {
+      "id": "f2704bfe",
+      "at": "2026-11-07T08:29:01.652315492Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "atb-all masked, cabe70c at 16 threads: 12 of 17 dev 4838 s and new 2233 s, sha256 equal; PatternHunter new 2115 s; 20 of 29 new 2796 s. The baseline over every input is complete. The rerun of every new cell at 1995d7c, new only with old times carried over, started 2026-11-07 01:28 on catalyst as ramp4; results under /virt-data/jack/sweep/rerun/.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    {
+      "id": "03af6b02",
+      "at": "2026-11-07T08:57:59.937308552Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "Started over on 2026-11-07 with full capture. Everything sits under /virt-data/jack on catalyst: inputs/ (hg38, hs1, uniprot_sprot, mgy_proteins_1, the three clean AllTheBacteria concatenations), bin/sufr-old (the dev build) and bin/sufr-new (1995d7c), sweep.sh and ramp5.sh, results under sweep/. Each cell records wall seconds, CPU time over wall time, peak RSS in GB and the sha256 for each binary. Masks: DNA weights 6 (11011011), 11 (PatternHunter) and 20 (11011011011011011011011011011); protein weights 6, 8 (11011011011) and 12 (11011011011011011). Old runs beside new on the unmasked cell and PatternHunter for DNA, unmasked and 12 of 17 for protein; the other masks are new only. The earlier results dirs were deleted; their numbers are in the notes above.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    {
+      "id": "4fc2c6d2",
+      "at": "2026-11-07T21:58:44.845558811Z",
+      "author": "Jack Roddy/fdde2c6d",
+      "text": "The full run with capture finished 2026-11-07 14:54; every row is in /virt-data/jack/sweep/*/results.tsv on catalyst. atb-all at 16 threads, old then new, wall s / CPU of 16 / peak GB: none 10674 14.7 158 and 7666 12.6 191, hashes equal; weight 6 new 1135 11.7 188; PatternHunter 4534 13.2 216 and 1238 11.3 189, hashes equal; weight 20 new 1341 11.6 187. Across all inputs every comparable cell matches except hg38 --dna -a unmasked, where the dev build is wrong. Masked new builds run 1.3x to 7x faster than the unmasked new build; new peak RSS is 10 to 20 percent above old on the big inputs and new CPU use is about 12 of 16 against old's 14.",
+      "commit": "1995d7c",
+      "branch": "construction"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "cabe70c",
+      "branch": "construction"
+    },
+    "closed": {
+      "commit": "1995d7c",
+      "branch": "construction"
+    }
+  }
+}

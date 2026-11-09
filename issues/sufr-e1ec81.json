@@ -1,0 +1,31 @@
+{
+  "id": "sufr-e1ec81",
+  "title": "search_all runs in serial and par_search_all on the rayon pool, both over any iterator of byte-like queries",
+  "body": "`SuffixArray::search_all` in `libsufr/src/lib.rs` at 6edc011 is\n\n```rust\npub fn search_all<Q: AsRef<[u8]> + Sync>(&self, queries: &[Q]) -> Vec<Result<Hits<'_>>>\n```\n\nIt runs the queries on the global rayon pool, logs the elapsed time with `info!`, and is called with `&[String]` from the CLI and `&[&str]` from the tests, which is the whole set of types the parameter serves. It came over from the `search-api` branch's `search_many` in 8022b6a without review.\n\n## Proposal\n\nTwo functions with the same inputs. The serial one is the loop a caller would otherwise write; the parallel one runs on whatever rayon pool is current.\n\n```rust\n/// Search each query in turn, stopping at the first failed read.\npub fn search_all<Q>(&self, queries: impl IntoIterator<Item = Q>) -> Result<Vec<Hits<'_>>>\nwhere\n    Q: AsRef<[u8]>,\n{\n    queries.into_iter().map(|q| self.search(q.as_ref())).collect()\n}\n\n/// Search the queries on the current rayon pool, in the same order.\npub fn par_search_all<Q>(&self, queries: impl IntoIterator<Item = Q>) -> Result<Vec<Hits<'_>>>\nwhere\n    Q: AsRef<[u8]> + Sync,\n{\n    let queries: Vec<Q> = queries.into_iter().collect();\n    queries.par_iter().map(|q| self.search(q.as_ref())).collect()\n}\n```\n\nThe parameter earns its place because `IntoIterator` plus `AsRef<[u8]>` covers every shape a caller has: `&[&str]`, `&[String]`, `&Vec<String>`, arrays, `Vec<&str>` and `Vec<String>` by value, any iterator with `Item = &str` or `String`, and the same shapes over `&[u8]`, `Vec<u8>` and `[u8; N]`. References work through the blanket `impl AsRef<U> for &T`.\n\nDifferences between the two:\n\n| | `search_all` | `par_search_all` |\n|---|---|---|\n| bound on `Q` | `AsRef<[u8]>` | `AsRef<[u8]> + Sync` |\n| the iterator | streamed | collected to a `Vec<Q>` first, since rayon parallelises slices |\n| a failed read | stops at the first | every query runs, then the batch fails |\n| order | input order | input order |\n\nNeither logs; the CLI times its own commands. `Result<Vec<Hits>>` rather than `Vec<Result<Hits>>` because a failed read is a file problem, not a query problem, and every caller collected into it anyway.\n\nThe escape hatch is `search` for one query plus the fact that `SuffixArray` is `Send + Sync`, pinned by a test with `fn assert_sync<T: Sync>()`. A caller with its own rayon pool uses `pool.install(|| sa.par_search_all(..))`; one with its own threads uses `std::thread::scope` and `search`.\n\n## Call sites\n\n- `sufr/src/lib.rs`: `count`, `locate` and `extract` call `par_search_all` and drop the `collect::<Result<Vec<_>>>()`.\n- `libsufr/src/lib.rs` and `search.rs` tests: `search_all`.\n- `libsufr/examples/search.rs`: both.\n\n## Rejected\n\n- Deleting the batch function and leaving parallelism to the CLI. Jack wants the library to offer it, with the serial form beside it.\n- One function with a flag, or one calling the other through a one-thread pool. Two four-line functions.\n- The name `search_many`. `search_all` is already on the board.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": "Jack Roddy/1ddc0e5b",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T01:53:47.178486487Z",
+  "updated_at": "2026-11-04T02:07:57.988245427Z",
+  "closed_at": "2026-11-04T02:07:57.988245427Z",
+  "close_reason": "Landed in 4e04a02: search_all serial and par_search_all on the current rayon pool, both over impl IntoIterator of AsRef<[u8]>, returning Result<Vec<Hits>>. The Send + Sync test is suffix_array_is_send_and_sync in libsufr/src/lib.rs. The sweep was skipped by decision; sufr-7f37d4 holds the review of when it is required.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "6edc011",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "4e04a02",
+      "branch": "refactor"
+    }
+  }
+}

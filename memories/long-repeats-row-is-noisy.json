@@ -1,0 +1,10 @@
+{
+  "slug": "long-repeats-row-is-noisy",
+  "text": "The benchmark suite's long-repeats row (ten copies of a 1 MiB unit, 10 MiB, 4 threads) varies by up to 45% in instruction count between runs of the same binary: perf stat on sufr at c9c880d gave 542G, 657G and 789G instructions over three runs. Wall time swings with it. A before/after delta on that row means nothing without many repeats; the normal, long-n and protein rows are stable to 1-2%. Measured 2026-11-03.",
+  "created_at": "2026-11-04T05:12:52.494309385Z",
+  "updated_at": "2026-11-04T05:12:52.494309385Z",
+  "stamp": {
+    "commit": "a9bb934",
+    "branch": "refactor"
+  }
+}

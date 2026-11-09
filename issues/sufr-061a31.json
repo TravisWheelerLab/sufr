@@ -1,0 +1,31 @@
+{
+  "id": "sufr-061a31",
+  "title": "The search API takes the shape drafted on the search-api branch",
+  "body": "The search surface on `refactor` at c6c9b53 is `SuffixArray::open` (everything in memory), `open_with(filename, text: Storage, suffixes: Storage, max_query_len)`, `search` and `search_all` returning `Hits`, per-element `suffix_at`, `lcp_at` and `string_at`, a whole-array `suffixes()` iterator, and `Hits::extract(before, after)` returning `Extraction` records that carry their bytes.\n\nThe `search-api` branch, never merged, drafted the same shape with different choices. This takes those over.\n\n## Proposal\n\n- `open` opens on disk; `open_with(filename, &OpenOptions { text, suffixes, max_query_len })` with a `Default`.\n- `suffixes(Range)`, `lcps(Range)` and `text(Range)` replace `suffix_at`, `lcp_at`, `suffixes()` and `string_at`.\n- `Hits::extract(Context { before: usize, after: Option<usize> })`; `Hits::is_empty`.\n- `Location` gains `sequence_start`; `Extraction` holds a `Location`, its `sequence_range` and `suffix_offset`, and no bytes.\n- `search` returns `Result<Hits>` and `search_all` returns `Vec<Result<Hits>>`, with disk read errors carried out of the binary search. That part is sufr-09e733.\n- The branch's example at `libsufr/examples/search.rs`, and its `Cow` borrow of in-memory text in the compare, the latter benchmarked on its own.\n\nThe CLI's output stays the same; the differential sweep is the check.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": "Jack Roddy/5bf3e231",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T01:29:16.518466226Z",
+  "updated_at": "2026-11-04T01:38:18.452047219Z",
+  "closed_at": "2026-11-04T01:38:18.452047219Z",
+  "close_reason": "Landed on refactor as 583f39d (OpenOptions), 340da3a (range reads), a4dc338 (Context and a byte-free Extraction), 9049092 (fallible search) and 6edc011 (the example). The Cow borrow was already there as text_slice. The sweep of 7,376 runs against c6c9b53 is identical in stdout, exit codes and .sufr bytes.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "c6c9b53",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "6edc011",
+      "branch": "refactor"
+    }
+  }
+}

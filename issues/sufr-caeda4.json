@@ -1,0 +1,31 @@
+{
+  "id": "sufr-caeda4",
+  "title": "sufr declares chrono and home but never uses them, and lists pretty_assertions twice",
+  "body": "`sufr/Cargo.toml` lists `chrono` (line 17) and `home` (21). Grepping `sufr/src` finds no use of either. `meta.modified.format(..)` (`sufr/src/lib.rs:576`) calls a method on a value whose type comes from libsufr, which declares its own `chrono` (`libsufr/Cargo.toml:18`). `pretty_assertions` appears at lines 25 and 33, as a regular dependency and again as a dev-dependency. The two `chrono` pins also differ, 0.4.38 in `sufr` and 0.4.39 in `libsufr`.\n\nSeen by grep and reading in the survey. The build was not run without them.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:48:29.231901961Z",
+  "updated_at": "2026-11-02T19:27:59.663919134Z",
+  "closed_at": "2026-11-02T19:27:59.663919134Z",
+  "close_reason": "Fixed in ad1a659 as part of sufr-9b9fda: chrono and home removed from sufr, pretty_assertions only in dev-dependencies.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "ad1a659",
+      "branch": "refactor"
+    }
+  }
+}

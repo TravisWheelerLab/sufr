@@ -1,0 +1,37 @@
+{
+  "id": "sufr-7b022c",
+  "title": "Does a query match the sentinel or the sequence delimiter?",
+  "body": "The sentinel `$` and the sequence delimiter (`%` by default) are bytes in the text, so a query may match them. On fixture 1 (`ACGTNNACGT$`) the query `$` counts 1 and `ACGTNNACGT$` counts 1. On fixture 2 (`ACGTACGT%ACGTACGT$`) the query `T%A` matches at ABC:7, spanning the boundary between the two sequences. No test pins this today. sufr-5cf0b7 adds one that asserts the current behaviour, so a change here moves that test.\n\n## Options\n\n| option | behaviour | cost |\n|---|---|---|\n| keep | bytes are bytes; a query may match the sentinel or the delimiter and a match may span sequences | none; the test in sufr-5cf0b7 pins it |\n| reject | a query holding the sentinel or the delimiter is an error from `search` | an error path in `search`, and the CLI reports it; a user cannot search for a literal `%` in a text whose delimiter is `%` |\n| bound | a match may not cross a sequence boundary; a hit whose match would run into the delimiter or sentinel is not a hit | the compare in `search.rs` has to know where the sequence ends, which the ranks alone do not say; a cost per comparison |\n\nJack chose to keep on 2026-11-03, as the current behaviour and not as a design decision. The test in sufr-5cf0b7 records it. This issue stays open as the place to decide the other two.",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T04:15:42.533720784Z",
+  "updated_at": "2026-11-04T06:58:30.816305872Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [
+    {
+      "id": "1bc71330",
+      "at": "2026-11-04T06:58:30.816305352Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "query_kinds in libsufr/tests/search.rs (87f49b6) pins the current behaviour: on fixture 1, $ counts 1 and ACGTNNACGT$ finds position 0 in every storage mode. A decision for reject or bound moves those asserts.",
+      "commit": "fc5db36",
+      "branch": "refactor"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "4e04a02",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}

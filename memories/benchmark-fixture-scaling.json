@@ -1,0 +1,10 @@
+{
+  "slug": "benchmark-fixture-scaling",
+  "text": "From the benchmarks/ sweep at 069d033, 8 threads: the normal row is linear from 5 to 100 MiB (0.12, 0.25, 0.66, 1.42, 3.30 s) with median-to-min noise under 4% at 10 MiB and under 1% from 25 MiB. A single run of N costs about its length squared with the mitigations off (300,000: 4x; 1,000,000: 34x at 10 MiB) and nothing with them on. Two copies of a 5 MiB unit cost nothing on head and 113x with the mitigations off; ten copies of 1 MiB cost 27x on head. So 10 MiB shows every effect and is the default.",
+  "created_at": "2026-11-03T20:50:28.655135393Z",
+  "updated_at": "2026-11-03T20:50:28.655135393Z",
+  "stamp": {
+    "commit": "069d033",
+    "branch": "bench"
+  }
+}

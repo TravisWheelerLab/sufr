@@ -1,0 +1,28 @@
+{
+  "id": "sufr-ca4103",
+  "title": "A cache entry could extend backward to the start of its stretch",
+  "body": "`LcpCache` in `libsufr/src/lcp.rs` keys a slot by the distance between two suffixes and the 64 KiB block of the smaller one. An entry covers positions from where it was made to the end of the stretch of equality, so a block's first comparison at an earlier position misses and walks the stretch again, about a dozen walks per block in random order.\n\n## Proposal\n\nWhen `suffix_lcp` sets an entry, walk backward from the two starts while the bytes before them are equal and record the entry from there, so it covers the whole stretch and a block pays one walk. Worth doing only if a repeat-heavy board asks for it: long-repeats-100.fa takes 3.2 s at 276640b.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T11:27:25.087571636Z",
+  "updated_at": "2026-11-05T11:27:25.087571636Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "276640b",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "id": "sufr-2b76b5",
+  "title": "The LCP array written with -m 3 holds values greater than 3",
+  "body": "Building `data/inputs/long_dna_sequence.fa` with `-m 3 --write-lcp` writes an LCP array that holds values of 4 and 5. With a max query length of 3 no LCP should exceed 3. The suffix order is unaffected. Found while sweeping the builder during sufr-caa3f2; present before and after that change.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T18:59:02.062830787Z",
+  "updated_at": "2026-11-04T05:12:52.48611401Z",
+  "closed_at": "2026-11-04T05:12:52.48611401Z",
+  "close_reason": "Fixed in a9bb934: find_lcp compares max_query_len - skip bytes past skip. Checked on long_dna -m 3 by recomputing every adjacent LCP from the suffix text. The tie order under -m moved too; see the note above. The N-run shortcut's copy of the defect is sufr-6ee7f5.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "b84ee49c",
+      "at": "2026-11-02T19:59:04.522015755Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "Reproduced at cff9fb6. `create --dna -m 3 --write-lcp data/inputs/long_dna_sequence.fa` followed by `list -p` shows 20001 LCP values. Of these, 3 are 4 and 10 are 5. The rest are 50 at 2 and 19919 at 3.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    },
+    {
+      "id": "043667d9",
+      "at": "2026-11-04T04:09:39.143116077Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Jack decided on 2026-11-03 to fix this before sufr-a88738, the construction oracle, rather than have the oracle skip LCP under -m. The cause is the TODO in find_lcp (libsufr/src/build/sort.rs): len is set to max_query_len rather than max_query_len minus skip, and the N-run shortcut above it is not capped either. Priority raised to P2 for that.",
+      "commit": "4e04a02",
+      "branch": "refactor"
+    },
+    {
+      "id": "6b7821e5",
+      "at": "2026-11-04T05:04:20.787671656Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Split on 2026-11-03: this issue is the len line only, fixed by max_query_len - skip. The N-run shortcut three lines above has the same defect and is sufr-6ee7f5, which batch 1 (sufr-a88738) also waits on. Found while checking the fix: the suffix order inside groups of equal keys also moves under -m, 149 of 20,001 rows on long_dna -m 3, because merge carried the uncapped LCP into its next decision. The issue's claim that the order was unaffected was wrong.",
+      "commit": "c9c880d",
+      "branch": "refactor"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "dc7dd45",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "a9bb934",
+      "branch": "refactor"
+    }
+  }
+}

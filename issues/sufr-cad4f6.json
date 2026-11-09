@@ -1,0 +1,64 @@
+{
+  "id": "sufr-cad4f6",
+  "title": "One Buffer trait replaces Scratch, FileAccess, Text and Suffixes",
+  "body": "Four pieces each hold an array of values in memory or on disk, and each one is written on its own.\n\n- `Scratch<T>` in `build/scratch.rs` is an enum of `Memory(Vec<T>)` and `Disk(DiskScratch<T>)`. `partition` appends to one per bucket from rayon threads, behind a `Mutex`, and `sort_partition` and `write` call `consume` to get a `Vec<T>` back. `DiskScratch` is a temp file with a 4096-value append buffer, deleted on drop. `ScratchKind` is passed into `partition` as an argument and `sort_partition` recovers it with `buffers.first().map(Scratch::kind)`.\n- `FileAccess<T>` in `io.rs` is a read-only region of the `.sufr` file with `get`, `get_range` and `iter`, read with `pread` on a shared `File`.\n- `Text` in `typed.rs` is an enum of `Memory(Vec<u8>)` and `Disk(FileAccess<u8>)`, read through `text_byte`, `text_range` and `text_slice`, each a two-arm match. `compare` in `search.rs` calls `text_byte` once per byte.\n- `Suffixes<T>` in `typed.rs` is an enum of `Memory(Vec<T>)`, `Subsampled { suffixes, ranks }` and `Disk`, read through four accessors with a match each. `Subsampled` is not a storage choice: it is a `Vec` plus a rank map, reached only from `Storage::Memory`.\n\n`SuffixArrayKind` in `lib.rs` is the `U32` and `U64` width dispatch, repeated as a two-arm match in eight methods.\n\n## Proposal\n\nOne trait, `Buffer<W>`, in a new `buffer.rs`. Reads take `&self` and `range` returns a `Cow`, so memory and a later mmap borrow and disk copies. This is the shape of `Source` in `libsail/src/source.rs`, with the append half added. A type parameter is a storage choice and nothing else: `W` the width, `T` the text storage, `S` the suffix storage. Every generic struct has one inherent impl block and no block that fixes a parameter, and anything decided at runtime is a field.\n\n```rust\npub trait Buffer<W: Int>: Debug + Send + Sync + Sized {\n    fn empty() -> Result<Self>;\n    fn open(path: &Path, start: u64, len: usize) -> Result<Self>;\n    fn extend_from_slice(&mut self, vals: &[W]) -> Result<()>;\n    fn flush(&mut self) -> Result<()>;\n    fn len(&self) -> usize;\n    fn get(&self, i: usize) -> Result<Option<W>>;\n    fn range(&self, range: Range<usize>) -> Result<Cow<'_, [W]>>;\n}\n```\n\nTwo implementations. `Memory<W>` wraps a `Vec<W>`; an impl on `Vec<W>` itself would shadow the slice methods `get` and `extend_from_slice` on every `Vec` in a module that imports `Buffer`. `Disk<W>` merges `FileAccess` and `DiskScratch`: a handle, a byte `start`, the count written and an append tail. The handle is its own `File` for a region of the `.sufr` file, opened per region and not duplicated, since every thread of a search reads through it and preads on one file object contend on its refcount. For scratch it is a `TempPath` that the first `flush` creates and that goes on drop; a DNA build has up to 32768 buckets, most empty, and creating a file per bucket up front cost 15% of a build. `range` on a `Disk` with an append tail stitches the tail from memory. `flush` stays so `partition` can flush every bucket's tail and the low-memory build holds none.\n\nBuild side: `Partition<S>`, `partition::<W, S>`, `sort_partition`, `write` and the free function `construct::<W, S>`, which takes the builder. `build_to_file` holds the one build-side match over width and `memory_scratch`, and returns `()`: no caller used the `SuffixArray` it returned, and all of them reopen the file.\n\nQuery side: `TypedSuffixArray<W, T: Buffer<u8>, S: Buffer<W>>` with `text: T`, `suffixes: S`, `lcps: Option<Disk<W>>` and `subsample: Option<Subsample<W>>`. The LCP array stays on disk because no search reads it and no mode loaded it. A subsample is the first suffix of each group sharing a `max_query_len` prefix with its rank, in memory, and the search reads it when present and `suffixes` otherwise. `open(filename, max_query_len, subsample: bool)` is the one constructor.\n\nBoundary: a crate trait `Queryable` with the eight methods `lib.rs` forwards, one impl of one-line forwards to the inherent methods of the same names, `Box<dyn Queryable>` in `SuffixArray`, and the only match in `open_with`: width by text storage by suffix storage, eight arms. `open_with` also decides the subsample: suffixes in memory under a cap shorter than the sort means the subsample in memory and the whole array on disk, which is what that mode was. The generic type is `pub`, so a caller can name `TypedSuffixArray<u32, Memory<u8>, Memory<u32>>` and skip the box.\n\n## Rejected\n\n- Taking `libsail`'s `Source` as code. It is bytes only, read only, has no `len`, no construction and no `Send + Sync` bound. Three of the seven things this needs are missing and two more are handled by the caller. What transfers is the `&self` and `Cow` shape and the constructor-per-instantiation pattern.\n- A read trait plus a separate builder that finishes into it. Jack chose both halves in one trait on 2026-11-04. `extend_from_slice` on an opened region is the asymmetry: `Vec` extends harmlessly, `Disk::open` is read-only so the write fails, mmap errors.\n- Keeping the outer enum over the eight instantiations. The width match is already repeated eight times at two arms; at eight arms that is 64.\n\n## Cost\n\n- `build/scratch.rs` and `FileAccess` are deleted. `Storage` stays as the public option enum.\n- `partition` and `sort_partition` are hot loops under the benchmark rule, so before and after go on one board.\n- `test_open_modes` becomes type assertions.\n- `sufr-2c451e`, the name of `TypedSuffixArray`, is not settled here. The type becomes `pub` under its current name.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": "Jack Roddy/707e7014",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T20:31:00.867626509Z",
+  "updated_at": "2026-11-04T23:13:14.370080115Z",
+  "closed_at": "2026-11-04T23:13:14.370080115Z",
+  "close_reason": "Landed on branch buffer as the two commits after fc5db36: the Buffer refactor with the typed feature, and the Int trim. The notes above hold the numbers.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "b0ba8465",
+      "at": "2026-11-04T20:44:49.797996503Z",
+      "author": "Jack Roddy/707e7014",
+      "text": "Built on branch `buffer`, uncommitted, for review. Every test passes: 48 unit, the oracle, 8 search and 43 CLI, with `create_bytes_match_fixtures` among them.\n\nThree things differ from the body as first written, and the body now says so: `Memory<T>` is a newtype, `flush` stays on the trait, and `Disk::empty` creates its temp file at the first flush. The first version created it in `empty`, and the suite put that at 1.18x, 1.15x and 1.15x on normal, long-n and protein with CPU use down from 369% to 323%. With the lazy file the three rows are 1.01x, 1.00x and 0.99x at 10 MiB, 4 threads, median of 5. The suite's fingerprint check passed, so the output bytes match.\n\n`count` over 20000 queries on the 10 MiB DNA build, median of 3, before and after: default 0.025 s and 0.010 s, `-l` 0.071 s and 0.072 s, `-v` 0.085 s and 0.085 s. The default mode is faster because the whole suffix array is now read with one positioned read where `FileAccessIter` collected it a value at a time.\n\nThe before binary is a worktree at `tmp-claude/2026-11-04-buffer/before`, and the fixtures, queries and index are in `tmp-claude/2026-11-04-buffer/runs`.",
+      "commit": "fc5db36",
+      "branch": "buffer"
+    },
+    {
+      "id": "b90e7d96",
+      "at": "2026-11-04T22:35:45.985065675Z",
+      "author": "Jack Roddy/707e7014",
+      "text": "Second version, after Jack's review of the first: the query side is redesigned so that no impl block fixes a type parameter. The first version typed the searched suffixes as `S` and kept the whole array as a concrete `Disk` field, with a constructor inherent on the `Memory` instantiation for the subsample. Now `S` is the whole suffix array, the subsample is an `Option` field, and `open` is the one constructor. The type parameters are renamed `W`, `T`, `S`.\n\nOne regression found and fixed on the way: `open` opened the file once and gave each region a `try_clone`, and `count -v` over 20000 queries went from 0.085 s to 0.137 s with equal user instructions, the extra all kernel time. Every rayon thread's pread hit one file object. Each region now opens its own handle, as `FileAccess` did, and the row is back at 0.086 s.\n\nEvery test passes, 104 of them. Create at 10 MiB, 4 threads, median of 5, before and after: normal 0.44 and 0.44 s, long-n 0.55 and 0.54 s, protein 0.43 and 0.42 s. `count` over 20000 queries, median of 3, before and after: default 0.027 and 0.011 s, `-l` 0.073 and 0.072 s, `-v` 0.089 and 0.086 s, `-m 12` 0.016 and 0.014 s. Output identical in every mode.",
+      "commit": "fc5db36",
+      "branch": "buffer"
+    },
+    {
+      "id": "3f2c2080",
+      "at": "2026-11-04T22:48:58.673326794Z",
+      "author": "Jack Roddy/707e7014",
+      "text": "`TypedSuffixArray`, `Buffer`, `Memory`, `Disk` and `Int` are exported only under the cargo feature `typed`, off by default, so the default surface is `SuffixArray`, `OpenOptions`, `Storage`, `Metadata`, `Header`, the builder and the search result types. docs.rs builds with every feature on and the five carry the \"crate feature `typed`\" banner, through `[package.metadata.docs.rs]` and `doc(cfg)` under the `docsrs` cfg. The eight-arm `open_with` match moved into `typed.rs` as `typed::open`, and the `Queryable` impl sits under the struct, so `lib.rs` imports none of the gated names and the re-exports cannot collide. Checked both ways: clippy, `cargo doc` and the tests with the feature off and on.",
+      "commit": "fc5db36",
+      "branch": "buffer"
+    },
+    {
+      "id": "c6be2e18",
+      "at": "2026-11-04T23:11:02.797194193Z",
+      "author": "Jack Roddy/707e7014",
+      "text": "Int is trimmed on the same branch: AddAssign, Display and Hash were unused, found by stripping the trait to Copy and reading the compiler's list. to_usize is a default method over a new Into<u64> bound, so both methods take and return values, and the three impls hold only from_usize, which stays an infallible as. Create at 10 MiB, 4 threads, median of 5, before and after: normal 0.44 and 0.45 s, long-n 0.55 and 0.54 s, protein 0.43 and 0.42 s. 104 tests pass.",
+      "commit": "fc5db36",
+      "branch": "buffer"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "fc5db36",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "6596276",
+      "branch": "buffer"
+    }
+  }
+}

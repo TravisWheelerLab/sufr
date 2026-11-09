@@ -1,0 +1,96 @@
+{
+  "id": "sufr-1b6e52",
+  "title": "Construction counts bucket sizes first and places suffixes into exact slots",
+  "body": "`partition` in `libsufr/src/build/partition.rs` appends each suffix to one of up to 65536 bucket `Scratch` buffers behind a `Mutex` each. A `DiskScratch` flushes to its own temp file at 4096 values. `sort_partition` concatenates a group of buckets, sorts it, and copies the result into two more `Scratch` buffers, which `write` reads back and writes at their offsets. No size is known before it happens, so every buffer grows, every bucket has its own file, and the sorted side of the scratch exists at all.\n\n## Proposal\n\nA count pass over the text first, then placement into exact slots.\n\n1. `count`: parallel over chunks, a histogram of suffixes per bucket, merged by adding the per-chunk histograms.\n2. `Layout`: the buckets in prefix order cut into partitions of about N/1024, from the histogram, before any suffix moves. It gives a bucket to partition table and each partition's range of the placed array, which is also its offset in the output.\n3. `place`: parallel over chunks, a counting sort of the chunk's suffixes by partition, then each slice appended to its partition. The order inside a partition does not matter, since the merge sort sorts the whole partition, so nothing is per bucket.\n4. `Placed`: in memory, one `Vec` per partition behind a `Mutex`, reserved to its exact size. On disk, one temp file holding the partitions end to end, written with `write_at` at the partition's start plus a `fetch_add` on its cursor.\n5. `sort_partition` reads its partition in one piece, sorts it, and writes the SA and LCP straight into the output file at the partition's offset.\n6. The first LCP of each partition is patched with one positioned write per partition after all are sorted, from `first_lcps` as now.\n\n## Cost\n\nOne more encode of every suffix, the count pass. At 10 MiB the whole partition pass is 48 ms of a 400 ms build. The temp traffic falls from 2 × N × W written and read (3 × with LCP) to 1 ×, and from thousands of files to one.\n\n## Out of scope\n\nWhere the N-run scan goes, and whether the memory kind stays, which this keeps.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T06:39:24.960142016Z",
+  "updated_at": "2026-11-05T11:27:32.294143476Z",
+  "closed_at": "2026-11-05T10:19:12.121257129Z",
+  "close_reason": "Landed as 01aa478 (count, turns, no scratch), 159f5a2 (64-bit key sort) and 276640b (LCP cache keyed by distance and block) on construction. The boards are in the notes above.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "1bb6dc35",
+      "at": "2026-11-05T07:01:21.726127014Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Board on `benchmarks/runs/dna-1024.fa`, 8 threads, one run each, every output byte-identical:\n\n| build | before sort | sort | wall | peak RSS |\n|---|---|---|---|---|\n| encoder only (old scratch) | 0.97 s | 44.5 s | 47.4 s | 1521 MiB |\n| count + place, chunk order | 1.60 s | 54.8 s | 57.6 s | 1389 MiB |\n| count + place, bucket order (experiment) | 1.59 s | 48.7 s | 51.5 s | 1418 MiB |\n| lean: one struct, counting_sort by bucket in the sort task | 1.57 s | 50.6 s | 53.4 s | 1500 MiB |\n\nThe order a partition reaches the merge sort in costs about 6 s: the old scratch handed it over grouped by bucket through its bucket files, and chunk order undoes that. The sort task now groups by bucket with `counting_sort` before `merge_sort`. The lean build is still 6 s behind the old scratch at the sort step, which now also holds the partition read and the output write.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "ac11b86e",
+      "at": "2026-11-05T08:06:17.535345313Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Second board, after the scratch file went. `/tmp` is tmpfs here, so every earlier \"disk\" number was RAM (memory `tmp-is-tmpfs`).\n\n| build | before sort | sort | wall | peak RSS |\n|---|---|---|---|---|\n| temp file in tmpfs, buckets stored | place 1.9 s | 44.5 s | 48.0 s | 1507 MiB |\n| suffixes waiting in the output file's own slots, 512 KiB chunks | place 10.6 s | 45.1 s | 58.4 s | 1364 MiB |\n| same, 4 MiB chunks | place 4.3 s | 46.5 s | 53.1 s | 1590 MiB |\n| no scratch: one scan per turn of partitions under a 1 GiB budget | 7 scans, 5.3 s | 44.7 s | 51.5 s | 2413 MiB |\n\nThe in-place slots pay btrfs for millions of small positioned writes. The turns design writes nothing before the sorted arrays and reads nothing back; its cost is one scan of the text per turn, 0.6 to 1.0 s each here, and its peak memory is the text plus the budget plus the sort's working arrays. `with_memory_budget` on the builder sets the budget, default 1 GiB; a smaller budget means more scans.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "64f8b5db",
+      "at": "2026-11-05T08:19:40.522708263Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Budget sweep on `benchmarks/runs/dna-1024.fa`, 8 threads, one run each, `create --dna --memory-budget`, every output identical:\n\n| budget MiB | turns | scans s | sort s | wall s | peak RSS MiB |\n|---|---|---|---|---|---|\n| 100 | 64 | 38.6 | 48.2 | 88.5 | 1335 |\n| 200 | 32 | 19.9 | 48.3 | 69.7 | 1579 |\n| 400 | 16 | 10.7 | 47.2 | 59.5 | 1772 |\n| 800 | 8 | 6.1 | 46.8 | 54.4 | 2154 |\n| 1600 | 4 | 3.9 | 47.0 | 52.5 | 2957 |\n| 3200 | 2 | 2.5 | 47.6 | 51.7 | 4404 |\n| 6400 | 1 | 1.2 | 44.9 | 47.5 | 7426 |\n\nA scan costs 0.6 s whatever the budget, so the scan total is 0.6 s times the number of turns. The sort total barely moves. Peak RSS is the 1 GiB text plus the budget plus about 250 MiB of working arrays.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "7d68f572",
+      "at": "2026-11-05T09:04:21.085419956Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Scan cost after the rolling encode and the one-compare turn test, `dna-1024.fa`, 8 threads, one run each, outputs identical:\n\n| budget MiB | turns | scans s | per scan s | sort s | wall s | peak RSS MiB |\n|---|---|---|---|---|---|---|\n| 100 | 64 | 10.2 | 0.16 | 47.0 | 58.5 | 1345 |\n| 400 | 16 | 3.7 | 0.18 to 0.25 | 45.4 | 50.3 | 1800 |\n| 6400 | 1 | 0.9 | 0.93 | 44.4 | 46.7 | 7546 |\n\nThree things got the scan from 0.6 s to 0.16 s. `PrefixEncoder::roll` computes the next key from the current one with two table lookups instead of six. The per-chunk buffers are per-thread and written by index, so the loop holds no call. And the test for \"key in this turn's buckets\" is one unsigned compare: as `lo <= key && key < hi` the first branch was a coin flip in the middle turns and a scan there took three times as long as in the first turn. The count pass is 0.14 s, so a scan is at the floor and SIMD has nothing left to take from it.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "e3440a40",
+      "at": "2026-11-05T09:56:14.273274708Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Key sort board. The sort task sorts each partition by a 64-bit key of its first 21 characters (3 bits a rank, left-aligned), reads the LCP of unequal neighbours off the keys, and merge-sorts each run of equal keys. 8 threads, one run each, every output identical to the build before it.\n\n| fixture | build before the key sort | key-sort build |\n|---|---|---|\n| dna-1024.fa, default budget | sort 44.7 s, wall 48.4 s | sort 4.3 s, 13 scans 3.1 s, wall 8.75 s, 2381 MiB |\n| long-repeats-10.fa | sort 11.6 s, wall 11.6 s | sort 27.5 s, wall 27.7 s |\n| long-repeats-100.fa | over 15 min, run stopped | over 9 min, run stopped |\n\nOn ten copies of a unit nearly every suffix is in a run of ten equal keys, and a merge sort of ten copies compares copy against copy at every level, each comparison reading at least 1024 characters before the LCP cache answers. The whole-partition merge met the copies only at its upper levels with LCP values in hand. That reading is not instrumented; the 11.6 s against 27.5 s is the measurement.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "d0db4d8e",
+      "at": "2026-11-05T10:15:59.599479458Z",
+      "author": "Jack Roddy/22668672",
+      "text": "The long-repeats blowup was the LCP cache, not the sort. Instrumented on `long-repeats-10.fa`: 16 million comparisons each walking about a million characters, 15.9 trillion characters in all, 11 million cache hits against 3 billion probes, the same on the whole-partition merge and on the key sort, and `origin/dev` did not finish the 100 MiB fixture in 13 minutes either. The cache had one slot per distance, and an entry covers only the copy it was made in, so ten copies of a unit thrashed the slot.\n\n`LcpCache::idx` now keys a slot by the distance and the 64 KiB block of the smaller position. 8 threads, one run each, every output identical:\n\n| fixture | whole-partition merge, before → after | key sort, before → after |\n|---|---|---|\n| long-repeats-10.fa | 11.6 s → 3.7 s | 27.7 s → 0.22 s |\n| long-repeats-100.fa | over 15 min → 77 s | over 9 min → 3.2 s |\n| dna-1024.fa | | 8.75 s → 9.1 s |\n\nThe key sort beats the whole-partition merge on repeats once the cache works, because it makes a third as many LCP calls. An entry could still be extended backward to the start of its copy for one walk per block instead of about a dozen; not done.",
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    {
+      "id": "806e17fb",
+      "at": "2026-11-05T11:27:25.06018396Z",
+      "author": "Jack Roddy/22668672",
+      "text": "Paper table rerun on catalyst (memory `catalyst-sufr-benchmarks`), 32 threads, 2000 partitions, no cap, no --dna, sufr at 276640b, outputs verified byte for byte against the old build's:\n\n| input | sufr | libsais | pdivsufsort | CaPS-SA | divsufsort |\n|---|---|---|---|---|---|\n| hg38noN, 3110 MB | 44.1 s, 9.7 GB | 80.3 s, 26.8 GB | 106.3 s | 122.5 s | 384.2 s |\n| hs1, 3180 MB | 49.1 s, 9.5 GB | 79.9 s, 27.4 GB | 113.7 s | 120.1 s | 372.8 s |\n| hg38 with N, 3273 MB | 98.6 s, 12.0 GB | 79.6 s, 28.2 GB | 108.7 s | | 364.4 s |\n| uniprot_sprot, 288 MB | 2.1 s, 0.8 GB | 4.2 s, 1.8 GB | 8.3 s | | 13.4 s |\n\nThe paper's sufr: 113.7, 115.0, 129.5 and 5.2 s. Against branch spaced-seed-radix-rebased on dna-1024.fa, 8 threads: its radix sort takes 13.7 s at a cap of 12 and 15.7 s at 21; this build takes 8.8 s uncapped and 8.6 s at 21, with identical output at each cap, and 19.0 s at a cap of 12 (sufr-cap-path).",
+      "commit": "276640b",
+      "branch": "construction"
+    },
+    {
+      "id": "cdfcd7d2",
+      "at": "2026-11-05T11:27:32.294142676Z",
+      "author": "Jack Roddy/22668672",
+      "text": "The cap-of-12 case in the note above is sufr-1422ef. The N-run case from the catalyst table is sufr-57d0c6.",
+      "commit": "276640b",
+      "branch": "construction"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "80d74c0",
+      "branch": "construction"
+    },
+    "closed": {
+      "commit": "276640b",
+      "branch": "construction"
+    }
+  }
+}

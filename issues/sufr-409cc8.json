@@ -1,0 +1,28 @@
+{
+  "id": "sufr-409cc8",
+  "title": "Does libsail read the input faster than needletail?",
+  "body": "`read_sequence_file` in `libsufr/src/build.rs` reads the input with needletail's `parse_fastx_file`. It reserves a `Vec<u8>` of `u32::MAX` bytes up front, then for each record pushes the delimiter, records the start, copies the sequence and takes the name as the id up to the first whitespace. Each record passes through needletail's record type before its bytes land in the text.\n\nOn `benchmarks/runs/dna-1024.fa` (1 GiB, 24 records, page cache warm) the read takes 0.36 s of a 12.7 s build. That is not the case that is slow. The slow case still has to be named and measured: a cold file, a gzip input, or many short records are the candidates.\n\n## Proposal\n\nlibsail, at `~/projects/sail/libsail`, by its module docs reads FASTA through `index` for record boundaries, `source` (`FileSource`, `MmapSource`) for the bytes and `parse` for the records. Read the input through it in place of `parse_fastx_file` and compare the read time on the same inputs, cold and warm.\n\n## Open\n\n- Which input shows the slowness.\n- Whether libsail reads FASTQ and gzip, which needletail does today.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T21:15:15.302768346Z",
+  "updated_at": "2026-11-05T21:15:15.302768346Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "1462051",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}

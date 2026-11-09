@@ -1,0 +1,31 @@
+{
+  "id": "sufr-dbce71",
+  "title": "Reorganize libsufr and the CLI without changing behavior",
+  "body": "libsufr and the sufr CLI work, but each job is spread over several files and several copies of the same decision. The branch `refactor` (from e8655c9) regroups them without changing what a user or a `.sufr` file sees.\n\nWhat exists today, by file:\n\n| file | lines | jobs |\n|---|---|---|\n| `libsufr/src/types.rs` | 680 | format constants, `SeedMask`, `SuffixSortType`, sealed `Int`, the option and result structs, `Comparison`, `SufrMetadata` |\n| `libsufr/src/sufr_builder.rs` | 1396 | `SuffixArrayBuilder`, partition/sort/merge, header writer (865-964), `ScratchBuffer`, `PartitioningAlphabet` |\n| `libsufr/src/sufr_file.rs` | 1687 | header reader (139-272), text access, `~/.sufr` locate cache, subsampling, search orchestration, `extract`/`locate` shaping, `list` printing |\n| `libsufr/src/sufr_search.rs` | 368 | binary search over the suffix array; storage mode picked by `is_empty()` on slices |\n| `libsufr/src/suffix_array.rs` | 373 | `SuffixArrayTrait`, `SuffixArray32`, `SuffixArray64` (identical), the `SuffixArray` facade |\n| `libsufr/src/lcp.rs` | 170 | byte-slice LCP with an AVX2 path; only the builder calls it |\n| `libsufr/src/file_access.rs` | 223 | typed `FileAccess<T>` reader, iterator, unix/windows `write_at` and `read_exact_at` |\n| `libsufr/src/util.rs` | 283 | `find_lcp_full_offset`, `read_sequence_file`, `read_text_length`, two unsafe native-endian casts |\n| `sufr/src/lib.rs` | 800 | clap types, six handlers, and logic that belongs in the library (locate grouping 480-526, extract coordinates 385-405, summarize rows 569-642, query-file parsing 439-457) |\n\nThe same decision is made in several places. The `.sufr` header is written, read and parsed a third time in `read_text_length`. The sort-type `match` appears in five places. Storage mode is chosen by `is_empty()` in `sufr_search.rs` and again in `sufr_file.rs` 296-338. Four routines compute an LCP with three different contracts. The query methods are copied across `SufrFile`, `SuffixArrayTrait`, `SuffixArray32`, `SuffixArray64` and `SuffixArray`.\n\n## Proposal\n\nFrozen, and checked by tests before anything moves:\n\n- CLI: every flag, stdout byte for byte, stderr lines, exit codes.\n- File: `.sufr` bytes at `OUTFILE_VERSION` 6, and the fixtures in `data/`.\n- Results: counts, ranks, positions and extracts for any input.\n\nThe libsufr Rust API may change freely.\n\nTarget shape of libsufr, six modules:\n\n| module | job |\n|---|---|\n| `format.rs` | the `.sufr` layout: one `Header` struct, one read, one write, named offsets |\n| `io.rs` | `FileAccess<T>` and its iterator, the positioned read/write shim, the two native-endian slice casts |\n| `lcp.rs` | one LCP routine family, aware of mask and max query length, AVX2 path kept |\n| `build.rs` | `SuffixArrayBuilder`, partition/sort/merge, FASTA reading |\n| `index.rs` | `Index<T>` = header + text + suffixes, each stored in memory, subsampled or on disk; the `~/.sufr` locate cache |\n| `search.rs` | `search(&Index<T>, &[u8])` returning `Hits`; count, ranks, locate and extract are methods on `Hits` |\n\n`lib.rs` keeps only `pub enum SuffixArray { U32(Index<u32>), U64(Index<u64>) }` and re-exports. `types.rs`, `util.rs`, `sufr_search.rs`, `suffix_array.rs`, `subsample_tests.rs`, `SuffixArrayTrait`, `SuffixArray32`, `SuffixArray64` and every Options/Result struct go away. The element width stays a type parameter because the on-disk layout needs it. One two-variant enum erases it at the boundary.\n\nConfiguration principle: one home per knob, and no function takes a config struct.\n\n- build: `SuffixArrayBuilder::from_fasta(path)` or `from_text(..)`, then `.dna(..)`, `.partitions(n)`, `.scratch_in_memory()`, `.write_lcp()`, `.sort(Sort::Full | MaxQueryLen(n) | Mask(m))`, `.write(path)`.\n- open: `SuffixArray::open(path)` or `open_with(path, Load::{Memory, Subsampled(mql), Disk})`. `max_query_len` and low-memory mode are open-time properties.\n- query: `sa.search(b\"ACG\")` returns `Hits`, then `count()`, `ranks()`, `locate()`, `extract(before, after)`.\n- CLI: `-l`, `-v` and `-m` map onto open options. Flags and output stay the same.\n\nGuiding principle, from Jack: performance first, then simple, concise, non-clever, readable code. As little code as possible, but never at the cost of readability. Several simple lines beat one confusing line.\n\nThe `search-api` branch is not merged. Its query model is the inspiration for `search.rs`, not a spec. Names chosen here are provisional. Bugs the survey found are tracked as separate issues and are not fixed during the reorganization.\n\n## Cost\n\nEach step is one commit with the full suite green. The seven children below run in order.",
+  "type": "milestone",
+  "status": "closed",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:47:36.072094877Z",
+  "updated_at": "2026-11-02T19:28:50.534056742Z",
+  "closed_at": "2026-11-02T19:28:50.534056742Z",
+  "close_reason": "All six code steps landed on branch refactor, d17bed2..ad1a659, each with the full suite green and a differential sweep against the previous commit. The skill step is closed separately. Review by Jack is pending.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "ad1a659",
+      "branch": "refactor"
+    }
+  }
+}

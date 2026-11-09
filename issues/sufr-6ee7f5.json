@@ -1,0 +1,31 @@
+{
+  "id": "sufr-6ee7f5",
+  "title": "The N-run shortcut in find_lcp returns an LCP above max_query_len",
+  "body": "`find_lcp` in `libsufr/src/build/sort.rs` returns early when both suffixes start inside a run of N: the LCP is the shorter remaining run, `min(end1 - start1, end2 - start2)`. That return never consults `max_query_len`, so with `-a` (N suffixes kept) and `-m` the LCP array holds values up to the run length. The same defect on the other path of the function, where `max_query_len` replaced `len`, is sufr-2b76b5.\n\nMeasured with the binary at c9c880d on `data/inputs/long_dna_sequence.fa`, which has a run of 2000 N:\n\n| build | rows with LCP above 3 |\n|---|---|\n| `--dna -m 3 --write-lcp` | 13, all 4 or 5, from sufr-2b76b5 |\n| `--dna -a -m 3 --write-lcp` | 987, values up to the run length |\n\nAfter the sufr-2b76b5 fix the second build still has 975 rows above 3, all from this return.\n\n## Proposal\n\nCap the shortcut's result at `max_query_len` when it is nonzero, in the plain form, and a unit test in `test_find_lcp_no_seed_mask`: text `NNNNA`, suffixes 0 and 1, `n_ranges` `[0..4]`, `max_query_len` 2, expecting 2 where the code gives 3 today. The check from sufr-2b76b5 applies: every adjacent LCP recomputed from the suffix text and capped must agree with the file on the `-a -m 3` build.\n\n## Cost\n\nThe `.sufr` bytes of a build with `-a` and `-m` on a text with runs of 1000 N or more change in the LCP array and may change in the order inside groups of equal keys, as the sufr-2b76b5 fix did. No fixture is built with `-m`.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T05:04:20.772150196Z",
+  "updated_at": "2026-11-04T05:18:31.529609343Z",
+  "closed_at": "2026-11-04T05:18:31.529609343Z",
+  "close_reason": "Fixed in 86cf586: the N-run shortcut's result is capped at max_query_len. Checked on long_dna -a -m 3 by recomputing every adjacent LCP from the suffix text; 975 rows above 3 before, none after.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "c9c880d",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "86cf586",
+      "branch": "refactor"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "id": "sufr-8c9959",
+  "title": "A benchmark suite under benchmarks/ times create and search as whole processes",
+  "body": "There is no benchmark in the repository. The timing scripts live under `tmp-claude/2026-11-02-refactor-survey/`, untracked: `construct/bench.sh` times three `create` kinds with two binaries interleaved, and `step4/gen.py` writes a 50 MB synthetic FASTA. The fixtures under `data/` are under 600 KB.\n\n## Proposal\n\nA separate cargo project at `benchmarks/`, with its own `[workspace]` so it stays out of the crates' build, clippy and test. Every measurement is one `sufr` process timed with `wait4`, so wall, user and system time and peak RSS come from one call.\n\n- Two 1 GiB fixtures generated once into `benchmarks/runs/` from a fixed seed: DNA records with Alu-sized repeats, and protein records with log-normal lengths. A query file of 1,000,000 20-mers cut from the DNA.\n- `create` rows: `--dna --write-lcp`, `--dna -m 20`, `--dna -s MASK`, and the protein file with no flags. Each runs cold and warm, so the run itself shows what the page cache costs.\n- `count`, `locate` and `extract` rows over the query file, each in memory, with `-l` and with `-v`, cold.\n- `--bin label=path`, repeatable. The default builds this tree. Rows for several binaries are interleaved and the order flips each repeat. A dry run of each row hashes its output, and the run fails when two binaries disagree.\n- `--threads` is required and sets both `-t` and `RAYON_NUM_THREADS`. Each row reports CPU as (user + sys) / wall, so a run that uses more cores than asked is visible.\n- The board from sail's benchmarks, with its `michi` sink replaced by two plain methods. Median and min wall, peak RSS, CPU, and a ratio against the first row of each group. One TSV row per measurement beside the board, so two runs can be joined later.\n\n## Rejected\n\n- Peer tools (libdivsufsort, libsais, CaPS-SA). Jack decided against them.\n- A workspace member. A member cannot set its own profile, and its dependencies would ride every workspace build.\n- `michi` as the pipeline. The run loop is a plain loop over bins and repeats, and `wait4` is one libc call.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": "Jack Roddy/5bf3e231",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-03T08:16:45.540809836Z",
+  "updated_at": "2026-11-03T18:59:48.88612604Z",
+  "closed_at": "2026-11-03T18:59:48.88612604Z",
+  "close_reason": "Landed as 1e4005e on bench: benchmarks/ with the board, the fixtures, the dry-run fingerprint check and runs/results.tsv. The baseline is on note 1.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "fa8789e1",
+      "at": "2026-11-03T08:39:14.435953323Z",
+      "author": "Jack Roddy/5bf3e231",
+      "text": "Baseline at 6df218d, 8 threads, median of 5, 100 MiB fixtures, `head` built from this tree.\n\n| group | row | median | rss | cpu |\n|---|---|---|---|---|\n| create-lcp | cold | 3.21 s | 206 MiB | 7.3 |\n| create-lcp | warm | 3.19 s | 206 MiB | 7.4 |\n| create-m20 | cold | 3.37 s | 203 MiB | 7.5 |\n| create-mask | cold | 3.44 s | 202 MiB | 7.6 |\n| create-protein | cold | 2.92 s | 506 MiB | 7.3 |\n| count | memory | 0.75 s | 601 MiB | 4.3 |\n| count | low-memory | 5.63 s | 202 MiB | 7.4 |\n| count | very-low | 6.79 s | 102 MiB | 7.5 |\n| locate | memory | 0.98 s | 673 MiB | 3.6 |\n| locate | very-low | 7.16 s | 173 MiB | 7.3 |\n| extract | memory | 1.24 s | 601 MiB | 3.0 |\n| extract | very-low | 7.65 s | 102 MiB | 6.8 |\n\nEvery warm create row is within 1% of its cold row. At 1 GiB, before the size was cut, one cold and one warm `create-lcp` both took 57.6 s at 1.3 GiB peak RSS, and the `count` rows took 3.3 s in memory, 9.5 s with `-l` and 11.6 s with `-v`. The `-l` run spent 41 s of system time over 9.5 s of wall, so the disk modes are bound by read calls rather than by comparisons.",
+      "commit": "6df218d",
+      "branch": "bench"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "6df218d",
+      "branch": "bench"
+    },
+    "closed": {
+      "commit": "1e4005e",
+      "branch": "bench"
+    }
+  }
+}

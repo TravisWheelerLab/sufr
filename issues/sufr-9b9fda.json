@@ -1,0 +1,33 @@
+{
+  "id": "sufr-9b9fda",
+  "title": "Doctests are unit tests and long functions are split",
+  "body": "Doctests make up about 490 lines of `libsufr/src/sufr_file.rs` and about 220 lines of `libsufr/src/suffix_array.rs`, and the latter has no unit tests. Some doctests hardcode layout details such as `meta.file_size, 172` and `file_version, 6`. Several functions run past 80 lines: `SufrFile::read`, `set_suffix_array_mem` (126 lines), `subsample_suffix_array_by_text`, `list`, and the builder's `partition`, `sort`, `merge` (7 arguments) and `merge_sort` (6 arguments). `sufr/src/lib.rs` holds about 105 lines of commented-out tests. Names chosen during the earlier steps are provisional.\n\n## Proposal\n\n- Turn the doctests into unit tests next to the code they test.\n- Rename where earlier steps left provisional names.\n- Split the long functions listed above and reduce the argument counts of `merge` and `merge_sort`.\n- Delete the commented-out tests in `sufr/src/lib.rs`.\n- Run a comment pass under the `rust-comments` rules over every file the refactor touched.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": "sufr-dbce71",
+  "blocked_by": [
+    "sufr-28ca67"
+  ],
+  "related": [],
+  "assignee": "Jack Roddy/4be42394",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:48:05.592725128Z",
+  "updated_at": "2026-11-02T19:27:59.655974835Z",
+  "closed_at": "2026-11-02T19:27:59.655974835Z",
+  "close_reason": "Landed in ad1a659: types.rs dissolved, zero doctests, rename pass, helpers split from sort/write/open/CLI handlers, Arrays pair for merge, dead code and restating comments removed, sufr dependencies trimmed.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "ad1a659",
+      "branch": "refactor"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "id": "sufr-b5ee97",
+  "title": "Header::read does not check the file version; the open path does",
+  "body": "`SufrFile::read` stores the version byte (`libsufr/src/sufr_file.rs:145`, kept as `version` at 249) and never compares it with `OUTFILE_VERSION` (6, `libsufr/src/types.rs:16`). An older or newer file is read with the current layout. `util::read_text_length` (`libsufr/src/util.rs:95`) reads the same header at fixed offsets and also has no check that the survey could confirm.\n\nSeen by reading the code in the survey. Not run against a file with another version.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-02T17:48:29.216431602Z",
+  "updated_at": "2026-11-04T06:56:00.162747701Z",
+  "closed_at": "2026-11-04T06:56:00.162747701Z",
+  "close_reason": "Fixed in fc5db36: Header::read bails with \"Unknown sufr version N\" on any version but OUTFILE_VERSION; test_header_round_trip checks the refusal.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "8a3bac64",
+      "at": "2026-11-02T19:59:04.399456882Z",
+      "author": "Jack Roddy/4be42394",
+      "text": "At cff9fb6 the open path does check the version. `read_text_length` (`format.rs:226-230`) bails with \"Unknown sufr version {n}\", and every open goes through it (`lib.rs:65`). So `sufr list` and `sufr summarize` on a file with version byte 7 report that error.\n\n`Header::read` (`format.rs:99`, version read at :135) still has no check. Its two direct callers are `io.rs:396` and `index.rs:187`.",
+      "commit": "cff9fb6",
+      "branch": "refactor"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "e8655c9",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "fc5db36",
+      "branch": "refactor"
+    }
+  }
+}

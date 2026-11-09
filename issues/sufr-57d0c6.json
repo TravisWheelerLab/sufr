@@ -1,0 +1,28 @@
+{
+  "id": "sufr-57d0c6",
+  "title": "A run of one character is one giant tie run under the key sort",
+  "body": "Every suffix inside a run of one character has the same key, 21 of that character, so under the key sort a run of Ns is one tie run of as many suffixes as the run is long, and the merge sort compares them with walks the length of the run. The LCP cache cannot help there: inside one run every distance occurs. The N-run handling in `find_lcp` applies only under `--dna --allow-ambiguity`, and the benchmark harness builds without `--dna`.\n\nOn catalyst, 32 threads, hg38 with its Ns takes 98.6 s against 44.1 s for hg38 with the Ns deleted, and libsais takes 79.6 s on both.\n\n## Proposal\n\nIn the sort task, a tie run whose key is one repeated character is handled from the positions alone: within the run the suffixes order by position descending, since each is a prefix of the ones before it, and the LCP of neighbours is the distance to the run's end. The characters after the run decide the order between suffixes of different runs, which the merge still does, but only once per run. No text reads inside a run.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-05T11:27:25.078605062Z",
+  "updated_at": "2026-11-05T11:27:25.078605062Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "276640b",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}

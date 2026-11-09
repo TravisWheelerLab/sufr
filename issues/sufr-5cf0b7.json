@@ -1,0 +1,43 @@
+{
+  "id": "sufr-5cf0b7",
+  "title": "Library search tests with hand-derived expectations for the untested query kinds, mql cases and extract windows",
+  "body": "Batch 3 of sufr-25f57e. In libsufr/src/search.rs, on a small multi-sequence text whose expectations are derived by hand: count, locate and extract across the six (text, suffixes) modes and -m, count with -m; queries not found before $, empty, containing N, containing $, longer than the text, equal to a whole sequence, at the text end; mql shorter than, equal to and longer than the query on a plain and a masked file; extract with before larger than the distance to the sequence start, after past the sequence end, after Some(0), on the second sequence; locate order with sequence names 10 and 2; a search on the u64 build. The decisions on sufr-2fd179 and on a query holding $ are on the parent.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": "sufr-25f57e",
+  "blocked_by": [
+    "sufr-2fd179",
+    "sufr-bd7605"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-04T03:56:09.362445973Z",
+  "updated_at": "2026-11-04T06:27:43.470228198Z",
+  "closed_at": "2026-11-04T06:27:43.470228198Z",
+  "close_reason": "Landed in 87f49b6 as libsufr/tests/search.rs, seven tests. Found sufr-626e7f on the way, fixed in 37f6974.",
+  "resolution": "done",
+  "notes": [
+    {
+      "id": "fa8d98c4",
+      "at": "2026-11-04T06:02:22.665616849Z",
+      "author": "Jack Roddy/1ddc0e5b",
+      "text": "Decided 2026-11-03: the empty query stays as it is, every suffix matches, and batch 3 pins it. Sequence order in locate becomes file order, sufr-bd7605, fixed before this batch.",
+      "commit": "9722e49",
+      "branch": "refactor"
+    }
+  ],
+  "stamps": {
+    "created": {
+      "commit": "4e04a02",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "87f49b6",
+      "branch": "refactor"
+    }
+  }
+}

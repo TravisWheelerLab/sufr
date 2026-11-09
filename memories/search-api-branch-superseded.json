@@ -1,0 +1,10 @@
+{
+  "slug": "search-api-branch-superseded",
+  "text": "Branch search-api (6 commits off e8655c9's parent) was the first draft of the query-only API and was never merged. refactor carries its ideas: Hits, Location, Extraction and search_all (8022b6a), then OpenOptions, range reads, Context, a byte-free Extraction, a fallible search and the example (583f39d..6edc011). It can be deleted.",
+  "created_at": "2026-11-03T07:53:00.490386229Z",
+  "updated_at": "2026-11-04T01:38:18.468066371Z",
+  "stamp": {
+    "commit": "6edc011",
+    "branch": "refactor"
+  }
+}
