@@ -184,6 +184,9 @@ impl<'a, T: Int> SufrSearch<'a, T> {
                 Some(mid)
             } else if mid_cmp.cmp == Ordering::Greater {
                 self.suffix_search_first(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
+            } else if mid == 0 {
+                // nothing sorts below rank 0
+                None
             } else {
                 // Ordering::Less
                 self.suffix_search_first(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
@@ -220,6 +223,9 @@ impl<'a, T: Int> SufrSearch<'a, T> {
                     || self.compare(qry, mid_plus_one, 0).cmp == Ordering::Less)
             {
                 Some(mid)
+            } else if mid_cmp.cmp == Ordering::Less && mid == 0 {
+                // nothing sorts below rank 0
+                None
             } else if mid_cmp.cmp == Ordering::Less {
                 self.suffix_search_last(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
             } else {

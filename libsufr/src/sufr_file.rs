@@ -1259,11 +1259,29 @@ mod test {
     use crate::{
         sufr_file::SufrFile,
         types::{
-            ExtractOptions, ExtractResult, ExtractSequence, LocateOptions,
-            LocatePosition, LocateResult,
+            CountOptions, ExtractOptions, ExtractResult, ExtractSequence,
+            LocateOptions, LocatePosition, LocateResult,
         },
     };
     use anyhow::Result;
+
+    // --------------------------------------------------
+    #[test]
+    fn test_count_below_the_first_suffix() -> Result<()> {
+        // ! sorts below every suffix, so the search
+        // ends at rank 0
+        for low_memory in [true, false] {
+            let mut sufr_file: SufrFile<u32> =
+                SufrFile::read("../data/expected/1.sufr", low_memory)?;
+            let res = sufr_file.count(CountOptions {
+                queries: vec!["!".to_string()],
+                max_query_len: None,
+                low_memory,
+            })?;
+            assert_eq!(res[0].count, 0);
+        }
+        Ok(())
+    }
 
     // --------------------------------------------------
     #[test]
