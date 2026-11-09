@@ -1,0 +1,10 @@
+{
+  "slug": "virt-data-sweep-layout",
+  "text": "The large-input sweep lives on catalyst under /virt-data/jack: inputs/ with hg38, hs1, uniprot_sprot, mgy_proteins_1 and the clean AllTheBacteria concatenations (atb-1000, atb-5000-clean, atb-all-clean; awk 1 joins the files since one lacks a trailing newline); bin/sufr-old, the dev build at c69cc0a, and bin/sufr-new; sweep.sh runs cells, ramp5.sh the full plan; sweep/*/results.tsv has wall, CPU, peak RSS and sha256 per binary. Run on 2026-11-07.",
+  "created_at": "2026-11-09T21:05:36.748514279Z",
+  "updated_at": "2026-11-09T21:05:36.748514279Z",
+  "stamp": {
+    "commit": "1995d7c",
+    "branch": "construction"
+  }
+}
