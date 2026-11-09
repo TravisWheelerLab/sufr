@@ -1,10 +1,10 @@
 {
   "slug": "prefix-encoder-covers-every-byte",
-  "text": "PrefixEncoder (libsufr/src/build/partition.rs) ranks unknown bytes as 0, the sentinel's rank, so a byte outside its table would share a bucket with the sentinel and break the order across partitions. from_occupancy picks the narrowest table that covers every byte seen by normalize, which is what keeps that from happening; a user-declared alphabet cannot be trusted for the same job without validation.",
+  "text": "PrefixEncoder (libsufr/src/build.rs) ranks a byte outside its table as 0, the sentinel's rank, so such a byte would share a bucket with the sentinel and break the order across partitions. from_occupancy picks the narrowest table that covers every byte normalize saw, which prevents that; a user-declared alphabet could not do the same job without validation. The width follows the count of distinct bytes, so a stray byte can halve the key (sufr-aa4802).",
   "created_at": "2026-11-03T07:53:00.498346227Z",
-  "updated_at": "2026-11-03T07:53:00.498346227Z",
+  "updated_at": "2026-11-09T21:05:25.711751511Z",
   "stamp": {
-    "commit": "6df218d",
-    "branch": "refactor"
+    "commit": "1995d7c",
+    "branch": "construction"
   }
 }
