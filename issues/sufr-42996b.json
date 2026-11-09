@@ -1,0 +1,28 @@
+{
+  "id": "sufr-42996b",
+  "title": "Is the rolled key faster than computing each suffix's key on its own?",
+  "body": "The build computes a 64-bit key for every suffix twice, in the scan that counts suffixes per bucket and in the scan that gathers each partition's suffixes, both in `libsufr/src/build.rs`. Each key comes from the key before it.\n\n- Without a mask, `PrefixEncoder::encode` computes the key at the start of a chunk, `key_chars` table lookups. `PrefixEncoder::roll` then gets the next suffix's key from the last one: shift the key left by one character and add the character `key_chars` ahead.\n- Under a seed mask, `windows_at` encodes one to four windows of `key_chars` characters. `roll_windows` rolls each one at every position, and `compact` packs the care positions into the key, with pext under BMI2.\n\nA rolled key depends on the key before it, so each position waits on the previous one. A key computed on its own from `encode(text, i)` costs `key_chars` lookups but depends on nothing else. Jeb tried a rolling encoding before and found that the CPU may have pipelined the independent keys better. The compiler can also vectorize a loop with no carried dependency, and a rolled loop rules that out.\n\nNobody has measured this alternative.\n\n- The unmasked scan has rolled since 01aa478, and no benchmark compared it with `encode` at every position.\n- Commit 1995d7c compared the rolled masked scan with the old encoder, which did one lookup per care position at every position. The rolled scan took about half the time on chr21 and Swiss-Prot. That old encoder survives only as `lookup` in the test `compact_matches_the_lookup_at_every_position`. A masked key computed on its own from `windows_at` and `compact` was never timed.\n\n## Proposal\n\nTime both scans each way: rolled, as now, and with every key computed on its own, `encode(text, i)` without a mask and `compact(&windows_at(text, i))` under one. Run the benchmark suite with the rule in `CLAUDE.md`: release build, 4 threads, 5 repeats, medians, before and after on one board. Include an unmasked run, a mask of one window and a mask of four, on DNA and on protein, since `key_chars` differs with the alphabet. Keep whichever is faster in each case. The keys come out equal either way, so the `.sufr` bytes do not move.\n\n## Open\n\n- Whether the answer differs between the count scan and the gather scan. The gather scan stores the key and the suffix for each kept position, so it may be bound by memory either way.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T21:40:44.880971666Z",
+  "updated_at": "2026-11-09T21:40:44.880971666Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "1995d7c",
+      "branch": "construction"
+    },
+    "closed": null
+  }
+}
