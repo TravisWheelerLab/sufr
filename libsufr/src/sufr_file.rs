@@ -1285,6 +1285,34 @@ mod test {
 
     // --------------------------------------------------
     #[test]
+    fn test_query_past_the_sentinel() -> Result<()> {
+        // the text of 1.sufr is ACGTNNACGT$, so T$A and
+        // ACGTNNACGT$A each match a whole suffix, sentinel
+        // included, and have a byte left
+        for low_memory in [true, false] {
+            let mut sufr_file: SufrFile<u32> =
+                SufrFile::read("../data/expected/1.sufr", low_memory)?;
+            let res = sufr_file.count(CountOptions {
+                queries: vec!["T$A".to_string(), "ACGTNNACGT$A".to_string()],
+                max_query_len: None,
+                low_memory,
+            })?;
+            assert_eq!(res[0].count, 0);
+            assert_eq!(res[1].count, 0);
+
+            let res = sufr_file.locate(LocateOptions {
+                queries: vec!["ACGTNNACGT$".to_string()],
+                max_query_len: None,
+                low_memory,
+            })?;
+            let suffixes: Vec<_> = res[0].positions.iter().map(|p| p.suffix).collect();
+            assert_eq!(suffixes, [0]);
+        }
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
     fn test_extract() -> Result<()> {
         // cargo run -- ex data/expected/1.sufr AC GT XX
         let mut sufr_file: SufrFile<u32> =

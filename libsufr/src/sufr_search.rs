@@ -336,8 +336,12 @@ impl<'a, T: Int> SufrSearch<'a, T> {
                 // Compare next char
                 (Some(a), Some(b)) => a.cmp(b),
 
-                // Panic at the disco
-                _ => unreachable!(),
+                // the query matched the whole suffix, sentinel
+                // included, and has bytes left: T$A against the
+                // suffix T$ at the end of ACGTNNACGT$. A suffix
+                // that is a proper prefix of the query sorts
+                // before it
+                (Some(_), None) => Ordering::Greater,
             }
         };
 
