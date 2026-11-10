@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T19:13:58.533395962Z",
-  "updated_at": "2026-11-04T05:57:08.628917257Z",
+  "updated_at": "2026-11-10T19:28:18.914014395Z",
   "closed_at": "2026-11-04T05:57:08.628917257Z",
   "close_reason": "Fixed in 9722e49: the window end is the sequence's own length, so it stops before the delimiter or sentinel and never crosses into the next sequence. Eight expectations moved, named in the commit.",
   "resolution": "done",
@@ -33,6 +33,14 @@
       "text": "Jack decided on 2026-11-03 to fix this before sufr-5cf0b7, the search tests, so the hand-derived window expectations are right. The fix also stops a window at the last byte of its sequence: today the window on the first sequence includes the delimiter, ABC:4-9 prints ACGT% on fixture 2, and after the fix it prints ACGT at 4-8. The two inline CLI expectations at cli.rs:561 and 596 and any .out file with a window at a sequence end move with the fix.",
       "commit": "4e04a02",
       "branch": "refactor"
+    },
+    {
+      "id": "a32c06b1",
+      "at": "2026-11-10T19:28:18.914013288Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d: `sufr_file.rs:982-995` compares the absolute `seq_end` with a relative window end. `sufr extract -s 20 data/expected/2.sufr ACGT` prints `>DEF:4-18` on an 8-byte record, and the ABC window takes in the delimiter.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {
