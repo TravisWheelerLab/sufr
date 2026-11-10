@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.192848681Z",
-  "updated_at": "2026-11-04T06:54:02.190292341Z",
+  "updated_at": "2026-11-10T19:28:19.006250157Z",
   "closed_at": "2026-11-04T06:54:02.190292341Z",
   "close_reason": "Fixed in 4e873cf: list writes through create_output. list_output_flag_writes_the_file pins it.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 `list` is at `sufr/src/lib.rs:405`. Its writer is `io::stdout()` at :422, with a TODO at :421.\n\nThe four `*_is_sorted` tests (`file_is_sorted` at `cli.rs:1166`) still read a file that `list -o` never writes. The pinned test `list_output_flag_is_ignored` records the current behaviour.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "e472a6c5",
+      "at": "2026-11-10T19:28:19.006249056Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d: `sufr/src/lib.rs:433` passes `output: None` to `list`, so `list -o FILE` writes to stdout and creates no file. The four `*_is_sorted` tests in `sufr/tests/cli.rs` read an empty temp file and assert nothing.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {
