@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.824698645Z",
-  "updated_at": "2026-11-04T06:52:52.507070762Z",
+  "updated_at": "2026-11-10T19:09:24.714590587Z",
   "closed_at": "2026-11-04T06:52:52.507070762Z",
   "close_reason": "Fixed in fa8eb70: searched_len treats Some(0) like None. a_cap_of_zero_at_search_time_means_the_files_cap in libsufr/tests/search.rs pins it on a file built with max_query_len 2.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 the two sites are `searched_len` (`index.rs:568-574`) and `load_suffixes` (`index.rs:~242-257`).\n\n- `searched_len` maps a built value above 0 with `Some(0)` to 0, meaning unbounded.\n- `load_suffixes` treats a caller 0 as not given and uses the built value.\n\nRows 2 and 3 of the table agree. Row 1 (built 20, `Some(0)`) still differs.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "0187bad4",
+      "at": "2026-11-10T19:09:24.714589346Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "On dev this fix landed in 9984777 (PR #14): `compare` in `libsufr/src/sufr_search.rs` treats a caller's `Some(0)` as `None`, as `set_suffix_array_mem` already did. `test_count_with_a_cap_of_zero` in `libsufr/src/sufr_file.rs` pins it on 2.fa built with a cap of 2.",
+      "commit": "b5d5c29",
+      "branch": "dev"
     }
   ],
   "stamps": {
