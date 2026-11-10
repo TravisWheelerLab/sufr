@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T00:35:04.737296584Z",
-  "updated_at": "2026-11-10T00:37:13.463005525Z",
+  "updated_at": "2026-11-10T19:09:24.814375287Z",
   "closed_at": "2026-11-10T00:37:13.463005525Z",
   "close_reason": "Dropped: inputs made mostly of a few multi-Mb runs of N are too unlikely in practice to justify checking the 415 s case.",
   "resolution": "dropped",
-  "notes": [],
+  "notes": [
+    {
+      "id": "29ef20f8",
+      "at": "2026-11-10T19:09:24.814374095Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "665ee89 landed on dev as 9433918.",
+      "commit": "b5d5c29",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "665ee89",
