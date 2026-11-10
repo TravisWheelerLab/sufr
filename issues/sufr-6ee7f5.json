@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T05:04:20.772150196Z",
-  "updated_at": "2026-11-04T05:18:31.529609343Z",
+  "updated_at": "2026-11-10T19:09:24.782137219Z",
   "closed_at": "2026-11-04T05:18:31.529609343Z",
   "close_reason": "Fixed in 86cf586: the N-run shortcut's result is capped at max_query_len. Checked on long_dna -a -m 3 by recomputing every adjacent LCP from the suffix text; 975 rows above 3 before, none after.",
   "resolution": "done",
-  "notes": [],
+  "notes": [
+    {
+      "id": "f9c30f23",
+      "at": "2026-11-10T19:09:24.782136045Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "dev never took 86cf586. 9433918 removed the N-run shortcut from `find_lcp` on dev, so dev has no copy of this defect. The capped `len` path, sufr-2b76b5, reached dev in 9984777.",
+      "commit": "b5d5c29",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "c9c880d",
