@@ -1,10 +1,10 @@
 {
   "slug": "dev-build-misorders-n-at-delimiter",
-  "text": "The old dev build (sufr-dev at c69cc0a on catalyst; tmp-claude/2026-10-27-search-api-bench/sufr-old here) misorders suffixes starting at the last N of a run before the sequence delimiter under --dna -a: descending position with LCP 1, not the text after the delimiter. A byte comparison against it is NO on any input with a run of N ending a record, hg38 among them. The oracle case n_ends pins the right order. Found 2026-11-05.",
+  "text": "Builds from before 9433918 on dev (sufr-dev at c69cc0a on catalyst; tmp-claude/2026-10-27-search-api-bench/sufr-old here) misorder suffixes starting at the last N of a run before the sequence delimiter under --dna -a: descending position with LCP 1. The N-run shortcut in `find_lcp` caused it. A byte comparison against such a build fails on any input with a run of N ending a record, hg38 among them. `test_n_runs_ending_a_record` in `libsufr/src/sufr_builder.rs` pins the right order.",
   "created_at": "2026-11-06T05:36:00.33646676Z",
-  "updated_at": "2026-11-06T05:36:00.33646676Z",
+  "updated_at": "2026-11-10T19:09:35.171813471Z",
   "stamp": {
-    "commit": "cabe70c",
-    "branch": "construction"
+    "commit": "b5d5c29",
+    "branch": "dev"
   }
 }
