@@ -3,7 +3,7 @@
   "title": "The locate cache reads a byte buffer back as T without regard to alignment or byte order",
   "body": "`SufrFile::set_suffix_array_mem` in `libsufr/src/sufr_file.rs` reads the rank section of the cache file into a `Vec<u8>` and turns it into ranks with:\n\n```rust\nstd::slice::from_raw_parts(buffer.as_ptr() as *const _, suffix_array_len).to_vec()\n```\n\nA `Vec<u8>` only guarantees an alignment of 1. Building a `&[T]` from that pointer is undefined behaviour when `T` is `u32` or `u64` and the allocation is not aligned for it. Common allocators happen to return aligned blocks, so this probably works in practice.\n\nThe cache stores every value in native byte order, through `u64::from_ne_bytes` and the raw slice casts. A cache written on one architecture and read on another of the other endianness yields wrong values. That matters only if a cache directory is shared between machines.\n\nFound by reading the code. Not reproduced.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -15,10 +15,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.789271833Z",
-  "updated_at": "2026-11-04T06:58:30.798973331Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T19:25:27.993320426Z",
+  "closed_at": "2026-11-10T19:25:27.993320426Z",
+  "close_reason": "The alignment half is fixed on both lines: 3fcd7ba on dev, older than this issue, reads the cache into a `Vec<T>` through `slice_int_to_slice_u8` in `libsufr/src/util.rs`, and bd21d2e did the same on `refactor`. The byte order is native, the same convention the `.sufr` arrays use, as the note of 2026-11-03 says. Whatever replaces the cache under sufr-22b9c3 inherits that convention.",
+  "resolution": "done",
   "notes": [
     {
       "id": "04a9410a",
@@ -42,6 +42,9 @@
       "commit": "b4a924a",
       "branch": "search-api"
     },
-    "closed": null
+    "closed": {
+      "commit": "657e16d",
+      "branch": "dev"
+    }
   }
 }
