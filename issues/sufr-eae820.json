@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.774579276Z",
-  "updated_at": "2026-10-28T03:30:36.122273936Z",
+  "updated_at": "2026-11-10T19:28:18.846161905Z",
   "closed_at": "2026-10-28T03:30:36.122273936Z",
   "close_reason": "Fixed in b3e738a. SuffixArray::search_many returns one Result per query, and the CLI passes each error on with ?.",
   "resolution": "done",
-  "notes": [],
+  "notes": [
+    {
+      "id": "9c477725",
+      "at": "2026-11-10T19:28:18.846160734Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d, where the fix is not in the history: `SufrFile::suffix_search` in `libsufr/src/sufr_file.rs:881` collects with `flat_map`, so a query whose `search` returns `Err` (from `get_range` at `sufr_search.rs:135`) is dropped. Not reproduced on dev.",
+      "commit": "657e16d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "b4a924a",
