@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-10T19:26:00.615216848Z",
   "defer_until": null,
   "created_at": "2026-11-10T19:09:15.884897179Z",
-  "updated_at": "2026-11-10T19:11:00.615216848Z",
+  "updated_at": "2026-11-10T19:11:17.541359324Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "23ce8fcf",
+      "at": "2026-11-10T19:11:17.541357322Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Fixed in the working tree of the main checkout on dev with the two-argument forms from the table, uncommitted. `cargo test` passes: 33 libsufr unit tests, 46 CLI tests, 22 in libsufr/tests and 2 more, `test_equal_n_runs` and `test_n_runs_ending_a_record` among them. Close it once the commit lands.",
+      "commit": "b5d5c29",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "b5d5c29",
