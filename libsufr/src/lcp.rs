@@ -84,8 +84,13 @@ pub fn lcp(a: &[u8], b: &[u8], cache: Option<(&LcpCache, usize, usize)>) -> usiz
             return unsafe { lcp_avx2(a, b, cache) };
         }
     }
-    // TODO: aarch64 implementation (including LCP cache)
-
+    #[cfg(target_arch = "aarch64")]
+    {
+        if std::arch::is_aarch64_feature_detected!("neon") {
+            // SAFETY: NEON is available
+            return unsafe { lcp_neon(a, b, cache) };
+        }
+    }
     lcp_scalar(a, b)
 }
 
@@ -130,6 +135,55 @@ unsafe fn lcp_avx2(
     i + lcp_scalar(&a[i..n], &b[i..n])
 }
 
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+/// NEON implementation of LCP with an unrolled loop
+///
+/// SAFETY: This function must only be called after validating that neon is actually available
+unsafe fn lcp_neon(
+    a: &[u8],
+    b: &[u8],
+    cache: Option<(&LcpCache, usize, usize)>,
+) -> usize {
+    use std::arch::aarch64::*;
+    let n = a.len().min(b.len());
+    let mut i = 0;
+
+    const UNROLL: usize = 4;
+    const _: () = assert!(LcpCache::PROBE_AT % (UNROLL * 16) == 0);
+
+    while i + UNROLL * 16 <= n {
+        for j in 0..UNROLL {
+            let off = i + j * 16;
+            // SAFETY: the bounds of a and b (128bits = 16 bytes; 4 iterations) are checked at the top of the while loop
+            let va = unsafe { vld1q_u8(a.as_ptr().add(off)) };
+            let vb = unsafe { vld1q_u8(b.as_ptr().add(off)) };
+            let eq = vceqq_u8(va, vb);
+
+            // Without AVX2-style movemask: read the full vector (u64 + u64)
+            let eq64 = vreinterpretq_u64_u8(eq);
+            let lo = vgetq_lane_u64::<0>(eq64);
+            let hi = vgetq_lane_u64::<1>(eq64);
+
+            if lo != u64::MAX {
+                return off + (!lo).trailing_zeros() as usize / 8;
+            }
+            if hi != u64::MAX {
+                return off + 8 + (!hi).trailing_zeros() as usize / 8;
+            }
+        }
+        i += UNROLL * 16;
+        if i % LcpCache::PROBE_AT == 0 {
+            if let Some((lcp_cache, ia, ib)) = cache {
+                if let Some(lcp) = lcp_cache.get(ia + i, ib + i) {
+                    return (i + lcp).min(n);
+                }
+            }
+        }
+    }
+    i + lcp_scalar(&a[i..n], &b[i..n])
+}
+
 /// Scalar implementation of LCP
 pub fn lcp_scalar(a: &[u8], b: &[u8]) -> usize {
     std::iter::zip(a, b).take_while(|(a, b)| a == b).count()
@@ -153,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_arch = "x86_64")] // TODO: consider implementing the cache on other architectures
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     fn test_lcp_with_cache() {
         let mut cache = LcpCache::default();
         let mut text = vec![b'A'; 4096];
