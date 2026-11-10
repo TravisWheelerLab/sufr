@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:32:37.209874404Z",
-  "updated_at": "2026-11-04T06:32:37.209874404Z",
+  "updated_at": "2026-11-10T21:22:00.574795876Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "4b342a3d",
+      "at": "2026-11-10T21:22:00.564453608Z",
+      "author": "Jack Roddy/4a93ac40",
+      "text": "Inventory at feaa5e8, after 3944856 removed `-a`, and a proposal. Jack has put this on hold for a review with Jeb, since it renames fixtures from dev.\n\n## What is there\n\n| group | files | used by |\n|---|---|---|\n| FASTA inputs | 11 in `data/inputs/` | all, by the oracle, the CLI tests, the search tests and the mask tests in `libsufr/src/lib.rs` |\n| `.sufr` fixtures | 13 in `data/expected/` | 12 checked byte for byte by `create_bytes_match_fixtures` in `sufr/tests/cli.rs` |\n| `.out` files | 9 in `data/expected/` | 8 compared with CLI output |\n| `.sufr` copies | 4 in `data/inputs/` | `1.sufr` read about 15 times as a ready-made file, `2` and `3` once each |\n\nThe case list of `create_bytes_match_fixtures` is the one record of how each `.sufr` fixture is built: name, input and flags.\n\n## Proposal\n\nA. Delete the dead files. `data/expected/1s.sufr` and `data/expected/locate2.out` are read by no test. `data/inputs/abba.sufr` is read by no test and is stale: its header byte 2 is still 0.\n\nB. Delete `data/inputs/{1,2,3}.sufr`. Each is byte-identical to the file of the same name in `data/expected/`, and the 20 or so references would point there. Two copies drift, as `abba.sufr` did.\n\nC. Rename the fixtures whose names are now wrong. Each is a name from dev, so Jeb should agree.\n\n| now | proposed | why |\n|---|---|---|\n| `1n.sufr` | `1-bytes.sufr` | \"n\" meant N allowed; it is now a build without `--dna` |\n| `2n.sufr` | `2-bytes.sufr` | the same |\n| `long_dna_sequence_allow_ambiguity.sufr` | `long_dna_sequence-bytes.sufr` | `-a` is gone |\n| `2d.sufr` | `2-delimiter-N.sufr` | built with `--sequence-delimiter N` |\n| `2s.sufr` | `2-softmask.sufr` | built with `--ignore-softmask` |\n\nThe input names (`1.fa`, `2.fa` and the rest) stay, since the tests use them throughout. Item D describes them instead.\n\nD. A way to rebuild. An environment variable such as `SUFR_REGENERATE=1` makes `create_bytes_match_fixtures` write its output over each fixture in place of comparing, so the flags stay in one place and a rebuild is one deliberate command. A short `data/README.md` gives one line per input on what it exercises, and that command.\n\nE. Left as they are. The `.out` files stay, since they pin the CLI's output. Whether they move to hand-derived expectations is a later question. `uniprot.fa` and `long_dna_sequence.fa` stay as the two real-sized inputs.",
+      "commit": "feaa5e8",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "56db6ff",
