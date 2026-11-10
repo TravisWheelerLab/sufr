@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.208729147Z",
-  "updated_at": "2026-11-04T05:38:17.967205492Z",
+  "updated_at": "2026-11-10T19:28:19.071615303Z",
   "closed_at": "2026-11-04T05:38:17.967205492Z",
   "close_reason": "Fixed in 1d4b214: the test is create_empty_input_fails, on data/inputs/empty.fa, asserting failure and an empty output file.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 the test (`cli.rs:103-109`) passes `../data/expected/empty.sa`, which does not exist. Running `create data/inputs/empty.fa` exits 1 with \"Failed to read the first two bytes. Is the file empty?\". So the CLI handles an empty input, and the test never reaches that code.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "9d636f29",
+      "at": "2026-11-10T19:28:19.071613826Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d: `create_empty_dies` in `sufr/tests/cli.rs:99-101` runs `create ../data/expected/empty.sa`, which does not exist, so it passes on a missing file. `data/inputs/empty.fa` fails with \"Failed to read the first two bytes\".",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {
