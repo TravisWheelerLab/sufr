@@ -1,0 +1,30 @@
+{
+  "id": "sufr-39fce5",
+  "title": "The refactor PR description tells Jeb what moves, what it replaces and what waits on him",
+  "body": "Refactor will go to dev as one PR, about 64 commits past `origin/dev` with dev merged in at feaa5e8. Jeb reviews it. This session gathered what the description has to tell him. Write it once the deferred checks in sufr-a04617 have run, so it can quote their results.\n\n## What it covers\n\n- A map of the commits by theme, with ranges: the storage and API reorganization, the search API (`SuffixArray::open`, `search`, `Hits`), the construction rewrite (count pass, memory budget, 64-bit key sort), and the removal of the build-time max query length (b3f9104).\n- What does not change, and the evidence: the oracle, `create_bytes_match_fixtures`, and the dev against refactor hashes from sufr-a04617.\n- Results that move on purpose, each with its commit:\n  - header byte 2 now records whether every suffix was indexed, as on dev (3944856)\n  - `extract` windows stop at the sequence (9722e49)\n  - `locate` orders hits by the input's order (f4b9652)\n  - `list -o` writes to the file (4e873cf)\n  - count, locate and extract stop on a failed read (9049092)\n  - seed masks longer than a key are refused (cabe70c, 1995d7c)\n  - peak memory at the default budget is higher than with scratch files\n- Designs from Ken or Jeb that the PR replaces, which CLAUDE.md asks to name: `SufrFile` and the option structs, the scratch files with dev's `--tmp-dir` and `with_temp_dir` (db9b5a9), `mk_test_files.py` and the Makefile (56db6ff), the build-time max query length.\n- What from dev does not carry over: the read-buffer sizing of 163d48d lived in `util.rs`, and `read_sequence_file` in `libsufr/src/build.rs` still reserves `u32::MAX` bytes. Jack left that to Jeb.\n- Fixture `2ns.sufr` is gone, since `-i` needs `--dna` on refactor and dev's rebuild of it as a non-DNA build has no counterpart.\n- Decisions waiting on Jeb: the fixture names and rebuild path (sufr-bf8c3b), the \"Max query len\" row (sufr-575525), and the subsample cache in `~/.sufr` (sufr-22b9c3, sufr-664c3b).",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [
+    "sufr-a04617"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T22:00:23.009400309Z",
+  "updated_at": "2026-11-10T22:00:23.009400309Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "1526250",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
