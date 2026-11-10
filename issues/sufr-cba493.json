@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T20:26:12.804937494Z",
-  "updated_at": "2026-11-04T06:43:58.008007438Z",
+  "updated_at": "2026-11-10T19:09:24.74763297Z",
   "closed_at": "2026-11-04T06:43:58.008007438Z",
   "close_reason": "Fixed in 73ac557: equal runs advance the skip and the compare goes on past them. The oracle's crafted record pins it; the long-n fixture's suffix array is unchanged and only its LCP array moves.",
   "resolution": "done",
@@ -41,6 +41,14 @@
       "text": "Closed by mistake on 2026-11-03 and reopened the same day; the close reason above is wrong. The oracle in sufr-a88738 counts matched bytes, which is the correct LCP here, so an input with two equal runs of 1000 N would show this bug. No input in its table has such runs.",
       "commit": "86cf586",
       "branch": "refactor"
+    },
+    {
+      "id": "0bcd3eda",
+      "at": "2026-11-10T19:09:24.747630892Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "dev never took 73ac557. 9433918 removed the N-run shortcut from `find_lcp` on dev, and this bug went with it. 9984777 added `test_equal_n_runs` in `libsufr/src/sufr_builder.rs`, which builds the record from this issue and checks every adjacent order and LCP against the text. That test does not compile on dev yet; see sufr-2dd036.",
+      "commit": "b5d5c29",
+      "branch": "dev"
     }
   ],
   "stamps": {
