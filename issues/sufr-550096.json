@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.239627466Z",
-  "updated_at": "2026-11-02T19:59:04.383854366Z",
+  "updated_at": "2026-11-10T19:28:19.143003734Z",
   "closed_at": "2026-11-02T19:59:04.383854366Z",
   "close_reason": "Fixed by ad1a659. At cff9fb6 no `utils::` text remains in `libsufr/src`, and the `SuffixArray::list` doc is gone because `list` now lives in the CLI (`sufr/src/lib.rs:405`).",
   "resolution": "done",
-  "notes": [],
+  "notes": [
+    {
+      "id": "5c8cc5a4",
+      "at": "2026-11-10T19:28:19.143001875Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Half present on dev at 657e16d. The `utils::` link is gone: `types.rs:266` links `crate::read_sequence_file`. The `SuffixArray::list` doc at `libsufr/src/suffix_array.rs:196` still opens with the `extract` doc's \"Extract the suffixes matching given queries\".",
+      "commit": "657e16d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e8655c9",
