@@ -1350,7 +1350,7 @@ mod test {
     ) -> Result<()> {
         let outfile = NamedTempFile::new()?;
         SuffixArrayBuilder::from_data(text.to_vec(), sequences)
-            .with_dna_options(true, true, false)
+            .with_dna_options(false, false)
             .with_write_lcp(true)
             .build_to_file(outfile.path(), false)?;
         let sufr_file: SufrFile<u32> =

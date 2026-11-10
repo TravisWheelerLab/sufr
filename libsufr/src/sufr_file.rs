@@ -1312,7 +1312,7 @@ mod test {
         // compare more: 2.fa has 4 suffixes starting AC
         let outfile = NamedTempFile::new()?;
         SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
-            .with_dna_options(true, false, false)
+            .with_dna_options(true, false)
             .with_max_query_len(2)
             .build_to_file(outfile.path(), false)?;
         let path = outfile.path().to_string_lossy().to_string();
