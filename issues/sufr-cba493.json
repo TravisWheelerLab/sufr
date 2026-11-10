@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T20:26:12.804937494Z",
-  "updated_at": "2026-11-10T19:09:24.74763297Z",
+  "updated_at": "2026-11-10T19:19:43.73569049Z",
   "closed_at": "2026-11-04T06:43:58.008007438Z",
   "close_reason": "Fixed in 73ac557: equal runs advance the skip and the compare goes on past them. The oracle's crafted record pins it; the long-n fixture's suffix array is unchanged and only its LCP array moves.",
   "resolution": "done",
@@ -46,9 +46,10 @@
       "id": "0bcd3eda",
       "at": "2026-11-10T19:09:24.747630892Z",
       "author": "Jeb Rosen/f3787cc2",
-      "text": "dev never took 73ac557. 9433918 removed the N-run shortcut from `find_lcp` on dev, and this bug went with it. 9984777 added `test_equal_n_runs` in `libsufr/src/sufr_builder.rs`, which builds the record from this issue and checks every adjacent order and LCP against the text. That test does not compile on dev yet; see sufr-2dd036.",
+      "text": "dev never took 73ac557. 9433918 removed the N-run shortcut from `find_lcp` on dev, and this bug went with it. 9984777 added `test_equal_n_runs` in `libsufr/src/sufr_builder.rs`, which builds the record from this issue and checks every adjacent order and LCP against the text. It compiles since 657e16d (sufr-2dd036).",
       "commit": "b5d5c29",
-      "branch": "dev"
+      "branch": "dev",
+      "edited_at": "2026-11-10T19:19:43.735689638Z"
     }
   ],
   "stamps": {
