@@ -316,8 +316,10 @@ impl SuffixArrayBuilder {
             }
             SuffixSortType::MaxQueryLen(max_query_len) => {
                 let text_len = self.text.len();
+                // `len` counts bytes past `skip`, so the cap
+                // leaves max_query_len - skip of them
                 let len = if max_query_len > &0 {
-                    *max_query_len
+                    max_query_len - skip
                 } else {
                     len.to_usize()
                 };
@@ -1326,7 +1328,19 @@ mod test {
         // 6: len of text
         assert_eq!(sufr.find_lcp::<u32>(0, 3, 6, 0, None), 0);
 
-        // TODO: Add a test with skip
+        // 0: TTTTAG
+        // 1:  TTTAG
+        // skip 2 with max query len 2: nothing left to compare
+        let text = b"TTTTAG".to_vec();
+        let sufr =
+            SuffixArrayBuilder::from_data(text.clone(), vec![(0, "1".to_string())])
+                .with_max_query_len(2);
+        assert_eq!(sufr.find_lcp::<u32>(0, 1, 6, 2, None), 2);
+
+        // skip 1 with max query len 3: one byte left, T == T
+        let sufr = SuffixArrayBuilder::from_data(text, vec![(0, "1".to_string())])
+            .with_max_query_len(3);
+        assert_eq!(sufr.find_lcp::<u32>(0, 1, 6, 1, None), 3);
 
         Ok(())
     }
