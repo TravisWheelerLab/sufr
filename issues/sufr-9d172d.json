@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-10T01:21:48.216089217Z",
   "defer_until": null,
   "created_at": "2026-11-10T01:06:43.439047768Z",
-  "updated_at": "2026-11-10T01:10:59.411203907Z",
+  "updated_at": "2026-11-10T01:12:29.144573491Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -32,6 +32,14 @@
       "author": "Jeb Rosen/9d8eb24a",
       "text": "Committed as e3a6ee8 on `worktree-remove-allow-ambiguity`, not pushed, awaiting review.",
       "commit": "e3a6ee8",
+      "branch": "worktree-remove-allow-ambiguity"
+    },
+    {
+      "id": "ec9cb850",
+      "at": "2026-11-10T01:12:29.144572155Z",
+      "author": "Jeb Rosen/9d8eb24a",
+      "text": "Amended to 0b6f41b with a shorter commit message and CHANGELOG entry; still not pushed, awaiting review.",
+      "commit": "0b6f41b",
       "branch": "worktree-remove-allow-ambiguity"
     }
   ],
