@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.803372811Z",
-  "updated_at": "2026-11-04T06:27:43.458594524Z",
+  "updated_at": "2026-11-10T19:09:24.61347549Z",
   "closed_at": "2026-11-04T06:27:43.458594524Z",
   "close_reason": "Fixed in 37f6974: both searches return None at rank 0 instead of recursing on mid - 1. Reproduced in debug by the ! case in libsufr/tests/search.rs; release had wrapped and answered no hits by accident.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 the sites are `first_match` (`search.rs:194`) and `last_match` (`search.rs:227`). `sufr locate data/inputs/1.sufr ' '` panics with \"attempt to subtract with overflow\" at `search.rs:194:44` in a debug build.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "7cfa5ed8",
+      "at": "2026-11-10T19:09:24.613474044Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "On dev this fix landed in 9984777 (PR #14): `suffix_search_first` and `suffix_search_last` in `libsufr/src/sufr_search.rs` return None when `mid` is 0. `test_count_below_the_first_suffix` in `libsufr/src/sufr_file.rs` pins it in both memory modes.",
+      "commit": "b5d5c29",
+      "branch": "dev"
     }
   ],
   "stamps": {
