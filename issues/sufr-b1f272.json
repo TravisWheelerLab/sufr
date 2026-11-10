@@ -3,7 +3,7 @@
   "title": "No Cargo.lock is tracked, so a dependency release can change what a benchmark build is made of",
   "body": "The root `.gitignore`, from commit 12b9961, is the cargo template with its `Cargo.lock` line left in, so no lockfile in the repository is tracked: not the workspace's, which builds the `sufr` binary, and not `benchmarks/Cargo.lock`, which the benchmark suite on branch `bench` added. Each machine resolves `clap`, `rand`, `libc`, `anyhow` and the crates' own dependencies afresh, so a release of any of them can change what a build is made of between two runs meant to compare.\n\n## Proposal\n\nEither of these, and the choice is Jack's since the ignore line is a person's decision:\n\n- Track `benchmarks/Cargo.lock` only, with a `!benchmarks/Cargo.lock` line under the existing ignore. The harness is pinned and the workspace stays as it is.\n- Drop the `Cargo.lock` line and track both lockfiles, which is the cargo convention for a repository that builds binaries. The sail repository does this.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T22:58:22.926127858Z",
-  "updated_at": "2026-11-03T22:58:22.926127858Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T21:42:25.196109015Z",
+  "closed_at": "2026-11-10T21:42:25.196109015Z",
+  "close_reason": "Both lockfiles are tracked, as Jack chose on 2026-11-10: the workspace's in 1526250 on refactor, and benchmarks/Cargo.lock on branch bench. The cargo-template ignore line is gone from .gitignore on both.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "efaf30f",
       "branch": "bench"
     },
-    "closed": null
+    "closed": {
+      "commit": "1526250",
+      "branch": "refactor"
+    }
   }
 }
