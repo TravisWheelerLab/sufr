@@ -1251,11 +1251,84 @@ mod test {
     use crate::{
         sufr_file::SufrFile,
         types::{
-            ExtractOptions, ExtractResult, ExtractSequence, LocateOptions,
-            LocatePosition, LocateResult,
+            CountOptions, ExtractOptions, ExtractResult, ExtractSequence,
+            LocateOptions, LocatePosition, LocateResult,
         },
+        SuffixArrayBuilder,
     };
     use anyhow::Result;
+    use tempfile::NamedTempFile;
+
+    // --------------------------------------------------
+    #[test]
+    fn test_count_below_the_first_suffix() -> Result<()> {
+        // ! sorts below every suffix, so the search
+        // ends at rank 0
+        for low_memory in [true, false] {
+            let mut sufr_file: SufrFile<u32> =
+                SufrFile::read("../data/expected/1.sufr", low_memory)?;
+            let res = sufr_file.count(CountOptions {
+                queries: vec!["!".to_string()],
+                max_query_len: None,
+                low_memory,
+            })?;
+            assert_eq!(res[0].count, 0);
+        }
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_query_past_the_sentinel() -> Result<()> {
+        // the text of 1.sufr is ACGTNNACGT$, so T$A and
+        // ACGTNNACGT$A each match a whole suffix, sentinel
+        // included, and have a byte left
+        for low_memory in [true, false] {
+            let mut sufr_file: SufrFile<u32> =
+                SufrFile::read("../data/expected/1.sufr", low_memory)?;
+            let res = sufr_file.count(CountOptions {
+                queries: vec!["T$A".to_string(), "ACGTNNACGT$A".to_string()],
+                max_query_len: None,
+                low_memory,
+            })?;
+            assert_eq!(res[0].count, 0);
+            assert_eq!(res[1].count, 0);
+
+            let res = sufr_file.locate(LocateOptions {
+                queries: vec!["ACGTNNACGT$".to_string()],
+                max_query_len: None,
+                low_memory,
+            })?;
+            let suffixes: Vec<_> = res[0].positions.iter().map(|p| p.suffix).collect();
+            assert_eq!(suffixes, [0]);
+        }
+        Ok(())
+    }
+
+    // --------------------------------------------------
+    #[test]
+    fn test_count_with_a_cap_of_zero() -> Result<()> {
+        // built on the first 2 bytes, so no search may
+        // compare more: 2.fa has 4 suffixes starting AC
+        let outfile = NamedTempFile::new()?;
+        SuffixArrayBuilder::from_sequence_file("../data/inputs/2.fa", b'%')?
+            .with_dna_options(true, false, false)
+            .with_max_query_len(2)
+            .build_to_file(outfile.path(), false)?;
+        let path = outfile.path().to_string_lossy().to_string();
+        for low_memory in [true, false] {
+            for max_query_len in [None, Some(0), Some(9)] {
+                let mut sufr_file: SufrFile<u32> = SufrFile::read(&path, low_memory)?;
+                let res = sufr_file.count(CountOptions {
+                    queries: vec!["ACGTX".to_string()],
+                    max_query_len,
+                    low_memory,
+                })?;
+                assert_eq!(res[0].count, 4, "{max_query_len:?} {low_memory}");
+            }
+        }
+        Ok(())
+    }
 
     // --------------------------------------------------
     #[test]

@@ -54,6 +54,7 @@ pub struct SufrSearch<'a, T: Int> {
     suffix_array_mem: &'a [T],
     suffix_array_rank_mem: &'a [T],
     len_suffixes: usize,
+    num_suffixes: usize,
     sort_type: &'a SuffixSortType,
     max_query_len: Option<usize>,
 }
@@ -77,6 +78,7 @@ impl<'a, T: Int> SufrSearch<'a, T> {
             } else {
                 args.suffix_array.len()
             },
+            num_suffixes: args.len_suffixes,
             sort_type: args.sort_type,
             max_query_len: args.max_query_len,
         }
@@ -110,16 +112,12 @@ impl<'a, T: Int> SufrSearch<'a, T> {
             } else {
                 // This is the case for the compressed/in-memory SA
                 let start_rank = self.suffix_array_rank_mem[start];
-                let end_rank = if start == end {
-                    if start == self.suffix_array_rank_mem.len() - 1 {
-                        // We're on the last rank, so go to end
-                        self.len_suffixes
-                    } else {
-                        // Use the next LCP rank
-                        self.suffix_array_rank_mem[start + 1].to_usize()
-                    }
-                } else {
-                    self.suffix_array_rank_mem[end].to_usize() + 1
+                // the hit ends where the group after the last
+                // matched one begins: len_suffixes here is the
+                // number of samples, not of suffixes
+                let end_rank = match self.suffix_array_rank_mem.get(end + 1) {
+                    Some(next) => next.to_usize(),
+                    None => self.num_suffixes,
                 };
                 start_rank.to_usize()..end_rank
             };
@@ -184,6 +182,9 @@ impl<'a, T: Int> SufrSearch<'a, T> {
                 Some(mid)
             } else if mid_cmp.cmp == Ordering::Greater {
                 self.suffix_search_first(qry, mid + 1, high, mid_cmp.lcp, right_lcp)
+            } else if mid == 0 {
+                // nothing sorts below rank 0
+                None
             } else {
                 // Ordering::Less
                 self.suffix_search_first(qry, low, mid - 1, left_lcp, mid_cmp.lcp)
@@ -220,6 +221,9 @@ impl<'a, T: Int> SufrSearch<'a, T> {
                     || self.compare(qry, mid_plus_one, 0).cmp == Ordering::Less)
             {
                 Some(mid)
+            } else if mid_cmp.cmp == Ordering::Less && mid == 0 {
+                // nothing sorts below rank 0
+                None
             } else if mid_cmp.cmp == Ordering::Less {
                 self.suffix_search_last(qry, low, mid - 1, n, left_lcp, mid_cmp.lcp)
             } else {
@@ -246,13 +250,12 @@ impl<'a, T: Int> SufrSearch<'a, T> {
             SuffixSortType::MaxQueryLen(mql) => {
                 // The "MaxQueryLen(mql)" refers to how the suffix array
                 // was built, but there may be a runtime value in self.max_query_len.
-                // If both are present, take the lowest.
-                let max_query_len: usize = if mql > &0 && self.max_query_len.is_some() {
-                    min(*mql, self.max_query_len.unwrap_or(0))
-                } else if let Some(val) = self.max_query_len {
-                    val
-                } else {
-                    *mql
+                // If both are present, take the lowest. A runtime 0 is
+                // not given, as in set_suffix_array_mem.
+                let max_query_len: usize = match self.max_query_len {
+                    Some(0) | None => *mql,
+                    Some(val) if *mql > 0 => min(*mql, val),
+                    Some(val) => val,
                 };
 
                 let lcp = if (max_query_len > 0) && (skip >= max_query_len) {
@@ -330,8 +333,12 @@ impl<'a, T: Int> SufrSearch<'a, T> {
                 // Compare next char
                 (Some(a), Some(b)) => a.cmp(b),
 
-                // Panic at the disco
-                _ => unreachable!(),
+                // the query matched the whole suffix, sentinel
+                // included, and has bytes left: T$A against the
+                // suffix T$ at the end of ACGTNNACGT$. A suffix
+                // that is a proper prefix of the query sorts
+                // before it
+                (Some(_), None) => Ordering::Greater,
             }
         };
 

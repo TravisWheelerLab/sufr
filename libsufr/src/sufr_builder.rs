@@ -308,8 +308,10 @@ impl SuffixArrayBuilder {
             }
             SuffixSortType::MaxQueryLen(max_query_len) => {
                 let text_len = self.text.len();
+                // `len` counts bytes past `skip`, so the cap
+                // leaves max_query_len - skip of them
                 let len = if max_query_len > &0 {
-                    *max_query_len
+                    max_query_len - skip
                 } else {
                     len.to_usize()
                 };
@@ -1290,6 +1292,7 @@ impl<T: Int> ScratchBuffer for MemoryScratchBuffer<T> {
 #[cfg(test)]
 mod test {
     use super::SuffixArrayBuilder;
+    use crate::sufr_file::SufrFile;
     use crate::types::SeedMask;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -1322,9 +1325,82 @@ mod test {
         // 6: len of text
         assert_eq!(sufr.find_lcp::<u32>(0, 3, 6, 0, None), 0);
 
-        // TODO: Add a test with skip
+        // 0: TTTTAG
+        // 1:  TTTAG
+        // skip 2 with max query len 2: nothing left to compare
+        let text = b"TTTTAG".to_vec();
+        let sufr =
+            SuffixArrayBuilder::from_data(text.clone(), vec![(0, "1".to_string())])
+                .with_max_query_len(2);
+        assert_eq!(sufr.find_lcp::<u32>(0, 1, 6, 2, None), 2);
+
+        // skip 1 with max query len 3: one byte left, T == T
+        let sufr = SuffixArrayBuilder::from_data(text, vec![(0, "1".to_string())])
+            .with_max_query_len(3);
+        assert_eq!(sufr.find_lcp::<u32>(0, 1, 6, 1, None), 3);
 
         Ok(())
+    }
+
+    /// Build `text` with -a and --write-lcp, and check the suffix
+    /// array and LCP array against the text's own byte order.
+    fn check_sorted_with_lcp(
+        text: &[u8],
+        sequences: Vec<(usize, String)>,
+    ) -> Result<()> {
+        let outfile = NamedTempFile::new()?;
+        SuffixArrayBuilder::from_data(text.to_vec(), sequences)
+            .with_dna_options(true, true, false)
+            .with_write_lcp(true)
+            .build_to_file(outfile.path(), false)?;
+        let sufr_file: SufrFile<u32> =
+            SufrFile::read(&outfile.path().to_string_lossy(), false)?;
+        let sa: Vec<usize> = sufr_file
+            .suffix_array_file
+            .iter()
+            .map(|v| v as usize)
+            .collect();
+        let lcps: Vec<usize> = sufr_file.lcp_file.iter().map(|v| v as usize).collect();
+        assert_eq!(sa.len(), lcps.len());
+        for i in 1..sa.len() {
+            let (a, b) = (&text[sa[i - 1]..], &text[sa[i]..]);
+            assert!(a < b, "rank {i}: suffix {} after {}", sa[i], sa[i - 1]);
+            let lcp = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+            assert_eq!(lcps[i], lcp, "rank {i}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_equal_n_runs() -> Result<()> {
+        // two runs of 1200 N followed by GATTACA: suffixes at the
+        // same distance from the end of each run share the run's
+        // tail and then GATTACA
+        let mut text = b"ACGT".to_vec();
+        text.extend([b'N'; 1200]);
+        text.extend(b"GATTACATTTT");
+        text.extend([b'N'; 1200]);
+        text.extend(b"GATTACA$");
+        check_sorted_with_lcp(&text, vec![(0, "1".to_string())])
+    }
+
+    #[test]
+    fn test_n_runs_ending_a_record() -> Result<()> {
+        // the last N of each run is followed by the delimiter, so
+        // the suffixes starting there are N%G... and N%T...
+        let mut text = b"ACGT".to_vec();
+        text.extend([b'N'; 1200]);
+        let b = text.len() + 1;
+        text.extend(b"%GATTACA");
+        text.extend([b'N'; 1100]);
+        let c = text.len() + 1;
+        text.extend(b"%TTGA$");
+        let sequences = vec![
+            (0, "a".to_string()),
+            (b, "b".to_string()),
+            (c, "c".to_string()),
+        ];
+        check_sorted_with_lcp(&text, sequences)
     }
 
     #[test]
