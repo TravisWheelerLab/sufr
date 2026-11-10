@@ -1,0 +1,10 @@
+{
+  "slug": "hg38-nrun-shortcut-cost",
+  "text": "On the 192-core host with /data/genomes/hg38.fa, sufr create -d -a -n 2000 -t 32 on hg38 at 163d48d took 172.5 s and 177 s with the N-run shortcut in find_lcp and 121 s and 136 s without it. With -i added it took 445 s against 357 s. The cost was two binary searches over hg38's 488 runs of 1,000 or more N on every find_lcp call. 665ee89 removed the shortcut. Measured 2026-11-09.",
+  "created_at": "2026-11-10T00:35:04.825655112Z",
+  "updated_at": "2026-11-10T00:35:04.825655112Z",
+  "stamp": {
+    "commit": "665ee89",
+    "branch": "worktree-remove-n-runs"
+  }
+}
