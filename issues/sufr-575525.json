@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-10T21:38:14.553443432Z",
   "defer_until": null,
   "created_at": "2026-11-10T01:49:56.574034909Z",
-  "updated_at": "2026-11-10T21:23:14.553443432Z",
+  "updated_at": "2026-11-10T21:23:51.431096475Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "8d380f63",
+      "at": "2026-11-10T21:23:51.431095535Z",
+      "author": "Jack Roddy/4a93ac40",
+      "text": "The help text and README parts landed in the commit \"Bring the create help and the READMEs up to date\" on refactor. The `--write-lcp` help no longer names a build-time value, and both READMEs now carry the binary's own `create --help`, with `--memory-budget` and `--write-lcp`.\n\nLeft open for Jeb: whether `summarize` keeps its \"Max query len\" row, which shows 0 for every file without a seed mask. Dropping it raises whether `SuffixSortType::MaxQueryLen` stays public, since 0 is its one valid value now. One option is a \"Sort\" row naming the seed mask or \"full suffixes\". The row and the type are unchanged until that is decided.",
+      "commit": "130c961",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "929f597",
