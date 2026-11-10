@@ -1,0 +1,28 @@
+{
+  "id": "sufr-575525",
+  "title": "User-facing text has not caught up with the removed build cap and the memory budget",
+  "body": "Commit b3f9104 removed the build-time max query length, and commit 01aa478 added `--memory-budget`. Three pieces of user-facing text have not caught up.\n\n- The `--write-lcp` help on `CreateArgs` in `sufr/src/lib.rs` says the LCP array \"speeds up query-time max query lengths shorter than the build-time value\". No build-time value exists now. The LCP array is still read when a search with `-m` subsamples a file that has one.\n- `summarize` prints a \"Max query len\" row for every file without a seed mask, from `Metadata::summary` in `libsufr/src/typed.rs`. The value is always 0 on a file refactor can open.\n- Neither `README.md` nor `sufr/README.md` mentions `--memory-budget`.\n\n## Open\n\n- Whether the \"Max query len\" row goes away, or becomes a row that names the sort, unmasked or the mask. `SuffixSortType::MaxQueryLen` is still public with 0 as its only valid value, so dropping the row may raise whether that variant stays.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T01:49:56.574034909Z",
+  "updated_at": "2026-11-10T01:50:00.019986233Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "929f597",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
