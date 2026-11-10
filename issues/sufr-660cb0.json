@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T18:31:30.70892308Z",
-  "updated_at": "2026-11-04T06:14:46.581135587Z",
+  "updated_at": "2026-11-10T19:09:24.679033714Z",
   "closed_at": "2026-11-04T06:14:46.581135587Z",
   "close_reason": "Fixed in d7f219c. Two defects: the multi-group end at ranks[last] + 1 (Ken, da1222f) dropped most of the last group, and the last-group end at ranks.len() (refactor, bd21d2e) was the panic. Both end at the next sample's rank or num_suffixes now; count_under_a_cap_matches_count_without_one pins it.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 the site is `searched_ranks` (`index.rs:506-521`), with the TODO at :511. `sufr locate -m 1 data/inputs/1.sufr T` panics with \"assertion failed: range.start <= range.end\" at `io.rs:147`, reached through `suffixes_at` (`index.rs:524`).",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "ba2222c6",
+      "at": "2026-11-10T19:09:24.67903235Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "On dev both defects were fixed in 9984777 (PR #14). `SufrSearch` in `libsufr/src/sufr_search.rs` gained `num_suffixes`, kept apart from the `len_suffixes` the binary search runs over, and a hit ends at the next sample's rank or at `num_suffixes`. `count_under_a_cap_matches_count_without_one` in `sufr/tests/cli.rs` pins it.",
+      "commit": "b5d5c29",
+      "branch": "dev"
     }
   ],
   "stamps": {
