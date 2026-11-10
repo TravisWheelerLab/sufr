@@ -1,0 +1,10 @@
+{
+  "slug": "lcp-simd-gain-isolated",
+  "text": "At ba5b9f0, LCP cache on in both, 4 threads, median of 5, scalar compare against SIMD: chr1 without N 20.43 to 18.17 s on x86 (Ryzen 9800X3D, AVX2) and 22.49 to 21.40 s on an Apple M4 (NEON); 10 MiB long repeats 143.79 to 11.29 s and 204.95 to 19.37 s. SIMD pays when comparisons run long. Before b5d5c29 aarch64 took lcp_scalar, which takes no cache, so most of the earlier 50x there was the cache. Measured 2026-11-10.",
+  "created_at": "2026-11-10T22:00:22.977847656Z",
+  "updated_at": "2026-11-10T22:00:22.977847656Z",
+  "stamp": {
+    "commit": "1526250",
+    "branch": "refactor"
+  }
+}
