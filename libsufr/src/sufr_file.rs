@@ -42,10 +42,6 @@ pub struct SufrFile<T: Int> {
     /// Whether or not the text represents nucleotides.
     pub is_dna: bool,
 
-    /// When `is_dna` is `true`, whether or not nucleotides other than
-    /// A, C, G, or T were ignored.
-    pub allow_ambiguity: bool,
-
     /// When `is_dna` is `true`, whether or not softmasked/lowercase
     /// nucleotides were ignored.
     pub ignore_softmask: bool,
@@ -144,7 +140,6 @@ impl<T: Int> SufrFile<T> {
         file.read_exact(&mut buffer)?;
         let version = buffer[0];
         let is_dna = buffer[1] == 1;
-        let allow_ambiguity = buffer[2] == 1;
         let ignore_softmask = buffer[3] == 1;
 
         // Length of text
@@ -248,7 +243,6 @@ impl<T: Int> SufrFile<T> {
             filename: filename.to_string(),
             version,
             is_dna,
-            allow_ambiguity,
             ignore_softmask,
             query_low_memory: true,
             text_pos,
@@ -570,7 +564,6 @@ impl<T: Int> SufrFile<T> {
     ///     assert_eq!(meta.file_size, 172);
     ///     assert_eq!(meta.file_version, 6);
     ///     assert_eq!(meta.is_dna, true);
-    ///     assert_eq!(meta.allow_ambiguity, false);
     ///     assert_eq!(meta.ignore_softmask, false);
     ///     assert_eq!(meta.text_len, 11);
     ///     assert_eq!(meta.len_suffixes, 9);
@@ -593,7 +586,6 @@ impl<T: Int> SufrFile<T> {
             file_size: fs_meta.len().to_usize(),
             file_version: self.version as usize,
             is_dna: self.is_dna,
-            allow_ambiguity: self.allow_ambiguity,
             ignore_softmask: self.ignore_softmask,
             text_len: self.text_len.to_usize(),
             len_suffixes: self.len_suffixes.to_usize(),

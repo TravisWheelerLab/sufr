@@ -71,18 +71,18 @@ def main() -> None:
 
     runner(f'{SUFR} create -o {OUTDIR}/abba.sufr {ABBA}')
 
-    runner(f'{SUFR} create --dna --allow-ambiguity -o {OUTDIR}/1n.sufr {SEQ1}')
+    runner(f'{SUFR} create -o {OUTDIR}/1n.sufr {SEQ1}')
 
-    runner(f'{SUFR} create --dna --allow-ambiguity -o {OUTDIR}/2n.sufr {SEQ2}')
+    runner(f'{SUFR} create -o {OUTDIR}/2n.sufr {SEQ2}')
 
     runner(f'{SUFR} create --dna --ignore-softmask -o {OUTDIR}/2s.sufr {SEQ2}')
 
-    runner(f'{SUFR} create --dna --allow-ambiguity --ignore-softmask '
+    runner(f'{SUFR} create --ignore-softmask '
            f'-o {OUTDIR}/2ns.sufr {SEQ2}')
 
     runner(f'{SUFR} create {LONG} --dna -o {OUTDIR}/long_dna_sequence.sufr')
 
-    runner(f'{SUFR} create {LONG} --dna --allow-ambiguity '
+    runner(f'{SUFR} create {LONG} '
            f'-o {OUTDIR}/long_dna_sequence_allow_ambiguity.sufr')
 
     runner(f'{SUFR} create -o {OUTDIR}/uniprot.sufr {UNIPROT}')

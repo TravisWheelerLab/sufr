@@ -42,7 +42,7 @@ use thread_local::ThreadLocal;
 /// fn main() -> Result<()> {
 ///     let outfile = "3.sufr";
 ///     let suffix_array = SuffixArrayBuilder::from_sequence_file("../data/inputs/3.fa", b'%')?
-///         .with_dna_options(true, false, true)
+///         .with_dna_options(true, true)
 ///         .build_to_file(outfile, false)?;
 ///
 ///     let meta = suffix_array.metadata()?;
@@ -61,7 +61,6 @@ pub struct SuffixArrayBuilder {
 
     // INPUT OPTIONS
     is_dna: bool,
-    allow_ambiguity: bool,
     ignore_softmask: bool,
 
     // PROCESSING OPTIONS
@@ -109,7 +108,6 @@ impl SuffixArrayBuilder {
             text,
             sequences,
             is_dna: false,
-            allow_ambiguity: false,
             ignore_softmask: false,
             sort_type: SuffixSortType::MaxQueryLen(0),
             num_partitions: 1024,
@@ -120,18 +118,12 @@ impl SuffixArrayBuilder {
         }
     }
 
-    /// Sets whether the sequence text `is_dna` (default: `false`),
-    /// and if so whether to index `N`s (`allow_ambiguity`, default: `false`).
+    /// Sets whether the sequence text `is_dna` (default: `false`), which indexes
+    /// only suffixes starting with `A`, `C`, `G`, or `T`.
     /// Additionally sets whether softmasked characters should be treated as `N`
     /// (default: `false`, treat soft-masked as unmasked by converting back to uppercase).
-    pub fn with_dna_options(
-        mut self,
-        is_dna: bool,
-        allow_ambiguity: bool,
-        ignore_softmask: bool,
-    ) -> Self {
+    pub fn with_dna_options(mut self, is_dna: bool, ignore_softmask: bool) -> Self {
         self.is_dna = is_dna;
-        self.allow_ambiguity = allow_ambiguity;
         self.ignore_softmask = ignore_softmask;
         self
     }
@@ -375,7 +367,7 @@ impl SuffixArrayBuilder {
                     let val = self.text.get(i).copied().unwrap_or(0);
                     if !(val == SENTINEL_CHARACTER
                         || !self.is_dna // Allow anything else if not DNA
-                        || (b"ACGT".contains(&val) || self.allow_ambiguity))
+                        || b"ACGT".contains(&val))
                     {
                         continue;
                     }
@@ -871,10 +863,14 @@ impl SuffixArrayBuilder {
 
         // Various metadata
         let is_dna: u8 = if self.is_dna { 1 } else { 0 };
-        let allow_ambiguity: u8 = if self.allow_ambiguity { 1 } else { 0 };
         let ignore_softmask: u8 = if self.ignore_softmask { 1 } else { 0 };
+
+        // readers ignore byte 2. it records whether suffixes
+        // starting with a byte other than A, C, G or T were
+        // indexed, which holds for all but DNA input
+        let all_suffixes: u8 = 1 - is_dna;
         let mut header: Vec<u8> =
-            vec![OUTFILE_VERSION, is_dna, allow_ambiguity, ignore_softmask];
+            vec![OUTFILE_VERSION, is_dna, all_suffixes, ignore_softmask];
 
         // Text length
         header.extend(self.text.len().to_le_bytes());

@@ -539,9 +539,6 @@ pub struct SufrMetadata {
     /// Nucleotides
     pub is_dna: bool,
 
-    /// Allow ambiguity
-    pub allow_ambiguity: bool,
-
     /// Ignore softmask
     pub ignore_softmask: bool,
 

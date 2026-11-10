@@ -24,7 +24,6 @@ const SUFR3: &str = "../data/expected/3.sufr";
 
 struct CreateOptions {
     is_dna: bool,
-    allow_ambiguity: bool,
     ignore_softmask: bool,
     sequence_delimiter: Option<char>,
     seed_mask: Option<String>,
@@ -64,10 +63,6 @@ fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<
 
     if opts.is_dna {
         args.push("--dna".to_string());
-    }
-
-    if opts.allow_ambiguity {
-        args.push("--allow-ambiguity".to_string());
     }
 
     if opts.ignore_softmask {
@@ -161,7 +156,6 @@ fn create_seq1() -> Result<()> {
         "../data/expected/1.sufr",
         CreateOptions {
             is_dna: true,
-            allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -171,13 +165,12 @@ fn create_seq1() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn create_seq1_allow_ambiguity() -> Result<()> {
+fn create_seq1_not_dna() -> Result<()> {
     create(
         SEQ1,
         "../data/expected/1n.sufr",
         CreateOptions {
-            is_dna: true,
-            allow_ambiguity: true,
+            is_dna: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -193,7 +186,6 @@ fn create_seq2() -> Result<()> {
         "../data/expected/2.sufr",
         CreateOptions {
             is_dna: true,
-            allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -209,7 +201,6 @@ fn create_seq2_sequence_delimiter() -> Result<()> {
         "../data/expected/2d.sufr",
         CreateOptions {
             is_dna: true,
-            allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: Some('N'),
             seed_mask: None,
@@ -219,13 +210,12 @@ fn create_seq2_sequence_delimiter() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn create_seq2_allow_ambiguity() -> Result<()> {
+fn create_seq2_not_dna() -> Result<()> {
     create(
         SEQ2,
         "../data/expected/2n.sufr",
         CreateOptions {
-            is_dna: true,
-            allow_ambiguity: true,
+            is_dna: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -241,7 +231,6 @@ fn create_seq2_ignore_softmask() -> Result<()> {
         "../data/expected/2s.sufr",
         CreateOptions {
             is_dna: true,
-            allow_ambiguity: false,
             ignore_softmask: true,
             sequence_delimiter: None,
             seed_mask: None,
@@ -251,13 +240,12 @@ fn create_seq2_ignore_softmask() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn create_seq2_allow_ambiguity_ignore_softmask() -> Result<()> {
+fn create_seq2_not_dna_ignore_softmask() -> Result<()> {
     create(
         SEQ2,
         "../data/expected/2ns.sufr",
         CreateOptions {
-            is_dna: true,
-            allow_ambiguity: true,
+            is_dna: false,
             ignore_softmask: true,
             sequence_delimiter: None,
             seed_mask: None,
@@ -273,7 +261,6 @@ fn create_seq3() -> Result<()> {
         "../data/expected/3.sufr",
         CreateOptions {
             is_dna: true,
-            allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -289,7 +276,6 @@ fn create_long_dna() -> Result<()> {
         "../data/expected/long_dna_sequence.sufr",
         CreateOptions {
             is_dna: true,
-            allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -299,13 +285,12 @@ fn create_long_dna() -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn create_long_dna_allow_ambiguity() -> Result<()> {
+fn create_long_dna_not_dna() -> Result<()> {
     create(
         LONG,
         "../data/expected/long_dna_sequence_allow_ambiguity.sufr",
         CreateOptions {
-            is_dna: true,
-            allow_ambiguity: true,
+            is_dna: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -321,7 +306,6 @@ fn create_protein() -> Result<()> {
         "../data/expected/uniprot.sufr",
         CreateOptions {
             is_dna: false,
-            allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: None,
@@ -337,7 +321,6 @@ fn create_protein_masked() -> Result<()> {
         "../data/expected/uniprot-masked.sufr",
         CreateOptions {
             is_dna: false,
-            allow_ambiguity: false,
             ignore_softmask: false,
             sequence_delimiter: None,
             seed_mask: Some("10111011".to_string()),

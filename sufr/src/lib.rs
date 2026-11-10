@@ -102,10 +102,6 @@ pub struct CreateArgs {
     #[arg(short('d'), long("dna"))]
     pub is_dna: bool,
 
-    /// Allow suffixes starting with ambiguity codes
-    #[arg(short, long)]
-    pub allow_ambiguity: bool,
-
     /// Ignore suffixes in soft-mask/lowercase regions
     #[arg(short, long)]
     pub ignore_softmask: bool,
@@ -335,7 +331,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
         &args.input,
         args.sequence_delimiter as u8,
     )?
-    .with_dna_options(args.is_dna, args.allow_ambiguity, args.ignore_softmask)
+    .with_dna_options(args.is_dna, args.ignore_softmask)
     .with_num_partitions(args.num_partitions);
 
     match (args.max_query_len, &args.seed_mask) {
@@ -590,10 +586,6 @@ pub fn summarize(args: &SummarizeArgs) -> Result<()> {
         meta.file_version.to_string(),
     ]);
     rows.push(vec!["DNA".to_string(), meta.is_dna.to_string()]);
-    rows.push(vec![
-        "Allow Ambiguity".to_string(),
-        meta.allow_ambiguity.to_string(),
-    ]);
     rows.push(vec![
         "Ignore Softmask".to_string(),
         meta.ignore_softmask.to_string(),

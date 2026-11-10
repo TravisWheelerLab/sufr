@@ -68,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `slice_u8_to_vec`, `usize_to_bytes`, and `vec_to_slice_u8`.
 - Remove `sufr create -r,--random-seed`,
   which is not used for the prefix-based partitioning
+- (breaking) Remove `sufr create -a,--allow-ambiguity` and the
+  `allow_ambiguity` fields of `SufrFile` and `SufrMetadata`, which the LCP
+  cache made unnecessary
 
 ### Fixed
 

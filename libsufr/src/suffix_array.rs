@@ -306,7 +306,6 @@ impl SuffixArray {
     ///     assert_eq!(meta.file_size, 172);
     ///     assert_eq!(meta.file_version, 6);
     ///     assert_eq!(meta.is_dna, true);
-    ///     assert_eq!(meta.allow_ambiguity, false);
     ///     assert_eq!(meta.ignore_softmask, false);
     ///     assert_eq!(meta.text_len, 11);
     ///     assert_eq!(meta.len_suffixes, 9);

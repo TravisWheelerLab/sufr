@@ -53,7 +53,7 @@ fn build(
     let outpath = outfile.path().to_string_lossy().to_string();
     let mut builder =
         SuffixArrayBuilder::from_data(text.to_vec(), vec![(0, "s".to_string())])
-            .with_dna_options(true, false, false)
+            .with_dna_options(true, false)
             .with_num_partitions(3)
             .with_write_lcp(write_lcp);
     if let Some(n) = max_query_len {

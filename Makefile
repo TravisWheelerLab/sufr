@@ -41,7 +41,7 @@ s1s:
 	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna -o 1s.sufr --ignore-softmask
 
 s1n:
-	$(CREATE_DEBUG) $(SEQ1) -n 2 --dna --allow-ambiguity -o 1n.sufr
+	$(CREATE_DEBUG) $(SEQ1) -n 2 -o 1n.sufr
 
 s2:
 	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna 
@@ -50,13 +50,13 @@ s2d:
 	$(CREATE_DEBUG) $(SEQ2) -n 2 --dna --sequence-delimiter 'N' -o 2d.sufr
 
 s2n:
-	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --allow-ambiguity -o 2n.sufr
+	$(CREATE_DEBUG) $(SEQ2) -n 3 -o 2n.sufr
 
 s2s:
 	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --ignore-softmask -o 2s.sufr
 
 s2ns:
-	$(CREATE_DEBUG) $(SEQ2) -n 3 --dna --allow-ambiguity --ignore-softmask -o 2ns.sufr
+	$(CREATE_DEBUG) $(SEQ2) -n 3 --ignore-softmask -o 2ns.sufr
 
 s3:
 	$(CREATE_DEBUG) $(SEQ3) --dna

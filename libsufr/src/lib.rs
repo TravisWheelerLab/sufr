@@ -62,7 +62,7 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_dna_options(true, false)
             .with_num_partitions(2)
             .with_write_lcp(true)
             .build_to_file(&outpath, true)?;
@@ -97,7 +97,7 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, true, false)
+            .with_dna_options(false, false)
             .with_num_partitions(2)
             .with_force_64bit(true)
             .with_write_lcp(true)
@@ -109,7 +109,7 @@ mod tests {
 
         let sufr_file = res.unwrap();
         assert_eq!(sufr_file.version, OUTFILE_VERSION);
-        assert!(sufr_file.is_dna);
+        assert!(!sufr_file.is_dna);
         assert_eq!(sufr_file.text_len, 11);
         assert_eq!(sufr_file.num_sequences, 1);
         assert_eq!(sufr_file.sequence_starts, [0]);
@@ -131,7 +131,7 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_dna_options(true, false)
             .with_num_partitions(2)
             .with_write_lcp(true)
             .build_to_file(&outpath, true)?;
@@ -206,7 +206,7 @@ mod tests {
         // 3 CAAA$
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_dna_options(true, false)
             .with_num_partitions(1)
             .with_seed_mask(SeedMask::new("101").unwrap())
             .with_write_lcp(true)
@@ -247,7 +247,7 @@ mod tests {
         // 16  3 CAAACAAACAAAC$
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_dna_options(true, false)
             .with_num_partitions(1)
             .with_seed_mask(SeedMask::new("11011").unwrap())
             .with_write_lcp(true)
@@ -274,7 +274,7 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_dna_options(true, false, false)
+            .with_dna_options(true, false)
             .with_num_partitions(1)
             .with_seed_mask(SeedMask::new("11000111").unwrap())
             .with_write_lcp(true)

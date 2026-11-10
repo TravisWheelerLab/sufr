@@ -80,7 +80,6 @@ Options:
   -m, --max-query-len <CONTEXT>     Max context
   -o, --output <OUTPUT>             Output file
   -d, --dna                         Input is DNA
-  -a, --allow-ambiguity             Allow suffixes starting with ambiguity codes
   -i, --ignore-softmask             Ignore suffixes in soft-mask/lowercase regions
   -D, --sequence-delimiter <DELIM>  Character to separate sequences [default: %]
   -s, --seed-mask <MASK>            Spaced seeds mask
@@ -108,7 +107,7 @@ To briefly describe our algorigthm, the input sequences is read into a vector of
 Unless we are told to ignore softmasked input, lowercase values are converted to uppercase; in the case that we do ignore softmask data, lowercase are converted to an ambiguity character (_N_ for nucleotides and _X_ otherwise, e.g., protein).
 Multiple sequence are separated by a specified character (`%` by default).
 A sentinel character is appended to the end (default `$`) is appended to the end of the input text.
-If the `--dna` flag is present, suffixes are skipped if they begin with any character other than _A_, _C_, _G_, or _T_ unless the `--allow-ambiguity` flag is present.
+If the `--dna` flag is present, suffixes are skipped if they begin with any character other than _A_, _C_, _G_, or _T_.
 
 Next, we partition the suffixes into bins based on the first few bytes of each suffix. The bins are calculated and chosen based on the
 observed alphabet of the sequence (nucleic acid alphabet for only `ACGTN`, amino acid alphabet otherwise).
