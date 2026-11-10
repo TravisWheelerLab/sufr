@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-10T01:21:48.216089217Z",
   "defer_until": null,
   "created_at": "2026-11-10T01:06:43.439047768Z",
-  "updated_at": "2026-11-10T01:06:48.216089217Z",
+  "updated_at": "2026-11-10T01:06:48.251870613Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "9aec218c",
+      "at": "2026-11-10T01:06:48.25186965Z",
+      "author": "Jeb Rosen/9d8eb24a",
+      "text": "Implemented on branch `worktree-remove-allow-ambiguity`, uncommitted, awaiting review. `cargo test` passes, including the four renamed `create_*_not_dna*` CLI tests.",
+      "commit": "9433918",
+      "branch": "worktree-remove-allow-ambiguity"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "9433918",
