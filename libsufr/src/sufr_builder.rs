@@ -15,7 +15,6 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     mem,
-    ops::Range,
     path::{Path, PathBuf},
     sync::Mutex,
     time::Instant,
@@ -74,9 +73,6 @@ pub struct SuffixArrayBuilder {
     // OUTPUT OPTIONS
     force_64bit: bool,
     write_lcp: bool,
-
-    // BUILD STATE
-    n_ranges: Vec<Range<usize>>,
 }
 
 impl SuffixArrayBuilder {
@@ -121,7 +117,6 @@ impl SuffixArrayBuilder {
             temp_dir: None,
             force_64bit: false,
             write_lcp: false,
-            n_ranges: vec![],
         }
     }
 
@@ -193,9 +188,6 @@ impl SuffixArrayBuilder {
     ) -> Result<SuffixArray> {
         let path = path.as_ref();
         let occupancy = self.normalize_text();
-        if self.allow_ambiguity {
-            self.n_ranges = find_n_ranges(&self.text);
-        }
 
         let scratch_dir = if self.memory_scratch {
             None
@@ -270,26 +262,6 @@ impl SuffixArrayBuilder {
     }
 
     // --------------------------------------------------
-    /// If a suffix is in a long run of Ns, return the position of the final N
-    ///
-    /// Args:
-    /// * `suffix`: suffix position
-    fn find_n_run(&self, suffix: usize) -> Option<usize> {
-        self.n_ranges
-            .binary_search_by(|range| {
-                if range.contains(&suffix) {
-                    Ordering::Equal
-                } else if range.start < suffix {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            })
-            .ok()
-            .map(|i| self.n_ranges[i].end)
-    }
-
-    // --------------------------------------------------
     /// Find the longest common prefix between two suffixes.
     ///
     /// Args:
@@ -343,37 +315,28 @@ impl SuffixArrayBuilder {
                 }
             }
             SuffixSortType::MaxQueryLen(max_query_len) => {
-                match (&self.find_n_run(start1), &self.find_n_run(start2)) {
-                    // If the two suffixes start in long stretches of Ns
-                    // Then use the min of the end positions
-                    (Some(end1), Some(end2)) => {
-                        T::from_usize(min(end1 - start1, end2 - start2))
-                    }
-                    _ => {
-                        let text_len = self.text.len();
-                        let len = if max_query_len > &0 {
-                            *max_query_len
-                        } else {
-                            len.to_usize()
-                        };
-                        let start1 = start1 + skip;
-                        let start2 = start2 + skip;
-                        let end1 = min(start1 + len, text_len);
-                        let end2 = min(start2 + len, text_len);
-                        let lcp = lcp(
-                            &self.text[start1..end1],
-                            &self.text[start2..end2],
-                            lcp_cache.as_deref().map(|c| (c, start1, start2)),
-                        );
-                        // IMPORTANT: Only cache if lcp < len (uncapped, "true" LCP)
-                        if skip + lcp >= LcpCache::MIN_CACHEABLE && lcp < len {
-                            if let Some(c) = lcp_cache {
-                                c.set(start1 - skip, start2 - skip, skip + lcp);
-                            }
-                        }
-                        T::from_usize(skip + lcp)
+                let text_len = self.text.len();
+                let len = if max_query_len > &0 {
+                    *max_query_len
+                } else {
+                    len.to_usize()
+                };
+                let start1 = start1 + skip;
+                let start2 = start2 + skip;
+                let end1 = min(start1 + len, text_len);
+                let end2 = min(start2 + len, text_len);
+                let lcp = lcp(
+                    &self.text[start1..end1],
+                    &self.text[start2..end2],
+                    lcp_cache.as_deref().map(|c| (c, start1, start2)),
+                );
+                // IMPORTANT: Only cache if lcp < len (uncapped, "true" LCP)
+                if skip + lcp >= LcpCache::MIN_CACHEABLE && lcp < len {
+                    if let Some(c) = lcp_cache {
+                        c.set(start1 - skip, start2 - skip, skip + lcp);
                     }
                 }
+                T::from_usize(skip + lcp)
             }
         }
     }
@@ -1043,30 +1006,6 @@ fn write_all_at(file: &File, buf: &[u8], offset: u64) -> Result<()> {
             }
             Ok(())
         })
-}
-
-/// Find the runs of at least 1000 `N`s in `text`.
-fn find_n_ranges(text: &[u8]) -> Vec<Range<usize>> {
-    let mut n_ranges: Vec<Range<usize>> = vec![];
-    let mut n_start: Option<usize> = None;
-    let min_n = 1000;
-    let now = Instant::now();
-    for (i, &byte) in text.iter().enumerate() {
-        if byte == b'N' {
-            if n_start.is_none() {
-                n_start = Some(i);
-            }
-        } else {
-            if let Some(prev) = n_start {
-                if i - prev >= min_n {
-                    n_ranges.push(prev..i);
-                }
-            }
-            n_start = None;
-        }
-    }
-    info!("Scanned for runs of Ns in {:?}", now.elapsed());
-    n_ranges
 }
 
 /// Alphabet for partitioning by a prefix key,

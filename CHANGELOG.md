@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implement vectorized LCP calculation (AVX2 on x86-64), significantly
   improving build time on some inputs
 - Implement an LCP cache, significantly improving build time on some inputs with very long
-  duplications or tandem repeats
+  duplications or tandem repeats. It replaces the special case for long runs of `N` under
+  `--allow-ambiguity`, which imposed a costly binary search on every comparison and could
+  produce some wrong output.
 - Add `SuffixArrayBuilder::with_write_lcp` and `sufr create --write-lcp`. The LCP
   array is now optional and off by default. `search`, `count`, `locate`,
   and `extract` do not read it; `list --show-lcp` fails on a file without
