@@ -1,0 +1,31 @@
+{
+  "id": "sufr-d58026",
+  "title": "Four 12.5 Mb runs of N may sort 40 times slower without the N-run shortcut",
+  "body": "Since 665ee89 on `dev`, `find_lcp` in `libsufr/src/sufr_builder.rs` has no special case for runs of `N`. Comparisons between suffixes inside long runs rely on the skip in the LCP-aware merge and on `LcpCache` in `libsufr/src/lcp.rs`. `LcpCache` stores LCPs of 1,024 or more, keyed by the distance between the two suffixes, and `lcp_avx2` probes it every 1,024 scanned bytes.\n\nOne synthetic input took 40 times longer without the shortcut. It was 100 Mb of random ACGT with four runs of 12.5 Mb of `N`, built with `create -t 4 -n 256 -d -a`.\n\n| input | with the shortcut | without |\n|---|---|---|\n| four runs of 12.5 Mb | about 9.5 s | 415 s, one run |\n| one run of 50 Mb | 8.2-8.3 s | 10.4-11.0 s |\n\nThe 415 s run was never repeated, and it was being stopped as it finished. hg38 does not show the problem: it has 488 runs, and at 32 threads it builds in 121-136 s without the shortcut.\n\n## Open\n\n- Whether the 415 s repeats. Rebuild the input and time 665ee89 on it.\n- If it does, why the cache misses. Two untested guesses: the first comparison between two different runs is at a distance not yet in the cache, and each rayon worker has its own `LcpCache`, so an entry one worker stores is not seen by another.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T00:35:04.737296584Z",
+  "updated_at": "2026-11-10T00:37:13.463005525Z",
+  "closed_at": "2026-11-10T00:37:13.463005525Z",
+  "close_reason": "Dropped: inputs made mostly of a few multi-Mb runs of N are too unlikely in practice to justify checking the 415 s case.",
+  "resolution": "dropped",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "665ee89",
+      "branch": "worktree-remove-n-runs"
+    },
+    "closed": {
+      "commit": "665ee89",
+      "branch": "worktree-remove-n-runs"
+    }
+  }
+}
