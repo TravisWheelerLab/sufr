@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.231901961Z",
-  "updated_at": "2026-11-02T19:27:59.663919134Z",
+  "updated_at": "2026-11-10T19:28:19.105026663Z",
   "closed_at": "2026-11-02T19:27:59.663919134Z",
   "close_reason": "Fixed in ad1a659 as part of sufr-9b9fda: chrono and home removed from sufr, pretty_assertions only in dev-dependencies.",
   "resolution": "done",
-  "notes": [],
+  "notes": [
+    {
+      "id": "ba15a675",
+      "at": "2026-11-10T19:28:19.105025545Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d: `sufr/Cargo.toml` declares `chrono` (line 17) and `home` (line 21), which nothing in `sufr/src` uses, and `pretty_assertions` at lines 25 and 33.",
+      "commit": "657e16d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e8655c9",

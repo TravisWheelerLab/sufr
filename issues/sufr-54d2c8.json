@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.796336502Z",
-  "updated_at": "2026-11-04T06:27:43.478211264Z",
+  "updated_at": "2026-11-10T19:28:19.272900119Z",
   "closed_at": "2026-11-04T06:27:43.478211264Z",
   "close_reason": "Unreachable: the sentinel suffix is always indexed, so every file has at least one suffix, and an empty input does not build. Closed by Jack on 2026-11-03.",
   "resolution": "dropped",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 the site is `matching_ranks` (`search.rs:155-157`), which computes `n - 1` with `n = self.num_searched()`. Not run.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "cb0f7b46",
+      "at": "2026-11-10T19:28:19.272898924Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "The same holds on dev at 657e16d: `sufr_search.rs:102-103` computes `n - 1`, the builder always keeps the sentinel suffix and an empty input fails to build, so only a hand-made file reaches it.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {

@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.781929599Z",
-  "updated_at": "2026-11-02T19:59:04.375556246Z",
+  "updated_at": "2026-11-10T19:28:18.880485631Z",
   "closed_at": "2026-11-02T19:59:04.375556246Z",
   "close_reason": "Fixed by bd21d2e. At cff9fb6 the cache write goes through `as_bytes` (`io.rs:236`), which sizes the slice with `size_of_val`. The `size_of::<usize>()` multiplication is gone.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "While reorganizing storage (sufr-b9d61c) the cache write was read again: it sizes its bytes by T through vec_to_slice_u8, so the overrun this issue describes may no longer exist. Check against index.rs before working it.",
       "commit": "bd21d2e",
       "branch": "refactor"
+    },
+    {
+      "id": "deb57dff",
+      "at": "2026-11-10T19:28:18.880484391Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Not present on dev at 657e16d: the cache write at `libsufr/src/sufr_file.rs:720-721` goes through `vec_to_slice_u8` in `libsufr/src/util.rs`, which sizes the slice with `size_of_val`.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {

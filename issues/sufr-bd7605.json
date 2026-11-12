@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:02:22.649930401Z",
-  "updated_at": "2026-11-04T06:03:54.446559375Z",
+  "updated_at": "2026-11-10T19:28:18.946059808Z",
   "closed_at": "2026-11-04T06:03:54.446559375Z",
   "close_reason": "Fixed in f4b9652: locate sorts by (sequence_start, position). Two uniprot .out files reordered, same groups.",
   "resolution": "done",
-  "notes": [],
+  "notes": [
+    {
+      "id": "179ef9ae",
+      "at": "2026-11-10T19:28:18.946058544Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d: `sufr/src/lib.rs:501-505` sorts locate hits by `sequence_name`, then position. With records named 1, 2 and 10, `locate` prints 1, 10, 2.",
+      "commit": "657e16d",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "9722e49",

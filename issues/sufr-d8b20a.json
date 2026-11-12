@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.247505449Z",
-  "updated_at": "2026-11-04T06:32:17.771040713Z",
+  "updated_at": "2026-11-10T19:28:19.174151365Z",
   "closed_at": "2026-11-04T06:32:17.771040713Z",
   "close_reason": "The Makefile is deleted in 56db6ff.",
   "resolution": "dropped",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 all three problems are unchanged: `time -l` at `Makefile:12`, `$(SEARCH)` at :19, and `callrind` at :89.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "4bd3aeae",
+      "at": "2026-11-10T19:28:19.174150033Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "dev at 657e16d still has the Makefile, and it still has every defect from the table: `/usr/bin/time -l` at line 12, the undefined `$(SEARCH)` at line 19 and `--tool=callrind` at line 89.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {

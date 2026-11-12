@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-10-28T02:10:00.817618296Z",
-  "updated_at": "2026-11-04T01:38:18.460385323Z",
+  "updated_at": "2026-11-10T19:28:18.976491202Z",
   "closed_at": "2026-11-04T01:38:18.460385323Z",
   "close_reason": "Landed as 9049092 on refactor: FileAccess::get returns a Result and search returns Result<Hits>, so a failed read stops the command with the error instead of a panic or a silent no-match; extract and locate stop on a failed read of the suffixes too.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 `FileAccess` is in `io.rs`. `get` (`io.rs:127-143`) calls `read_exact_at(..).unwrap()` at :137, so a short read panics instead of reading as no match. `get` returns `None` only past the end. TODO at `io.rs:128`.\n\n`compare` no longer unwraps `get_text_range`. `query_lcp` unwraps `text_slice` instead (`search.rs:277`, `search.rs:295`). `get_range` returns a `Result`. No disk error reaches the caller as `Err`.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "7eb23db2",
+      "at": "2026-11-10T19:28:18.976489938Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d: `FileAccess::get` in `libsufr/src/file_access.rs:66-81` returns `Option` and unwraps `read_exact_at`, and `sufr_search.rs:275` unwraps `get_text_range`. Fixing it on dev also needs the sufr-eae820 fix so the error reaches the caller.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {

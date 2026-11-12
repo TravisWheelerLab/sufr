@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.216431602Z",
-  "updated_at": "2026-11-04T06:56:00.162747701Z",
+  "updated_at": "2026-11-10T19:28:19.240574718Z",
   "closed_at": "2026-11-04T06:56:00.162747701Z",
   "close_reason": "Fixed in fc5db36: Header::read bails with \"Unknown sufr version N\" on any version but OUTFILE_VERSION; test_header_round_trip checks the refusal.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 the open path does check the version. `read_text_length` (`format.rs:226-230`) bails with \"Unknown sufr version {n}\", and every open goes through it (`lib.rs:65`). So `sufr list` and `sufr summarize` on a file with version byte 7 report that error.\n\n`Header::read` (`format.rs:99`, version read at :135) still has no check. Its two direct callers are `io.rs:396` and `index.rs:187`.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "e127e5f9",
+      "at": "2026-11-10T19:28:19.240573492Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d: `SufrFile::read` reads the version byte at `libsufr/src/sufr_file.rs:141` and never compares it. Only `read_text_length` in `util.rs:104-114` checks it, on the `SuffixArray::read` path the CLI takes. `SufrFile` is public, so a library caller skips the check.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {

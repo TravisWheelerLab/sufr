@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.224170297Z",
-  "updated_at": "2026-11-04T06:27:43.486308258Z",
+  "updated_at": "2026-11-10T19:28:19.30370335Z",
   "closed_at": "2026-11-04T06:27:43.486308258Z",
   "close_reason": "Unreachable: read_sequence_file records the first record's start as 0 and an input with no records fails to build. Closed by Jack on 2026-11-03.",
   "resolution": "dropped",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 both sites are `partition_point(|&val| val <= suffix) - 1`, at `search.rs:309` (`locate`) and `search.rs:350` (`extraction`). The clones are gone.\n\nNo input under `data/` triggers it. It needs a file whose first sequence start is above 0, or one with no sequences.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "c4f3a80a",
+      "at": "2026-11-10T19:28:19.303702175Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "The same holds on dev at 657e16d: the `partition_point - 1` sites are `sufr_file.rs:980` (extract) and `:1226` (locate), and `read_sequence_file` in `util.rs` records the first start as 0.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {

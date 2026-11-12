@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T17:48:29.200900723Z",
-  "updated_at": "2026-11-04T05:43:13.88831938Z",
+  "updated_at": "2026-11-10T19:28:19.036536797Z",
   "closed_at": "2026-11-04T05:43:13.88831938Z",
   "close_reason": "Fixed in 6629ab0: the summarize helper panics on a row it cannot find, and summarize_sufr1 names Len Suffixes and drops the Seed mask row.",
   "resolution": "done",
@@ -25,6 +25,14 @@
       "text": "At cff9fb6 the test still has the problem. `cli.rs:1135` is the `if let Some(caps)` and `cli.rs:1155` expects \"Num Suffixes\", while the CLI prints \"Len Suffixes\". `cargo test summarize` passes.",
       "commit": "cff9fb6",
       "branch": "refactor"
+    },
+    {
+      "id": "e2981f07",
+      "at": "2026-11-10T19:28:19.036535624Z",
+      "author": "Jeb Rosen/f3787cc2",
+      "text": "Still present on dev at 657e16d, and wider: the helper in `sufr/tests/cli.rs:1199` asserts only on rows it finds. `summarize_sufr1` expects `Num Suffixes`, where the CLI prints `Len Suffixes`, and `Seed mask` and `Allow Ambiguity`, which dev does not print for that file. The test passes.",
+      "commit": "657e16d",
+      "branch": "dev"
     }
   ],
   "stamps": {
