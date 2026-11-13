@@ -1,0 +1,10 @@
+{
+  "slug": "packing-rank-zero-is-smallest-byte",
+  "text": "`Packing::from_occupancy` (`libsufr/src/build.rs`) ranks the bytes the text holds 0, 1, 2 in byte order and leaves every other byte at 0. Rank 0 is the smallest byte in the text: the sentinel `$` unless the text holds a smaller byte such as a `#` delimiter (sufr-b96ee1). Covering every byte normalize saw keeps an unseen byte from sharing rank 0. The width follows the count of distinct bytes, so a stray byte can halve the key (sufr-aa4802).",
+  "created_at": "2026-11-13T20:32:33.754735181Z",
+  "updated_at": "2026-11-13T20:32:33.754735181Z",
+  "stamp": {
+    "commit": "f085e43",
+    "branch": "dev"
+  }
+}
