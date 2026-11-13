@@ -1,0 +1,28 @@
+{
+  "id": "sufr-6972e4",
+  "title": "The memory budget does not bound a build's peak memory",
+  "body": "`turns` in `libsufr/src/build.rs` cuts the partitions into turns by charging `size_of::<W>() + 8` bytes per suffix against the budget, 12 bytes for a u32 build. That covers the suffixes and keys a turn gathers. A code reading, not a measurement, finds more held during the sort: `sort_partition` builds a `Vec<(u64, W)>` of 16 bytes a suffix while the gathered vectors are alive, then the partition's suffix and LCP arrays, and `order_ties` copies each tie run. A partition larger than the budget gets a turn of its own. `--help` and `CHANGELOG.md` describe the budget as the most bytes of suffixes held in memory while sorting.\n\nJeb accepted the higher peak memory of the merged build on 2026-11-13: 12.0 GB against 9.6 GB for dev 657e16d on hg38 at 32 threads. This issue is about what the flag promises, not that figure.\n\n## Options\n\n- Charge the real cost per suffix in `turns`, so the budget bounds what the sort holds.\n- Describe the budget in `--help` and `CHANGELOG.md` as what it counts, and say that peak memory runs above it.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T20:32:04.033355076Z",
+  "updated_at": "2026-11-13T20:32:04.033355076Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f085e43",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
