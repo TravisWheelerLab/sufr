@@ -3,7 +3,7 @@
   "title": "Does the .sufr header record the integer width?",
   "body": "A `.sufr` file (format version 6, layout in `libsufr/src/format.rs`) does not record the width of its integers. The header holds `text_len`, and the width follows from it by rule: 4 bytes when `text_len` is under `u32::MAX`, 8 otherwise. `Header::read(filename, int_size)` is told the width by its caller, and `SuffixArray::open_with` picks it from `read_text_length`. The rule is Ken's, from the first writer in c23f773 (2024-10-04), and `origin/dev` applies it the same way at `suffix_array.rs:343`.\n\nThe consequence is that a small text written at u64, which `SuffixArrayBuilder::with_force_64bit` does for the tests, is a file the format cannot describe: `open_with` reads it as u32. That hook is sufr-11e453's subject.\n\n## Options\n\n| option | cost |\n|---|---|\n| keep the rule | nothing changes; a u64 file of a small text stays unreadable through the public API; the u64 path is covered by the unit test at `lib.rs:270` and by real texts over 4 GiB |\n| record the width | one header byte, format version 7; every fixture in `data/expected` is rewritten; `open_with` dispatches on the byte; the forced hook can go public and the oracle (`libsufr/tests/oracle.rs`) runs every row at both widths |\n\nJack chose on 2026-11-03 to keep the rule for now and decide this when the format next changes for its own reasons.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:48:42.620433833Z",
-  "updated_at": "2026-11-13T21:27:35.342259094Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-13T21:27:35.37506978Z",
+  "closed_at": "2026-11-13T21:27:35.37506978Z",
+  "close_reason": "Jeb chose to record the width with the 0.8.0 format change. eb6d175 on branch `worktree-release-0.8.0` (format 7) stores it as a u8 at header byte 3. `Header::read` takes it from the file, `typed::open` dispatches on it, and `TypedSuffixArray::open` refuses a file of the other width.",
+  "resolution": "done",
   "notes": [
     {
       "id": "e20859c6",
@@ -41,6 +41,9 @@
       "commit": "73ac557",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "eb6d175",
+      "branch": "worktree-release-0.8.0"
+    }
   }
 }
