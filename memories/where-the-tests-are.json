@@ -1,10 +1,10 @@
 {
   "slug": "where-the-tests-are",
-  "text": "Three test files carry the rule in CLAUDE.md that construction and search results must not change. libsufr/tests/oracle.rs rebuilds every small input under every flag set and compares against a reference sort and LCP; an input starting with > is an inline FASTA. libsufr/tests/search.rs holds hand-derived search results on fixtures 1 and 2. sufr/tests/cli.rs pins the CLI, with create_bytes_match_fixtures comparing 13 fixtures byte for byte. Checked at fc5db36.",
+  "text": "Three test files pin construction and search results. libsufr/tests/oracle.rs builds every small input in table() under several flag sets and compares against a reference sort and LCP; an input starting with > is an inline FASTA. libsufr/tests/search.rs holds hand-derived search results on small inputs, opened in all eight storage and cap modes. sufr/tests/cli.rs pins the CLI; create_bytes_match_fixtures compares 12 fixtures byte for byte, each built with --write-lcp.",
   "created_at": "2026-11-04T06:58:30.824476117Z",
-  "updated_at": "2026-11-04T06:58:30.824476117Z",
+  "updated_at": "2026-11-13T20:32:33.816315579Z",
   "stamp": {
-    "commit": "fc5db36",
-    "branch": "refactor"
+    "commit": "f085e43",
+    "branch": "dev"
   }
 }
