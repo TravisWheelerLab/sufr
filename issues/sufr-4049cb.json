@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T04:37:20.642753022Z",
-  "updated_at": "2026-11-13T04:37:20.642753022Z",
+  "updated_at": "2026-11-13T04:42:11.564470075Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "5837edd8",
+      "at": "2026-11-13T04:42:11.564469525Z",
+      "author": "Jack Roddy/16cf998c",
+      "text": "Commit `9f9c913` moved tie runs and boundary LCPs onto `KeyScheme`. Against `023778c` at 100 MiB, `mask-dna` went from 1.46 to 1.56 s, about 7%. The other mask rows moved by 2% or less. `MaskedKeys::order_ties` now sorts each tie run by descending position after the key sort, where `sort_masked_partition` sorted by key and position in one pass. Nobody has checked whether that change causes the 7%. Jack accepted the cost for now and plans a run on a whole genome, such as hg38, to see whether it holds at that size.",
+      "commit": "9f9c913",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "023778c",
