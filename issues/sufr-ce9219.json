@@ -1,0 +1,28 @@
+{
+  "id": "sufr-ce9219",
+  "title": "The CHANGELOG's build time and peak memory figures do not compare against 0.7.12",
+  "body": "`CHANGELOG.md` says a build of 1 GiB of DNA at 8 threads went from 57.7 s to 8.8 s, and that peak memory went from 1.4 GiB to 2.4 GiB. The memory `dna-1g-fixture` records 57.7 s for that input at refactor commit 80d74c0, an intermediate state of the refactor, not the 0.7.12 release on main. The CHANGELOG does not say what the memory figures were measured against.\n\n## Proposal\n\nTime 0.7.12 against dev on the same input and replace both figures, or drop the numbers. suffix-bench has a 0.7.12 build at `vendor/sufr/sufr-main`. 0.7.12 always writes the LCP array, so dev needs `--write-lcp` for a like-for-like run. The 2026-11-13 note on sufr-a04617 has dev 657e16d against refactor 453e2d0 on catalyst, which gives the scale.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T20:31:56.787677267Z",
+  "updated_at": "2026-11-13T20:31:56.787677267Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f085e43",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
