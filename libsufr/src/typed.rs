@@ -558,7 +558,8 @@ mod tests {
     };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
-    use tempfile::NamedTempFile;
+    use std::sync::OnceLock;
+    use tempfile::{NamedTempFile, TempDir};
 
     type Index = TypedSuffixArray<u32, MemorySource<u8>, DiskSource<u32>>;
 
@@ -589,11 +590,19 @@ mod tests {
         Ok(())
     }
 
-    // 1.sufr is fully sorted, so a max_query_len of at least its text
-    // length (11) subsamples to the whole array; a shorter one would
-    // write a cache file in ~/.sufr
+    // 1.sufr is fully sorted, so no cap, a cap of 0 and a cap of at
+    // least its text length (11) all subsample to the whole array
     #[test]
     fn test_subsample_at_the_sort_length_is_the_whole_array() -> Result<()> {
+        // TODO: opening with a subsample writes a cache under ~/.sufr;
+        //       HOME is a temp dir for this process until sufr-22b9c3
+        //       decides where, or whether, that cache lives
+        static HOME: OnceLock<TempDir> = OnceLock::new();
+        HOME.get_or_init(|| {
+            let home = TempDir::new().expect("a temp dir for HOME");
+            std::env::set_var("HOME", home.path());
+            home
+        });
         let file = "../data/inputs/1.sufr";
         for max_query_len in [None, Some(0), Some(11), Some(20)] {
             let index =
