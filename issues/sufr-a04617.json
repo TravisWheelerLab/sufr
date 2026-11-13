@@ -1,7 +1,7 @@
 {
   "id": "sufr-a04617",
-  "title": "Run the deferred checks on refactor once Jeb is ready to merge it",
-  "body": "While dev keeps moving in the week of 2026-11-10, Jack asked to keep the checks on refactor to the suite, fmt and clippy. The rest waits until Jeb says he is ready to merge refactor into dev. At that point, run all of these against the branch as it stands.\n\n- The benchmark suite before and after every change that touched the hot loops this week, the removal of the N-run shortcut from `find_lcp` among them: release build, 4 threads, 5 repeats, medians, as `CLAUDE.md` asks.\n- Every commit on refactor past `origin/dev` builds and passes `cargo test --workspace`, so the history bisects.\n- On catalyst, build hg38, hs1 and uniprot_sprot with dev and with refactor, unmasked and under a seed mask, and compare the `.sufr` hashes. Any difference is either explained by a commit or is a bug.\n- The NEON port in refactor's `lcp.rs`, checked on an Apple silicon machine: the suite, `lcp` against `lcp_scalar` over every mismatch position and the cache probe points, and byte-identical output against an x86 build of the same commit.",
+  "title": "The merged build is checked on hs1 and on Apple silicon",
+  "body": "Refactor reached dev as the squash commit f085e43, so the checks that waited on the merge now run against dev. The note below holds the benchmark and hash results of refactor 453e2d0 against dev 657e16d on catalyst. Jeb squash-merged, so the per-commit build check no longer applies.\n\nStill to run:\n\n- On catalyst, build hs1 with 657e16d and with f085e43, unmasked, with `-d`, and under a seed mask, and compare the `.sufr` hashes. A difference is either explained by a commit or is a bug.\n- On an Apple silicon machine, check `lcp_neon` in `libsufr/src/lcp.rs`: the suite, `lcp` against `lcp_scalar` over every mismatch position and the cache probe points, and byte-identical output against an x86 build of the same commit.",
   "type": "feature",
   "status": "open",
   "priority": 2,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:51:45.832196332Z",
-  "updated_at": "2026-11-13T18:35:57.175980417Z",
+  "updated_at": "2026-11-13T20:31:18.931133789Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
