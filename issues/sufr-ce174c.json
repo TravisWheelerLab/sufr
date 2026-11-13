@@ -1,0 +1,28 @@
+{
+  "id": "sufr-ce174c",
+  "title": "The libsufr design documents describe dev at f085e43",
+  "body": "Branch `design-goals` holds `design/DESIGN_GOALS.md`, `PROBLEMS.md`, `SOLUTIONS.md` and `UNSOLVED.md`, last brought up to date for dev at 657e16d in 8ab993d. The refactor squash f085e43 fixes many of the problems they list and adds some. A review against the goals on 2026-11-13, mostly by code reading, found:\n\n## Fixed by f085e43\n\n- `SufrFile` and its public fields, with `FileAccess` showing through them\n- `SufrMetadata`, with its file name, time and `chrono` types\n- `list` and its printing inside the library\n- the `low_memory` flags on build, read and every query\n- reads that took `&mut self`, and the per-query option and result structs\n- queries as `Vec<String>`, and `string_at`\n\n## Still open\n\n- `SuffixArray::open_with` writes the subsample cache to `~/.sufr` (sufr-22b9c3)\n- `SeedMask` has public fields, so a caller can build an inconsistent mask\n- `SuffixSortType` is an exhaustive enum\n- `anyhow::Result` is the error type of every fallible function\n- libsufr parses FASTA itself, with `needletail`\n- `OUTFILE_VERSION` is exported without a feature flag\n\n## New in f085e43\n\n- `OpenOptions`, `Context`, `Location` and `Extraction` have only public fields, and `SourceKind` and `Alphabet` are exhaustive enums, so adding a field or variant breaks callers. `Alphabet::Dna { ignore_softmask }` is a struct variant.\n- The `typed` feature exports `TypedSuffixArray`, whose only public method is `open`. Its search and read methods are `pub(crate)`, and nothing turns it into a `SuffixArray`.\n- `SuffixArray::text`, `suffixes` and `lcps` return new `Vec`s, `text` copying even from memory, and `Hits::locate` and `Hits::extract` collect.\n- `SuffixArrayBuilder::from_data` checks nothing about its text. No sequences, a first start other than 0, or no trailing `$` give a file that later panics or stores wrong LCPs (sufr-b96ee1).\n\n## Proposal\n\nBring the four documents on `design-goals` up to date for f085e43, as 8ab993d did for 657e16d.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T20:31:40.974534978Z",
+  "updated_at": "2026-11-13T20:31:40.974534978Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f085e43",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
