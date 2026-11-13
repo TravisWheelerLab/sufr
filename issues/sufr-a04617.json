@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:51:45.832196332Z",
-  "updated_at": "2026-11-13T20:31:18.931133789Z",
+  "updated_at": "2026-11-13T20:32:04.125544595Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jeb Rosen/b57eb726",
       "text": "Jeb plans to squash-merge refactor, so the per-commit build-and-test check is dropped.\n\nAt refactor 453e2d0 against dev 657e16d on catalyst: `cargo fmt --check` is clean, `cargo clippy --workspace --all-targets` gives 4 warnings, and `cargo test --workspace --release` passes.\n\nsuffix-bench `measure` with `-n 2000`, no cap and no `--dna`, through the wrapper `vendor/sufr/sufr-refactor-453e2d0` (it moves `-t` after the subcommand and drops `-m 0`). Medians of wall time and peak RSS:\n\n| input | threads | runs | dev | refactor |\n|---|---|---|---|---|\n| easy | 4 | 5 | 10.7 s, 318 MB | 2.6 s, 318 MB |\n| withn | 4 | 5 | 10.7 s, 318 MB | 2.6 s, 318 MB |\n| sim1clone | 4 | 5 | 1.0 s, 66 MB | 0.8 s, 49 MB |\n| amino | 4 | 5 | 10.4 s, 318 MB | 2.6 s, 318 MB |\n| chr1 | 4 | 5 | 30.2 s, 782 MB | 31.5 s, 934 MB |\n| uniprot_sprot | 4 | 5 | 19.7 s, 474 MB | 8.1 s, 520 MB |\n| hg38 | 32 | 3 | 131.5 s, 9638 MB | 93.2 s, 12021 MB |\n\nEvery `.sufr` matched dev byte for byte: the seven above, and at 32 threads hg38 `-d`, hg38 `-d -s 1110111`, chr1 `-d -i`, and uniprot_sprot with `--write-lcp`, `-s 11011` and `-s 11011 --write-lcp`.\n\nNot run yet: hs1, and the NEON check on Apple silicon.",
       "commit": "657e16d",
+      "branch": "dev"
+    },
+    {
+      "id": "23cf0ff7",
+      "at": "2026-11-13T20:32:04.125543555Z",
+      "author": "Jeb Rosen/b57eb726",
+      "text": "Refactor merged to dev as f085e43, so this issue now holds only the hs1 and Apple silicon checks; its title and body are rewritten to match. The review findings from 2026-11-13 went to sufr-b96ee1, sufr-2d17c2, sufr-ce174c, sufr-ce9219, sufr-a44965, sufr-c314ae and the memory budget issue.",
+      "commit": "f085e43",
       "branch": "dev"
     }
   ],
