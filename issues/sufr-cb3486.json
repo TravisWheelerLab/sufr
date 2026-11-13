@@ -1,7 +1,7 @@
 {
   "id": "sufr-cb3486",
-  "title": "sufr panics when its output is piped into a reader that stops early, such as head",
-  "body": "`sufr` panics when the reader of its stdout closes early:\n\n```text\n$ sufr summarize data/expected/uniprot-masked.sufr | head\n...\nthread 'main' panicked at library/std/src/io/stdio.rs:1166:9:\nfailed printing to stdout: Broken pipe (os error 32)\n```\n\nAt `f866248`, `summarize`, `list`, `locate` and `extract` all panic this way when piped into `head -1`. `count` with seven queries printed too little to show it. Rust ignores `SIGPIPE`, so a write to a closed pipe returns an `EPIPE` error, and `println!` turns that error into a panic. The output that reached `head` is correct; the panic message on stderr and the exit status are what go wrong.\n\n## Open\n\n- Whether `main` should treat a broken pipe as a normal exit, or the commands should write through a handle whose errors they return.",
+  "title": "sufr reports an error or panics when its output is piped into a reader that stops early, such as head",
+  "body": "When the reader of its stdout closes early, `sufr` fails in one of two ways:\n\n- `summarize` panics, because it prints its table with `println!`, which panics on a write error:\n\n```text\n$ sufr summarize data/expected/uniprot-masked.sufr | head\n...\nthread 'main' panicked at library/std/src/io/stdio.rs:1166:9:\nfailed printing to stdout: Broken pipe (os error 32)\n```\n\n- `list`, `locate` and `extract` write with `writeln!` and return the error. `main` prints `Error: Broken pipe (os error 32)` and exits 1.\n\n`count` with seven queries printed too little to show it. Rust ignores `SIGPIPE`, so a write to a closed pipe returns an `EPIPE` error. The output that reached the reader is correct, but the message on stderr and the exit status report a failure where none happened.\n\n## Open\n\n- Whether `main` should treat a broken pipe as a normal exit, or the commands should handle it themselves.",
   "type": "bug",
   "status": "open",
   "priority": 3,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T06:10:25.422761761Z",
-  "updated_at": "2026-11-13T06:10:25.422761761Z",
+  "updated_at": "2026-11-13T06:30:55.641863521Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
