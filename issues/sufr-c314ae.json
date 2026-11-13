@@ -1,0 +1,28 @@
+{
+  "id": "sufr-c314ae",
+  "title": "libsufr depends on env_logger and num_cpus without using them",
+  "body": "At f085e43, `libsufr/Cargo.toml` lists `env_logger` and `num_cpus`, and nothing under `libsufr/src` uses either. The CLI declares both itself in `sufr/Cargo.toml` and uses them in `sufr/src/main.rs`.\n\n## Proposal\n\nRemove both from the dependencies of `libsufr`.",
+  "type": "feature",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T20:31:56.855660858Z",
+  "updated_at": "2026-11-13T20:31:56.855660858Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f085e43",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
