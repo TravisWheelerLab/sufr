@@ -3,7 +3,7 @@
   "title": "dev's --tmp-dir option is ported onto refactor's build modules",
   "body": "`origin/dev` is one commit past e8655c9, where `refactor` branched: db9b5a9, \"Add an option to specify the directory for temporary scratch files\", by Jeb Rosen with Opus 5.5. It adds `sufr create -T/--tmp-dir DIR` and `SuffixArrayBuilder::with_temp_dir`, writes the scratch files into a `sufr-*` subdirectory of that directory or of `std::env::temp_dir`, and has 44 lines of CLI tests and a CHANGELOG entry.\n\nIt lands on `libsufr/src/sufr_builder.rs`, which `refactor` dissolved into `libsufr/src/build.rs` and `build/{partition,scratch,sort,write}.rs`, so none of its hunks apply. On `refactor` the scratch choice is `ScratchKind::{Disk, Memory}` in `build/scratch.rs`, with `NamedTempFile` in the system temp dir.\n\n## Proposal\n\nPort rather than merge: a `temp_dir: Option<PathBuf>` on the builder with `with_temp_dir`, passed into `ScratchKind::Disk` and used by the `NamedTempFile` builder; the `-T` flag and its tests on the CLI; the CHANGELOG line. The CLI's frozen surface then matches dev's again.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -15,16 +15,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T01:53:47.186964371Z",
-  "updated_at": "2026-11-04T05:50:39.902797694Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-13T06:37:53.012684545Z",
+  "closed_at": "2026-11-13T06:37:53.012684545Z",
+  "close_reason": "Since 01aa478 the build writes no scratch files, so a temp directory option has nothing to point at; the memory budget bounds what the build holds instead. The refactor PR description (sufr-39fce5) should name dev's --tmp-dir as dropped and say why.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "6edc011",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "1b1ecd0",
+      "branch": "refactor"
+    }
   }
 }
