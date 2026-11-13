@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:48:42.620433833Z",
-  "updated_at": "2026-11-05T04:51:22.620000723Z",
+  "updated_at": "2026-11-13T21:14:10.583014475Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -25,6 +25,14 @@
       "text": "A file built with with_force_64bit for a text shorter than u32::MAX cannot be opened through SuffixArray::open_with: it picks the width from text_len and reads the header at 4 bytes, so the sequence starts and the mask come back as garbage. Seen on 2026-11-04 when a test opened such a file. Only TypedSuffixArray::<u64, _, _>::open reads it. The width in the header, or a header read that detects it, is what fixes this.",
       "commit": "80d74c0",
       "branch": "refactor"
+    },
+    {
+      "id": "23da4484",
+      "at": "2026-11-13T21:14:10.583013369Z",
+      "author": "Jeb Rosen/7a6b35e4",
+      "text": "The format changed for its own reasons in 22759b2 (format 7, on branch `worktree-release-0.8.0`): two vestigial header fields were dropped. That commit does not record the integer width. Adding the width byte now would ship in the same 0.8.0 break; after that it takes format 8.",
+      "commit": "22759b2",
+      "branch": "worktree-release-0.8.0"
     }
   ],
   "stamps": {
