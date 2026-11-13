@@ -1,7 +1,7 @@
 {
   "id": "sufr-f5d441",
   "title": "SuffixArrayBuilder is reached from SuffixArray::build",
-  "body": "`SuffixArrayBuilder` (`libsufr/src/build.rs:36`) is reached through its own constructors, `from_sequence_file(path, delimiter)` and `from_data(text, sequences)`, and finished with `build_to_file(path, low_memory) -> Result<SuffixArray>`. `SuffixArray` (`lib.rs`) has `open` and `open_with` but no way to start a build, so a user learns two entry points for one type.\n\n## Proposal\n\n`SuffixArray::build(..)` returns the builder, so a build reads as `SuffixArray::build(..).with_dna_options(..).build_to_file(..)`. Whether `SuffixArrayBuilder` keeps any public constructor of its own is open; the builder may be a type a user only ever receives.\n\n## Open\n\n- What `build` takes: the path, the text and sequences, or one call per source.\n- Whether `from_sequence_file` and `from_data` stay public, become `pub(crate)`, or go.\n\nThis waits on the builder redesign that separates configuration from construction, since that decides what the builder's surface is.",
+  "body": "`SuffixArrayBuilder` (`libsufr/src/build.rs`) is reached through its own constructors, `from_sequence_file(path, delimiter)` and `from_data(text, sequences)`. Options are set with `with_alphabet`, `with_seed_mask`, `with_num_partitions`, `with_memory_budget` and `with_write_lcp`. `build_to_file(path) -> Result<()>` writes the file and returns nothing else, so a caller opens the result with `SuffixArray::open`. `SuffixArray` (`lib.rs`) has `open` and `open_with` but no way to start a build, so a user learns two entry points for one type.\n\n## Proposal\n\n`SuffixArray::build(..)` returns the builder, so a build reads as `SuffixArray::build(..).with_alphabet(..).build_to_file(..)`. Whether `SuffixArrayBuilder` keeps any public constructor of its own is open; the builder may be a type a user only ever receives.\n\n## Open\n\n- What `build` takes: the path, the text and sequences, or one call per source.\n- Whether `from_sequence_file` and `from_data` stay public, become `pub(crate)`, or go.\n\nThis waits on the builder redesign that separates configuration from construction, since that decides what the builder's surface is.",
   "type": "feature",
   "status": "open",
   "priority": 2,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-02T21:04:02.858857177Z",
-  "updated_at": "2026-11-03T22:53:25.517788887Z",
+  "updated_at": "2026-11-13T06:41:23.339746035Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
