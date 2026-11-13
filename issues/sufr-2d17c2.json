@@ -1,7 +1,7 @@
 {
   "id": "sufr-2d17c2",
   "title": "Which version does the release after 0.7.12 take?",
-  "body": "Both crates are at 0.7.12 on dev at f085e43, the version on main. The Unreleased section of `CHANGELOG.md` marks breaking changes to the library API and the CLI, raises the minimum Rust version from 1.80 to 1.88, and makes files built with `create -m` fail to open. `CHANGELOG.md` says the project follows Semantic Versioning, under which a breaking change before 1.0 takes the next minor version.\n\n## Options\n\n- 0.8.0 for `libsufr` and `sufr`, with sufr's `libsufr` dependency raised to match. The API changes still open in the design documents (sufr-6c1d3e) can break callers again in 0.9.\n- 1.0.0. This commits to the public API while its gaps are open: public struct fields, exhaustive enums, `anyhow` as the error type. Fixing any of them would then take 2.0.\n\nI lean to 0.8.0.",
+  "body": "Both crates are at 0.7.12 on dev at f085e43, the version on main. The Unreleased section of `CHANGELOG.md` marks breaking changes to the library API and the CLI, raises the minimum Rust version from 1.80 to 1.88, and makes files built with `create -m` fail to open. `CHANGELOG.md` says the project follows Semantic Versioning, under which a breaking change before 1.0 takes the next minor version.\n\n## Options\n\n- 0.8.0 for `libsufr` and `sufr`, with sufr's `libsufr` dependency raised to match. The API changes still open in the design documents (sufr-ce174c) can break callers again in 0.9.\n- 1.0.0. This commits to the public API while its gaps are open: public struct fields, exhaustive enums, `anyhow` as the error type. Fixing any of them would then take 2.0.\n\nI lean to 0.8.0.",
   "type": "decision",
   "status": "open",
   "priority": 2,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T20:31:31.874590327Z",
-  "updated_at": "2026-11-13T20:31:31.874590327Z",
+  "updated_at": "2026-11-13T20:31:46.116505208Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
