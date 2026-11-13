@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T18:59:48.877880025Z",
-  "updated_at": "2026-11-13T06:27:08.065728708Z",
+  "updated_at": "2026-11-13T06:27:15.608278647Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -40,7 +40,8 @@
       "author": "Jack Roddy/16cf998c",
       "text": "Commit fce1756 renamed `Storage` to `SourceKind`, so `Storage::Disk` above is now `SourceKind::Disk`.",
       "commit": "fce1756",
-      "branch": "refactor"
+      "branch": "refactor",
+      "deleted_at": "2026-11-13T06:27:15.608278357Z"
     }
   ],
   "stamps": {
