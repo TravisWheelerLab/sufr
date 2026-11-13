@@ -1,7 +1,7 @@
 {
   "id": "sufr-57d0c6",
   "title": "A run of one character is one giant tie run under the key sort",
-  "body": "Every suffix inside a run of one character has the same key, 21 of that character, so under the key sort a run of Ns is one tie run of as many suffixes as the run is long, and the merge sort compares them with walks the length of the run. The LCP cache cannot help there: inside one run every distance occurs. The N-run handling in `find_lcp` applies only under `--dna --allow-ambiguity`, and the benchmark harness builds without `--dna`.\n\nOn catalyst, 32 threads, hg38 with its Ns takes 98.6 s against 44.1 s for hg38 with the Ns deleted, and libsais takes 79.6 s on both.\n\n## Proposal\n\nIn the sort task, a tie run whose key is one repeated character is handled from the positions alone: within the run the suffixes order by position descending, since each is a prefix of the ones before it, and the LCP of neighbours is the distance to the run's end. The characters after the run decide the order between suffixes of different runs, which the merge still does, but only once per run. No text reads inside a run.",
+  "body": "Every suffix inside a run of one character has the same key: 21 of that character for DNA. Under the key sort such a run is one tie run of as many suffixes as the run is long, and `UnmaskedKeys::order_ties` hands it to `merge_sort`, which compares text the length of the run. The LCP cache cannot help there, since inside one run every distance occurs.\n\nA DNA build indexes only suffixes that start with A, C, G, T or the sentinel since `3944856`, so a run of N no longer forms a tie run there. A run of one base still does, and so does a run of N in a build over the byte alphabet, such as the `long-n` row of the benchmark suite.\n\nAt `276640b`, with 32 threads, hg38 with its Ns took 98.6 s against 44.1 s for hg38 with the Ns deleted, and libsais took 79.6 s on both. That build indexed the suffixes inside N runs. Nobody has measured the cost of runs since.\n\n## Proposal\n\nOrder a tie run whose key is one repeated character from positions alone. Inside one run of character c that ends before character d, each suffix is a tail of the run followed by d:\n\n- If d sorts after c, the longer tail sorts first, so positions go in increasing order.\n- If d sorts before c, the shorter tail sorts first, so positions go in decreasing order.\n\nTwo neighbours from the same run share the length of the shorter tail. A tie run also holds suffixes from other runs of c with the same key, and the merge still orders those, once per run rather than once per suffix.\n\n## Open\n\n- How much time such runs cost on real genomes, now that DNA builds skip N.",
   "type": "feature",
   "status": "open",
   "priority": 2,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T11:27:25.078605062Z",
-  "updated_at": "2026-11-05T11:27:25.078605062Z",
+  "updated_at": "2026-11-13T06:26:50.587965339Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
