@@ -1,0 +1,10 @@
+{
+  "slug": "suffix-bench-measure-needs-wrapper",
+  "text": "suffix-bench's measure (src/bin/measure.rs, run_sufr) runs vendor/sufr/<tool> -t N create -n P -m M -o <input>.sufr <input>. Since f085e43 sufr takes -t only after the subcommand and create has no -m, so a dev build needs a wrapper script in vendor/sufr that moves -t after create and drops -m 0. Checked 2026-11-13.",
+  "created_at": "2026-11-13T20:32:33.88771883Z",
+  "updated_at": "2026-11-13T20:32:33.88771883Z",
+  "stamp": {
+    "commit": "f085e43",
+    "branch": "dev"
+  }
+}
