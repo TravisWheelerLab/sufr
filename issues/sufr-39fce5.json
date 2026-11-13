@@ -1,0 +1,30 @@
+{
+  "id": "sufr-39fce5",
+  "title": "The refactor PR description tells Jeb what moves, what it replaces and what waits on him",
+  "body": "Refactor will go to dev as one PR, 78 commits past `origin/dev` at 1b1ecd0, with dev merged in at feaa5e8. Jeb reviews it. This session gathered what the description has to tell him. Write it once the deferred checks in sufr-a04617 have run, so it can quote their results.\n\n## What it covers\n\n- A map of the commits by theme, with ranges: the storage and API reorganization, the search API (`SuffixArray::open`, `search`, `Hits`), the construction rewrite (count pass, memory budget, 64-bit key sort), and the removal of the build-time max query length (b3f9104).\n- What does not change, and the evidence: the oracle, `create_bytes_match_fixtures`, and the dev against refactor hashes from sufr-a04617.\n- Results that move on purpose, each with its commit:\n  - header byte 2 now records whether every suffix was indexed, as on dev (3944856)\n  - `extract` windows stop at the sequence (9722e49)\n  - `locate` orders hits by the input's order (f4b9652)\n  - `list -o` writes to the file (4e873cf)\n  - count, locate and extract stop on a failed read (9049092)\n  - seed masks longer than a key are refused (cabe70c, 1995d7c)\n  - `sufr summarize` no longer prints the \"Max query len\" row (9d84fe8, sufr-575525 closed)\n  - peak memory at the default budget is higher than with scratch files\n- Designs from Ken or Jeb that the PR replaces, which CLAUDE.md asks to name: `SufrFile` and the option structs, the scratch files with dev's `--tmp-dir` and `with_temp_dir` (db9b5a9), `mk_test_files.py` and the Makefile (56db6ff), the build-time max query length. The PR drops dev's `--tmp-dir` instead of porting it, because the build has no scratch files since 01aa478 (sufr-f5785e, closed).\n- What from dev does not carry over: the read-buffer sizing of 163d48d lived in `util.rs`, and `read_sequence_file` in `libsufr/src/build.rs` still reserves `u32::MAX` bytes. Jack left that to Jeb.\n- Fixture `2ns.sufr` is gone, since `-i` needs `--dna` on refactor and dev's rebuild of it as a non-DNA build has no counterpart.\n- Decisions waiting on Jeb: the fixture names and rebuild path (sufr-bf8c3b), and the subsample cache in `~/.sufr` (sufr-22b9c3, sufr-664c3b).\n\n## Commits of 2026-11-12\n\nThe description must also cover the 15 commits of `1526250..1b1ecd0`, all made on 2026-11-12. The last column names the design of Ken Youens-Clark that the commit replaces, where its message says so.\n\n| group | commit | subject | replaces |\n|---|---|---|---|\n| construction | 75d429b | Rename PrefixEncoder to Packing | |\n| construction | e537747 | Rename the PrefixEncoder fields and give how each is computed | |\n| construction | 023778c | Make the count and gather scans generic over a KeyScheme | |\n| construction | 9f9c913 | Sort tie runs and take boundary LCPs through the KeyScheme | |\n| construction | efd28f4 | Check the order inside masked tie runs in the oracle | |\n| construction | 55daf88 | Make the pext path unreachable from safe code | |\n| construction | bbe52ae | Raise rust-version to 1.87 and make the pext functions safe | |\n| construction | 6e81e38 | Remove index_unknown from Alphabet::Amino | |\n| library API | 9d84fe8 | Remove Metadata and build the summarize rows in the CLI | `SufrMetadata`, 6ca02c0 |\n| library API | 1279e2c | Pin every row of sufr summarize in the CLI tests | |\n| library API | f866248 | Keep the byte positions of Header inside libsufr | |\n| library API | fce1756 | Rename Storage to SourceKind | |\n| CLI | 89695a3 | Read query files only through -q,--query-file | the query-file dispatch, 02ad736 and 1b50f85 |\n| CLI | 28bbf44 | Move --threads, --log and --log-file onto every subcommand | the layout of those options, dac13e2 |\n| CLI | 1b1ecd0 | Exit quietly when the reader of stdout stops early | |\n\nThree of these change what a user types or sees. A positional query that names a file is no longer read as a query file (89695a3). `--log` loses its short form `-l` (28bbf44). `sufr summarize` loses its \"Max query len\" row (9d84fe8).",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [
+    "sufr-a04617"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T22:00:23.009400309Z",
+  "updated_at": "2026-11-13T06:44:24.083551097Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "1526250",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}

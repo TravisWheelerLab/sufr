@@ -1,7 +1,7 @@
 {
   "id": "sufr-91e751",
   "title": "merge and find_lcp keep their lengths and LCPs as usize and cast at the array boundary",
-  "body": "In `merge` and `find_lcp` in `libsufr/src/build/sort.rs`, locals that are lengths or LCPs are typed `W`: `m`, `l_x`, `context`, `max_n`, and the value `find_lcp` returns. Every comparison against `text.len()`, `max_query_len` or a mask position casts with `to_usize`, and `find_lcp` casts with `from_usize` on each of its four returns. 15 `from_usize` calls in the crate, 9 of them here.\n\n## Proposal\n\nThose locals are `usize`. The cast happens once where a value is loaded from a `W` array and once where one is stored, so `from_usize` is left at the stores: `partition`'s push, two subsample pushes, the LCP stores in `merge`, `first_lcps`. `find_lcp` returns `usize` and is no longer generic. The three `vec![W::from_usize(0); n]` in `typed.rs` become `W::default()`.\n\n## Rejected\n\nA newtype over the text indexed by `W`, `sufr-d92278`: with the text as `MemorySource<u8>` the one line that gains is the byte compare in `merge`, against a `Deref`, two `Index` impls and seven signatures.\n\n## Cost\n\n`merge` and `find_lcp` are the hot loops. Before and after on the board, 4 threads, 5 repeats; I expect no change, since the casts are free and the comparisons already widen.",
+  "body": "In `merge` in `libsufr/src/build.rs`, locals that are lengths or LCPs are typed `W`: `m`, `l_x`, `context` and `max_n`. Every comparison against `text.len()` or a mask position casts with `to_usize`, and `merge` casts with `from_usize` for `max_n` and for `len_lcp`, the value `find_lcp` returns.\n\nThis issue also covered `find_lcp`, which used to return `W` and cast with `from_usize` on each of its four returns. cabe70c made it a function that is not generic and returns `usize`, so that half is done. The `merge` half and the `typed.rs` half are not. At 1b1ecd0 `build.rs` has 6 `from_usize` calls, 2 of them in `merge`, and `typed.rs` has 5.\n\n## Proposal\n\nThe locals of `merge` are `usize`. The cast happens once where a value is loaded from a `W` array and once where one is stored, so `from_usize` is left at the stores: the LCP stores in `merge`, `sort_partition`, `MaskedKeys::order_ties`, `first_lcps`, the suffix store in `gather_chunk`, and the two subsample pushes. The two `vec![W::from_usize(0); len]` in `read_cache` in `typed.rs` become `W::default()`.\n\n## Rejected\n\nA newtype over the text indexed by `W`, `sufr-d92278`: with the text as `MemorySource<u8>` the one line that gains is the byte compare in `merge`, against a `Deref`, two `Index` impls and seven signatures.\n\n## Cost\n\n`merge` and `find_lcp` are the hot loops. Before and after on the board, 4 threads, 5 repeats; I expect no change, since the casts are free and the comparisons already widen.",
   "type": "feature",
   "status": "open",
   "priority": 3,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T04:51:22.611160046Z",
-  "updated_at": "2026-11-05T04:51:22.611160046Z",
+  "updated_at": "2026-11-13T06:43:40.864317378Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,

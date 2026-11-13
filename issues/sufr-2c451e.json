@@ -1,7 +1,7 @@
 {
   "id": "sufr-2c451e",
   "title": "typed.rs and TypedSuffixArray name the type parameter, not the job",
-  "body": "`libsufr/src/typed.rs` holds the `.sufr` file after `open`, at one integer width: the public `Storage` enum, the crate enums `Text` and `Suffixes` (Memory, Disk, or Subsampled for the suffixes) that record where each part lives, the struct `TypedSuffixArray<T>` with `open`, `load_suffixes`, the subsample and its cache, `suffixes_at`, `lcps_at`, `text_byte` and `searched_ranks`, the public `Metadata` that `summarize` prints, and three helpers. `search.rs` adds the queries as a second `impl` on the same struct. The public `SuffixArray` in `lib.rs` wraps one of these at u32 or u64.\n\n\"Typed\" names the type parameter, which the file name does not need to say, and says nothing about the job. Jack called it a 1/10 name on 2026-11-03. The file was `sufr_file.rs` with `SufrFile<T>` on dev, then `index.rs` with `Index<T>` (ad1a659), then this (c6c9b53); all three names came from refactor commits with a Claude line, so none is a person's decision.\n\n## Options\n\n| module, struct | reads as | against |\n|---|---|---|\n| `reader.rs`, `Reader<T>` | a reader of a `.sufr` file at width T: `Reader::open`, `reader.suffixes_at`, `reader.search` | |\n| `storage.rs`, `Loaded<T>` | the module owns the Storage decision | the struct name is weak, and `Storage` the enum already has the word |\n| `opened.rs`, `Opened<T>` | an opened file | `Opened::open` |\n| fold into `search.rs` | one module | 1,400 lines, two jobs |\n\n## Cost\n\nA rename and nothing else, one commit. About 40 mentions of the struct in `lib.rs`, `search.rs`, `typed.rs` and their tests, all crate-private. `Storage` and `Metadata` keep their names and re-exports.",
+  "body": "`libsufr/src/typed.rs` holds the `.sufr` file after `open`, at one integer width: the public `SourceKind` enum, the crate enums `Text` and `Suffixes` (Memory, Disk, or Subsampled for the suffixes) that record where each part lives, the struct `TypedSuffixArray<T>` with `open`, `load_suffixes`, the subsample and its cache, `suffixes_at`, `lcps_at`, `text_byte` and `searched_ranks`, and three helpers. `search.rs` adds the queries as a second `impl` on the same struct. The public `SuffixArray` in `lib.rs` wraps one of these at u32 or u64.\n\n\"Typed\" names the type parameter, which the file name does not need to say, and says nothing about the job. Jack called it a 1/10 name on 2026-11-03. The file was `sufr_file.rs` with `SufrFile<T>` on dev, then `index.rs` with `Index<T>` (ad1a659), then this (c6c9b53); all three names came from refactor commits with a Claude line, so none is a person's decision.\n\n## Options\n\n| module, struct | reads as | against |\n|---|---|---|\n| `reader.rs`, `Reader<T>` | a reader of a `.sufr` file at width T: `Reader::open`, `reader.suffixes_at`, `reader.search` | |\n| `storage.rs`, `Loaded<T>` | the module owns where the text and the suffixes live | the struct name is weak |\n| `opened.rs`, `Opened<T>` | an opened file | `Opened::open` |\n| fold into `search.rs` | one module | 1,400 lines, two jobs |\n\n## Cost\n\nA rename and nothing else, one commit. About 40 mentions of the struct in `lib.rs`, `search.rs`, `typed.rs` and their tests, all crate-private. `SourceKind` keeps its name and re-export.",
   "type": "decision",
   "status": "open",
   "priority": 3,
@@ -13,11 +13,30 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:19:23.317315961Z",
-  "updated_at": "2026-11-04T06:19:23.317315961Z",
+  "updated_at": "2026-11-13T06:27:15.598605591Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "2a70dee5",
+      "at": "2026-11-13T06:08:26.595470504Z",
+      "author": "Jack Roddy/16cf998c",
+      "text": "Commit 9d84fe8 removed `Metadata` from `typed.rs` and from the crate. `sufr summarize` now builds its rows from `Header`. The body's mentions of `Metadata` no longer hold: `typed.rs` no longer holds it, and only `Storage` keeps a re-export.",
+      "commit": "f866248",
+      "branch": "refactor",
+      "deleted_at": "2026-11-13T06:27:15.588803347Z"
+    },
+    {
+      "id": "f9e6aefa",
+      "at": "2026-11-13T06:15:06.203858624Z",
+      "author": "Jack Roddy/16cf998c",
+      "text": "Commit fce1756 renamed the public enum `Storage` to `SourceKind`. Where this issue says `Storage`, it now means `SourceKind`.",
+      "commit": "fce1756",
+      "branch": "refactor",
+      "deleted_at": "2026-11-13T06:27:15.598605301Z"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "d7f219c",

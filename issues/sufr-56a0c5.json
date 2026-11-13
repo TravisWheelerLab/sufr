@@ -3,7 +3,7 @@
   "title": "Sorted partitions are written to the output file as they finish instead of staged in Scratch",
   "body": "`sort_partition` in `libsufr/src/build/sort.rs` sorts a partition in memory and then stores the sorted suffix array and LCP array into a new `Scratch`, and `write` in `libsufr/src/build/write.rs` consumes each one straight back out and writes it at the partition's offset in the output file. With disk scratch every sorted partition is written twice.\n\nThe partition sizes are known after `group_buffers`, before any sort, since each group's size is the sum of its buckets' counts. So every partition's offset in the output file is known before sorting.\n\n## Proposal\n\n`sort_partition` writes the sorted arrays to their final offsets in the output file as each partition finishes, and no sorted `Scratch` exists. `write` writes the text first and the header last as now. The LCP of each partition's first suffix with the one before it is computed after all partitions are sorted, as `first_lcps` does now, and patched in place as one value at a known offset.\n\n## Cost\n\n- Halves the disk writes of the low-memory build and removes the second use of `Scratch`.\n- The output file must exist before sorting, and a failed build leaves a partial file where it leaves none now.\n- Touches `sort_partition`, a hot loop: before and after on the board.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T04:51:22.602229041Z",
-  "updated_at": "2026-11-05T04:51:22.602229041Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-13T06:37:52.992134122Z",
+  "closed_at": "2026-11-13T06:37:52.992134122Z",
+  "close_reason": "Done in 01aa478: each sorted partition is written with write_all_at straight to its offset in the output file, and Scratch is gone.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "80d74c0",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "1b1ecd0",
+      "branch": "refactor"
+    }
   }
 }

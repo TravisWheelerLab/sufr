@@ -1,0 +1,10 @@
+{
+  "slug": "aarch64-check-needs-arm",
+  "text": "cargo check --target aarch64-apple-darwin fails on an x86 Linux machine without an aarch64 C toolchain, in the zstd-sys build script. lcp_neon in libsufr/src/lcp.rs is therefore built and tested only on an ARM machine. Found 2026-11-10.",
+  "created_at": "2026-11-10T22:00:22.988284644Z",
+  "updated_at": "2026-11-10T22:00:22.988284644Z",
+  "stamp": {
+    "commit": "1526250",
+    "branch": "refactor"
+  }
+}

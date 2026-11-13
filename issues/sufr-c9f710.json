@@ -3,7 +3,7 @@
   "title": "The benchmark suite has a row with a query length cap",
   "body": "The suite on branch `bench` runs four rows: normal, long-n, protein and long-repeats, all without `--max-query-len`. A query length cap is a first-class feature, and a change to the sort can move a capped build while the four rows stay flat. The floor for `merge_sort` in sufr-1422ef did exactly that on 2026-11-05: 1.21 to 1.15 s on `dna-100.fa` with `--dna -m 20`, timed by hand, with the suite showing nothing.\n\n## Proposal\n\nA fifth row, the normal DNA fixture with `--dna -m 20`, so a capped build is on every board.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T21:58:04.541908263Z",
-  "updated_at": "2026-11-05T21:58:04.541908263Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-13T06:37:53.002519248Z",
+  "closed_at": "2026-11-13T06:37:53.002519248Z",
+  "close_reason": "b3f9104 removed the build-time query length cap, and Header::read rejects a file built with one, so there is no capped build left to benchmark. The CLI's -m is search-only.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "8a05eb2",
       "branch": "construction"
     },
-    "closed": null
+    "closed": {
+      "commit": "1b1ecd0",
+      "branch": "refactor"
+    }
   }
 }

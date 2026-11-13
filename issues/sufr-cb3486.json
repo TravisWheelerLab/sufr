@@ -1,0 +1,31 @@
+{
+  "id": "sufr-cb3486",
+  "title": "sufr reports an error or panics when its output is piped into a reader that stops early, such as head",
+  "body": "When the reader of its stdout closes early, `sufr` fails in one of two ways:\n\n- `summarize` panics, because it prints its table with `println!`, which panics on a write error:\n\n```text\n$ sufr summarize data/expected/uniprot-masked.sufr | head\n...\nthread 'main' panicked at library/std/src/io/stdio.rs:1166:9:\nfailed printing to stdout: Broken pipe (os error 32)\n```\n\n- `list`, `locate` and `extract` write with `writeln!` and return the error. `main` prints `Error: Broken pipe (os error 32)` and exits 1.\n\n`count` with seven queries printed too little to show it. Rust ignores `SIGPIPE`, so a write to a closed pipe returns an `EPIPE` error. The output that reached the reader is correct, but the message on stderr and the exit status report a failure where none happened.\n\n## Open\n\n- Whether `main` should treat a broken pipe as a normal exit, or the commands should handle it themselves.",
+  "type": "bug",
+  "status": "closed",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T06:10:25.422761761Z",
+  "updated_at": "2026-11-13T06:32:33.504095436Z",
+  "closed_at": "2026-11-13T06:32:33.504095436Z",
+  "close_reason": "Commit 1b1ecd0 makes main treat a broken pipe as a normal exit, and summarize writes its table through a Result. output_closed_early_is_not_an_error pins it.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f866248",
+      "branch": "refactor"
+    },
+    "closed": {
+      "commit": "1b1ecd0",
+      "branch": "refactor"
+    }
+  }
+}
