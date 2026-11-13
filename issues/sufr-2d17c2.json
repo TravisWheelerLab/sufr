@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-13T21:28:57.688634211Z",
   "defer_until": null,
   "created_at": "2026-11-13T20:31:31.874590327Z",
-  "updated_at": "2026-11-13T21:13:57.688634211Z",
+  "updated_at": "2026-11-13T21:14:10.542822651Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "225f2774",
+      "at": "2026-11-13T21:14:10.542821325Z",
+      "author": "Jeb Rosen/7a6b35e4",
+      "text": "Jeb chose 0.8.0. 22759b2 on branch `worktree-release-0.8.0` raises both crates and sufr's `libsufr` dependency to 0.8.0, and raises `OUTFILE_VERSION` to 7. Format 7 drops header byte 2, which no reader used, and the `max_query_len` u64 at offset 44, which held 0 in every file. The fields after them move 9 bytes earlier. Since 0.7.12 wrote format 6, 0.8.0 does not open its files; the CHANGELOG says so under Changed. The `.sufr` fixtures are rebuilt and match their format 6 copies past the header. `data/expected/1s.sufr` and `data/inputs/abba.sufr`, which no test reads, stay at format 6 (sufr-bf8c3b). The CHANGELOG heading still says Unreleased. This stays open until the branch reaches dev.",
+      "commit": "22759b2",
+      "branch": "worktree-release-0.8.0"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "f085e43",
