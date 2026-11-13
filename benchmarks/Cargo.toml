@@ -1,0 +1,16 @@
+[workspace]
+
+[package]
+name = "benchmarks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+rand = "0.10"
+
+[profile.release]
+debug = true
