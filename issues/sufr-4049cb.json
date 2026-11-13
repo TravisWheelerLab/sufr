@@ -3,7 +3,7 @@
   "title": "Masked builds are 1 to 5% slower since the scans became generic over KeyScheme",
   "body": "Commit `023778c` made the count and gather scans generic over `KeyScheme`. Each scan calls `count_chunk` or `gather_chunk`, or on a CPU with BMI2 a copy of the same loop compiled with BMI2 (`count_chunk_bmi2`, `gather_chunk_bmi2`). `MaskedKeys::key` branches on its `bmi2` field and calls `masked_key_pext` or `masked_key`.\n\nMasked builds came out 1 to 5% slower than `75d429b`, which had the separate `count_masked_pext` and `gather_masked_pext`. Jack accepted the cost for now, to revisit when looking for performance across all of sufr.\n\nThe benchmark suite on `bench` ran with 100 MiB fixtures, 4 threads and median of 5, on an AMD Ryzen 7 9800X3D. The output of both builds matched.\n\n| row | `75d429b` | `023778c` |\n|---|---|---|\n| `normal` | 1.35 s | 1.33 s |\n| `protein` | 1.27 s | 1.26 s |\n| `mask-dna` | 1.41 s | 1.47 s |\n| `mask-dna-heavy` | 1.59 s | 1.67 s |\n| `mask-dna-wide` | 1.97 s | 2.00 s |\n| `mask-protein` | 1.63 s | 1.68 s |\n\nBefore the BMI2 copies of the loops were added, `MaskedKeys::key` called `masked_key_pext` out of line, and masked builds took 14 to 21% longer.\n\n## Open\n\n- What the remaining gap is. Nobody has compared the generated code. Candidates nobody has checked: the per-suffix branch on `self.bmi2` inside `key`, and the generic loop compiling differently from the old `count_masked` with a closure.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T04:37:20.642753022Z",
-  "updated_at": "2026-11-13T05:41:20.60476422Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-13T05:50:38.663034817Z",
+  "closed_at": "2026-11-13T05:50:38.663034817Z",
+  "close_reason": "On whole inputs the refactor costs nothing: hg38 unmasked and under three masks, and Swiss-Prot under 12 of 17, all within 1% or faster at 9f9c913 against 75d429b. The 100 MiB gap did not reproduce. The numbers are in the last note.",
+  "resolution": "done",
   "notes": [
     {
       "id": "5837edd8",
@@ -40,6 +40,9 @@
       "commit": "023778c",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "9f9c913",
+      "branch": "refactor"
+    }
   }
 }
