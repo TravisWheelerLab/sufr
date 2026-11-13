@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T04:37:20.642753022Z",
-  "updated_at": "2026-11-13T04:42:11.564470075Z",
+  "updated_at": "2026-11-13T05:41:20.60476422Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-13T04:42:11.564469525Z",
       "author": "Jack Roddy/16cf998c",
       "text": "Commit `9f9c913` moved tie runs and boundary LCPs onto `KeyScheme`. Against `023778c` at 100 MiB, `mask-dna` went from 1.46 to 1.56 s, about 7%. The other mask rows moved by 2% or less. `MaskedKeys::order_ties` now sorts each tie run by descending position after the key sort, where `sort_masked_partition` sorted by key and position in one pass. Nobody has checked whether that change causes the 7%. Jack accepted the cost for now and plans a run on a whole genome, such as hg38, to see whether it holds at that size.",
+      "commit": "9f9c913",
+      "branch": "refactor"
+    },
+    {
+      "id": "83c6a922",
+      "at": "2026-11-13T05:41:20.60476329Z",
+      "author": "Jack Roddy/16cf998c",
+      "text": "Whole inputs, `75d429b` against `9f9c913`, timed by a loop of `/usr/bin/time` calls: 16 threads, 3 repeats with the two builds interleaved and their order flipped each repeat, medians. The host has two Intel Xeon Platinum 8568Y+ CPUs. Every pair of runs wrote byte-identical `.sufr` files.\n\n| input and mask | `75d429b` | `9f9c913` |\n|---|---|---|\n| hg38, no mask | 51.69 s | 51.76 s |\n| hg38, 12 of 17 | 31.61 s | 30.56 s |\n| hg38, 20 of 29 | 34.27 s | 34.28 s |\n| hg38, 21 of 81 (four keys) | 38.76 s | 38.66 s |\n| Swiss-Prot, 12 of 17 | 2.30 s | 2.31 s |\n\nOn whole inputs the refactor costs nothing. The 1 to 7% seen on the 100 MiB fixtures did not show up here. The 12-of-17 mask on hg38 came out 3% faster, with less CPU time in every pair (274 against 288 s).",
       "commit": "9f9c913",
       "branch": "refactor"
     }
