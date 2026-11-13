@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:51:45.832196332Z",
-  "updated_at": "2026-11-13T20:32:04.125544595Z",
+  "updated_at": "2026-11-13T20:32:10.731326421Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -30,9 +30,10 @@
       "id": "23cf0ff7",
       "at": "2026-11-13T20:32:04.125543555Z",
       "author": "Jeb Rosen/b57eb726",
-      "text": "Refactor merged to dev as f085e43, so this issue now holds only the hs1 and Apple silicon checks; its title and body are rewritten to match. The review findings from 2026-11-13 went to sufr-b96ee1, sufr-2d17c2, sufr-ce174c, sufr-ce9219, sufr-a44965, sufr-c314ae and the memory budget issue.",
+      "text": "Refactor merged to dev as f085e43, so this issue now holds only the hs1 and Apple silicon checks; its title and body are rewritten to match. The review findings from 2026-11-13 went to sufr-b96ee1, sufr-2d17c2, sufr-ce174c, sufr-ce9219, sufr-6972e4, sufr-a44965 and sufr-c314ae.",
       "commit": "f085e43",
-      "branch": "dev"
+      "branch": "dev",
+      "edited_at": "2026-11-13T20:32:10.731325983Z"
     }
   ],
   "stamps": {
