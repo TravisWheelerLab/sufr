@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:19:23.317315961Z",
-  "updated_at": "2026-11-13T06:27:08.055226436Z",
+  "updated_at": "2026-11-13T06:27:15.588803867Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,7 +24,8 @@
       "author": "Jack Roddy/16cf998c",
       "text": "Commit 9d84fe8 removed `Metadata` from `typed.rs` and from the crate. `sufr summarize` now builds its rows from `Header`. The body's mentions of `Metadata` no longer hold: `typed.rs` no longer holds it, and only `Storage` keeps a re-export.",
       "commit": "f866248",
-      "branch": "refactor"
+      "branch": "refactor",
+      "deleted_at": "2026-11-13T06:27:15.588803347Z"
     },
     {
       "id": "f9e6aefa",
