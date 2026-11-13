@@ -3,7 +3,7 @@
   "title": "Options before the subcommand, such as -t in sufr -t 16 create, move onto the subcommands",
   "body": "`Cli` in `sufr/src/lib.rs` declares three options outside the subcommands: `-t`/`--threads`, `-l`/`--log` and `--log-file`. Clap accepts them only before the subcommand name. `sufr -t 16 create ...` works, and `sufr create -t 16 ...` exits with a usage error. Ken Youens-Clark added all three in `dac13e2` (2024-09-24), so the layout is his design. Jack decided that sufr should have no global options.\n\nA benchmark script on 2026-11-12 passed `sufr create -t 16` and lost 30 minutes to that error.\n\n`-l` also means two different things. Before the subcommand it is `--log`. After `count`, `extract` or `locate` it is `--low-memory`.\n\n## Proposal\n\nMove `--threads`, `--log` and `--log-file` onto each subcommand that uses them, so every option follows the subcommand name.\n\n## Cost\n\n- Command lines that put these options before the subcommand stop working. That includes the example `sufr --log debug create ...` in `sufr/README.md`.\n- The help blocks in `README.md` and `sufr/README.md` change.\n\n## Open\n\n- Which subcommands use threads, and which log anything.\n- Which short flag `--log` keeps, if any, since `-l` already means `--low-memory` on three subcommands.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T05:20:54.124700706Z",
-  "updated_at": "2026-11-13T05:20:54.124700706Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-13T06:30:35.979660344Z",
+  "closed_at": "2026-11-13T06:30:35.979660344Z",
+  "close_reason": "28bbf44 on refactor moved --threads, --log and --log-file onto every subcommand through one RunArgs. --log is long-only, because -l means --low-memory on count, extract and locate. 583ee86 on bench passes -t after the subcommand.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "9f9c913",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "28bbf44",
+      "branch": "refactor"
+    }
   }
 }
