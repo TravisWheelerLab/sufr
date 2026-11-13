@@ -3,7 +3,7 @@
   "title": "The portable masked scan is 3 to 8% slower since 55daf88",
   "body": "`PrefixEncoder::compact` builds a suffix's masked key one field at a time. `build` uses it for seed-mask builds on aarch64 and on x86 CPUs without BMI2. Other x86 CPUs run `compact_pext`. Commit `55daf88` replaced the `PEXT` const generic on `count_masked` and `gather_masked` with a closure argument, `|w| encoder.compact(w)`. Commit `bbe52ae` made the pext functions safe and raised `rust-version` to 1.87. The pext path kept its speed. The portable path got slower.\n\nThe run used the benchmark suite on the `bench` branch at `398bcb9`: 100 MiB fixtures, 4 threads, median of 5, an AMD Ryzen 7 9800X3D. The portable builds force `has_bmi2` to `false`. Every build wrote the same output. A second run of the `6e81e38` portable build, in an earlier run of the suite, gave 5.64, 8.77 and 5.17 s on the three mask rows, within 1% of the run below.\n\n| row | `6e81e38` | `bbe52ae` | change |\n|---|---|---|---|\n| `mask-dna` | 5.60 s | 5.92 s | +5.7% |\n| `mask-dna-heavy` | 8.73 s | 9.03 s | +3.4% |\n| `mask-protein` | 5.12 s | 5.52 s | +7.8% |\n| `normal` | 1.42 s | 1.33 s | -6.3% |\n\nJack expects this may close as not worth fixing.\n\n## Open\n\n- Which of the two commits causes it. Only `6e81e38` against `bbe52ae` was measured.\n- Whether the closure changes the generated code. Nobody has compared instructions or cycles.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-12T23:09:42.513951366Z",
-  "updated_at": "2026-11-12T23:09:42.513951366Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-13T06:26:41.725673685Z",
+  "closed_at": "2026-11-13T06:26:41.725673685Z",
+  "close_reason": "Jack does not consider the portable masked path worth chasing. Commits 023778c and 9f9c913 also replaced the code measured here. The current portable path, count_chunk with MaskedKeys::masked_key, has not been timed, and a later performance pass can measure it.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "bbe52ae",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "fce1756",
+      "branch": "refactor"
+    }
   }
 }
