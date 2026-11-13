@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:19:23.317315961Z",
-  "updated_at": "2026-11-13T06:27:15.588803867Z",
+  "updated_at": "2026-11-13T06:27:15.598605591Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -33,7 +33,8 @@
       "author": "Jack Roddy/16cf998c",
       "text": "Commit fce1756 renamed the public enum `Storage` to `SourceKind`. Where this issue says `Storage`, it now means `SourceKind`.",
       "commit": "fce1756",
-      "branch": "refactor"
+      "branch": "refactor",
+      "deleted_at": "2026-11-13T06:27:15.598605301Z"
     }
   ],
   "stamps": {
