@@ -1,0 +1,28 @@
+{
+  "id": "sufr-cb3486",
+  "title": "sufr panics when its output is piped into a reader that stops early, such as head",
+  "body": "`sufr` panics when the reader of its stdout closes early:\n\n```text\n$ sufr summarize data/expected/uniprot-masked.sufr | head\n...\nthread 'main' panicked at library/std/src/io/stdio.rs:1166:9:\nfailed printing to stdout: Broken pipe (os error 32)\n```\n\nAt `f866248`, `summarize`, `list`, `locate` and `extract` all panic this way when piped into `head -1`. `count` with seven queries printed too little to show it. Rust ignores `SIGPIPE`, so a write to a closed pipe returns an `EPIPE` error, and `println!` turns that error into a panic. The output that reached `head` is correct; the panic message on stderr and the exit status are what go wrong.\n\n## Open\n\n- Whether `main` should treat a broken pipe as a normal exit, or the commands should write through a handle whose errors they return.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T06:10:25.422761761Z",
+  "updated_at": "2026-11-13T06:10:25.422761761Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f866248",
+      "branch": "refactor"
+    },
+    "closed": null
+  }
+}
