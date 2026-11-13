@@ -1,0 +1,28 @@
+{
+  "id": "sufr-a44965",
+  "title": "A failed create leaves its output truncated and without a header",
+  "body": "`SuffixArrayBuilder::build` in `libsufr/src/build.rs` opens the output with `File::create` before sorting, which truncates any existing file at that path, and writes the header last. A build that fails or panics in between leaves a file that does not open in place of what was there. Nobody has checked whether dev's builder before f085e43 did the same.\n\n## Proposal\n\nWrite to a temporary name next to the output and rename it on success.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T20:31:56.825240611Z",
+  "updated_at": "2026-11-13T20:31:56.825240611Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f085e43",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
