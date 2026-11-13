@@ -1,15 +1,9 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::{
-    SufrFile,
-    types::{SeedMask, OUTFILE_VERSION},
-};
+use libsufr::OUTFILE_VERSION;
 use pretty_assertions::assert_eq;
 use regex::Regex;
-use std::{
-    fs::{self, File},
-    io::{BufRead, BufReader},
-};
+use std::fs;
 use tempfile::{NamedTempFile, TempDir};
 
 const PRG: &str = "sufr";
@@ -21,13 +15,6 @@ const UNIPROT: &str = "../data/inputs/uniprot.fa";
 const SUFR1: &str = "../data/expected/1.sufr";
 const SUFR2: &str = "../data/expected/2.sufr";
 const SUFR3: &str = "../data/expected/3.sufr";
-
-struct CreateOptions {
-    is_dna: bool,
-    ignore_softmask: bool,
-    sequence_delimiter: Option<char>,
-    seed_mask: Option<String>,
-}
 
 struct ExtractOptions {
     queries: Vec<String>,
@@ -51,281 +38,20 @@ struct LocateOptions {
 }
 
 // --------------------------------------------------
-fn create(input_file: &str, expected_file: &str, opts: CreateOptions) -> Result<()> {
-    let outfile = NamedTempFile::new()?;
-    let outpath = &outfile.path().to_string_lossy();
-    let mut args = vec![
-        "create".to_string(),
-        "-o".to_string(),
-        outpath.to_string(),
-        input_file.to_string(),
-    ];
-
-    if opts.is_dna {
-        args.push("--dna".to_string());
-    }
-
-    if opts.ignore_softmask {
-        args.push("--ignore-softmask".to_string());
-    }
-
-    if let Some(delim) = opts.sequence_delimiter {
-        let mut tmp = vec!["--sequence-delimiter".to_string(), delim.to_string()];
-        args.append(&mut tmp);
-    }
-
-    if let Some(mask) = opts.seed_mask {
-        let mut tmp = vec!["--seed-mask".to_string(), mask.to_string()];
-        args.append(&mut tmp);
-    }
-
-    let output = Command::cargo_bin(PRG)?.args(args).output().expect("fail");
-
-    assert!(output.status.success());
-    assert!(outfile.path().exists());
-
-    let actual: SufrFile<u32> = SufrFile::read(outpath, false)?;
-    let expected: SufrFile<u32> = SufrFile::read(expected_file, false)?;
-
-    let actual_sa: Vec<_> = actual.suffix_array_file.iter().collect();
-    let expected_sa: Vec<_> = expected.suffix_array_file.iter().collect();
-    assert_eq!(actual_sa, expected_sa);
-
-    Ok(())
-}
-
-// --------------------------------------------------
 #[test]
-fn create_empty_dies() -> Result<()> {
+fn create_empty_input_fails() -> Result<()> {
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
     Command::cargo_bin(PRG)?
-        .args(["create", "../data/expected/empty.sa"])
+        .args(["create", "--dna", "-o", &outpath, "../data/inputs/empty.fa"])
         .assert()
         .failure();
+    assert_eq!(
+        fs::metadata(&outpath)?.len(),
+        0,
+        "nothing written for an empty input"
+    );
     Ok(())
-}
-
-// --------------------------------------------------
-#[test]
-fn create_tmp_dir() -> Result<()> {
-    let tmp_dir = tempfile::tempdir()?;
-    let build = |extra: &[&str]| -> Result<Vec<u8>> {
-        let outfile = NamedTempFile::new()?;
-        let outpath = outfile.path().to_string_lossy().to_string();
-        let mut args = vec!["create", "--dna", "-o", &outpath, SEQ2];
-        args.extend_from_slice(extra);
-        Command::cargo_bin(PRG)?.args(&args).assert().success();
-        Ok(fs::read(outfile.path())?)
-    };
-
-    let tmp_path = tmp_dir.path().to_string_lossy().to_string();
-    assert_eq!(build(&["--tmp-dir", &tmp_path])?, build(&[])?);
-
-    // the build removes its sufr-* directory
-    assert_eq!(fs::read_dir(tmp_dir.path())?.count(), 0);
-    Ok(())
-}
-
-// --------------------------------------------------
-#[test]
-fn create_tmp_dir_missing_dies() -> Result<()> {
-    let tmp_dir = tempfile::tempdir()?;
-    let missing = tmp_dir.path().join("does-not-exist");
-    let outfile = NamedTempFile::new()?;
-    let output = Command::cargo_bin(PRG)?
-        .args([
-            "create",
-            "--dna",
-            "-o",
-            &outfile.path().to_string_lossy(),
-            "-T",
-            &missing.to_string_lossy(),
-            SEQ2,
-        ])
-        .output()?;
-    assert!(!output.status.success());
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(stderr.contains("Failed to create temporary directory"));
-    Ok(())
-}
-
-// --------------------------------------------------
-#[test]
-fn create_seq1() -> Result<()> {
-    create(
-        SEQ1,
-        "../data/expected/1.sufr",
-        CreateOptions {
-            is_dna: true,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_seq1_not_dna() -> Result<()> {
-    create(
-        SEQ1,
-        "../data/expected/1n.sufr",
-        CreateOptions {
-            is_dna: false,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_seq2() -> Result<()> {
-    create(
-        SEQ2,
-        "../data/expected/2.sufr",
-        CreateOptions {
-            is_dna: true,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_seq2_sequence_delimiter() -> Result<()> {
-    create(
-        SEQ2,
-        "../data/expected/2d.sufr",
-        CreateOptions {
-            is_dna: true,
-            ignore_softmask: false,
-            sequence_delimiter: Some('N'),
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_seq2_not_dna() -> Result<()> {
-    create(
-        SEQ2,
-        "../data/expected/2n.sufr",
-        CreateOptions {
-            is_dna: false,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_seq2_ignore_softmask() -> Result<()> {
-    create(
-        SEQ2,
-        "../data/expected/2s.sufr",
-        CreateOptions {
-            is_dna: true,
-            ignore_softmask: true,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_seq2_not_dna_ignore_softmask() -> Result<()> {
-    create(
-        SEQ2,
-        "../data/expected/2ns.sufr",
-        CreateOptions {
-            is_dna: false,
-            ignore_softmask: true,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_seq3() -> Result<()> {
-    create(
-        SEQ3,
-        "../data/expected/3.sufr",
-        CreateOptions {
-            is_dna: true,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_long_dna() -> Result<()> {
-    create(
-        LONG,
-        "../data/expected/long_dna_sequence.sufr",
-        CreateOptions {
-            is_dna: true,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_long_dna_not_dna() -> Result<()> {
-    create(
-        LONG,
-        "../data/expected/long_dna_sequence_allow_ambiguity.sufr",
-        CreateOptions {
-            is_dna: false,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_protein() -> Result<()> {
-    create(
-        UNIPROT,
-        "../data/expected/uniprot.sufr",
-        CreateOptions {
-            is_dna: false,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: None,
-        },
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn create_protein_masked() -> Result<()> {
-    create(
-        UNIPROT,
-        "../data/expected/uniprot-masked.sufr",
-        CreateOptions {
-            is_dna: false,
-            ignore_softmask: false,
-            sequence_delimiter: None,
-            seed_mask: Some("10111011".to_string()),
-        },
-    )
 }
 
 // --------------------------------------------------
@@ -393,6 +119,10 @@ fn extract(
     expected: &str,
     error: Option<&str>,
 ) -> Result<()> {
+    // TODO: a search with -m writes a subsample cache under ~/.sufr;
+    //       HOME points at a temp dir until sufr-22b9c3 decides
+    //       where, or whether, that cache lives
+    let home = TempDir::new()?;
     for memory in &["", "-l", "-v"] {
         let mut args = vec!["extract".to_string(), filename.to_string()];
 
@@ -419,7 +149,11 @@ fn extract(
             args.push(query.to_string());
         }
 
-        let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+        let output = Command::cargo_bin(PRG)?
+            .env("HOME", home.path())
+            .args(&args)
+            .output()
+            .expect("fail");
         assert!(output.status.success());
 
         let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
@@ -447,14 +181,14 @@ fn extract_seq1() -> Result<()> {
             max_query_len: None,
         },
         &[
-            ">1:6-11 AC 0",
-            "ACGT$",
-            ">1:0-11 AC 0",
-            "ACGTNNACGT$",
-            ">1:8-11 GT 0",
-            "GT$",
-            ">1:2-11 GT 0",
-            "GTNNACGT$",
+            ">1:6-10 AC 0",
+            "ACGT",
+            ">1:0-10 AC 0",
+            "ACGTNNACGT",
+            ">1:8-10 GT 0",
+            "GT",
+            ">1:2-10 GT 0",
+            "GTNNACGT",
             "",
         ]
         .join("\n"),
@@ -474,14 +208,14 @@ fn extract_seq1_prefix_1() -> Result<()> {
             max_query_len: None,
         },
         &[
-            ">1:5-11 AC 1",
-            "NACGT$",
-            ">1:0-11 AC 0",
-            "ACGTNNACGT$",
-            ">1:7-11 GT 1",
-            "CGT$",
-            ">1:1-11 GT 1",
-            "CGTNNACGT$",
+            ">1:5-10 AC 1",
+            "NACGT",
+            ">1:0-10 AC 0",
+            "ACGTNNACGT",
+            ">1:7-10 GT 1",
+            "CGT",
+            ">1:1-10 GT 1",
+            "CGTNNACGT",
             "",
         ]
         .join("\n"),
@@ -505,8 +239,8 @@ fn extract_seq1_suf_3() -> Result<()> {
             "ACG",
             ">1:0-3 AC 0",
             "ACG",
-            ">1:8-11 GT 0",
-            "GT$",
+            ">1:8-10 GT 0",
+            "GT",
             ">1:2-5 GT 0",
             "GTN",
             "",
@@ -532,8 +266,8 @@ fn extract_seq1_pre_1_suf_3() -> Result<()> {
             "NACG",
             ">1:0-3 AC 0",
             "ACG",
-            ">1:7-11 GT 1",
-            "CGT$",
+            ">1:7-10 GT 1",
+            "CGT",
             ">1:1-5 GT 1",
             "CGTN",
             "",
@@ -586,8 +320,8 @@ fn extract_uniprot_mql() -> Result<()> {
             max_query_len: Some(3),
         },
         &[
-            ">sp|Q6GZW1|014R_FRG3G:111-121 RNELNNEEA 0",
-            "RNEEDDDG%M",
+            ">sp|Q6GZW1|014R_FRG3G:111-119 RNELNNEEA 0",
+            "RNEEDDDG",
             ">sp|P0C9G4|1101L_ASFP4:80-90 RNELNNEEA 0",
             "RNEFCTYYVT",
             ">sp|P0C9G1|1101L_ASFWA:80-90 RNELNNEEA 0",
@@ -623,43 +357,8 @@ fn extract_uniprot_masked() -> Result<()> {
         &[
             ">sp|P32234|128UP_DROME:38-48 RNELNNEEA 0",
             "RRELISPKGG",
-            ">sp|P26709|1107L_ASFL5:128-138 RNELNNEEA 0",
-            "RKELKKDEF%",
-            ">sp|P0DO85|10H_STRNX:151-161 RNELNNEEA 0",
-            "RLELLKHIRV",
-            ">sp|Q9U408|14331_ECHGR:42-52 RNELNNEEA 0",
-            "RNELNNEEAN",
-            ">sp|P19084|11S3_HELAN:355-365 RNELNNEEA 0",
-            "RGELRPNAIQ",
-            ">sp|Q6GZV8|017L_FRG3G:18-28 RNELNNEEA 0",
-            "RGELSALSAA",
-            ">sp|Q6GZW6|009L_FRG3G:653-663 RNELNNEEA 0",
-            "RLELSAPYGS",
-            "",
-        ]
-        .join("\n"),
-        None,
-    )
-}
-
-// --------------------------------------------------
-#[test]
-fn extract_uniprot_masked_low_memory() -> Result<()> {
-    // In this test, the MQL 3 means all the found suffixes start with "R*EL"
-    // cargo run -- ex -s 10 -m 3 data/expected/uniprot-masked.sufr RNELNNEEA
-    extract(
-        "../data/expected/uniprot-masked.sufr",
-        ExtractOptions {
-            queries: vec!["RNELNNEEA".to_string()],
-            prefix_len: None,
-            suffix_len: Some(10),
-            max_query_len: Some(3),
-        },
-        &[
-            ">sp|P32234|128UP_DROME:38-48 RNELNNEEA 0",
-            "RRELISPKGG",
-            ">sp|P26709|1107L_ASFL5:128-138 RNELNNEEA 0",
-            "RKELKKDEF%",
+            ">sp|P26709|1107L_ASFL5:128-137 RNELNNEEA 0",
+            "RKELKKDEF",
             ">sp|P0DO85|10H_STRNX:151-161 RNELNNEEA 0",
             "RLELLKHIRV",
             ">sp|Q9U408|14331_ECHGR:42-52 RNELNNEEA 0",
@@ -897,43 +596,9 @@ fn list_sufr1_limit_3() -> Result<()> {
 }
 
 // --------------------------------------------------
-// a cap changes which suffixes a search can tell apart, never how
-// many match a query shorter than it
-#[test]
-fn count_under_a_cap_matches_count_without_one() -> Result<()> {
-    // HOME points at a temp dir, since a cap writes the subsample
-    // cache to ~/.sufr
-    let home = TempDir::new()?;
-    let outfile = NamedTempFile::new()?;
-    let outpath = outfile.path().to_string_lossy().to_string();
-    Command::cargo_bin(PRG)?
-        .args(["create", "--dna", "-o", &outpath, "../data/inputs/smol.fa"])
-        .assert()
-        .success();
-
-    for cap in ["", "-m 2", "-m 3"] {
-        let mut args = vec!["count", &outpath, "A", "AC"];
-        args.extend(cap.split_whitespace());
-        let output = Command::cargo_bin(PRG)?
-            .env("HOME", home.path())
-            .args(&args)
-            .output()?;
-        assert!(output.status.success());
-        assert_eq!(String::from_utf8(output.stdout)?, "A 93\nAC 11\n", "{cap}");
-    }
-
-    // the T group is the last one under -m 1
-    let output = Command::cargo_bin(PRG)?
-        .env("HOME", home.path())
-        .args(["count", "-m", "1", SUFR1, "T"])
-        .output()?;
-    assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout)?, "T 2\n");
-    Ok(())
-}
-
-// --------------------------------------------------
 fn locate(filename: &str, opts: LocateOptions, expected_file: &str) -> Result<()> {
+    // TODO: as in extract, HOME points at a temp dir until sufr-22b9c3
+    let home = TempDir::new()?;
     for memory in ["", "-l", "-v"] {
         let mut args = vec!["locate".to_string(), filename.to_string()];
 
@@ -954,7 +619,11 @@ fn locate(filename: &str, opts: LocateOptions, expected_file: &str) -> Result<()
             args.push(query.to_string());
         }
 
-        let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
+        let output = Command::cargo_bin(PRG)?
+            .env("HOME", home.path())
+            .args(&args)
+            .output()
+            .expect("fail");
         assert!(output.status.success());
 
         let actual = String::from_utf8(output.stdout).expect("invalid UTF-8");
@@ -1040,42 +709,6 @@ fn locate_uniprot() -> Result<()> {
 #[test]
 fn locate_uniprot_masked() -> Result<()> {
     // cargo run -- lo data/expected/uniprot-masked.sufr RNEL DTPT GSGL
-    // RNEL
-    // sp|P0DO85|10H_STRNX 151
-    // sp|P19084|11S3_HELAN 355
-    // sp|P26709|1107L_ASFL5 128
-    // sp|P32234|128UP_DROME 38
-    // sp|Q6GZV8|017L_FRG3G 18
-    // sp|Q6GZW6|009L_FRG3G 653
-    // sp|Q9U408|14331_ECHGR 42
-    // //
-    // DTPT
-    // sp|O55705|061R_IIV6 72
-    // sp|Q196U6|114L_IIV3 123
-    // sp|Q197D0|030L_IIV3 51
-    // sp|Q197F8|002R_IIV3 368
-    // sp|Q4U9M9|104K_THEAN 751
-    // sp|Q6GZN2|093L_FRG3G 1
-    // sp|Q6GZN6|089R_FRG3G 125
-    // sp|Q6GZN8|087L_FRG3G 546
-    // sp|Q6GZX3|002L_FRG3G 222
-    // //
-    // GSGL
-    // sp|Q196Y8|072L_IIV3 29
-    // sp|Q197B6|044L_IIV3 19
-    // sp|Q197C3|037L_IIV3 40
-    // sp|Q197D8|022L_IIV3 164
-    // sp|Q67475|055R_FRG3G 119
-    // sp|Q6GZR7|058R_FRG3G 150
-    // sp|Q6GZT9|037R_FRG3G 119
-    // sp|Q6GZU9|027R_FRG3G 496
-    // sp|Q6GZV5|020R_FRG3G 115
-    // sp|Q6GZV6|019R_FRG3G 816
-    // sp|Q6GZW6|009L_FRG3G 394
-    // sp|Q91G63|034R_IIV6 97
-    // sp|Q9XHP0|11S2_SESIN 98
-    // //
-
     locate(
         "../data/expected/uniprot-masked.sufr",
         LocateOptions {
@@ -1186,19 +819,36 @@ fn locate_long_dna_max_query_len() -> Result<()> {
 }
 
 // --------------------------------------------------
-fn summarize(filename: &str, expected: Vec<(&str, &str)>) -> Result<()> {
+fn summarize(
+    filename: &str,
+    labels: &[&str],
+    expected: Vec<(&str, &str)>,
+) -> Result<()> {
     let args = vec!["summarize".to_string(), filename.to_string()];
     let output = Command::cargo_bin(PRG)?.args(&args).output().expect("fail");
     assert!(output.status.success());
 
     let stdout = String::from_utf8(output.stdout).expect("invalid UTF-8");
 
+    // a wrapped value continues on rows with an empty label, which this
+    // pattern skips
+    let found: Vec<&str> = Regex::new(r"(?m)^[|] (\S[^|]*?)\s+[|]")?
+        .captures_iter(&stdout)
+        .map(|caps| caps.get(1).unwrap().as_str())
+        .collect();
+    assert_eq!(found, labels, "rows in:\n{stdout}");
+
     for (row_name, value) in expected {
         let pattern = format!(r#"[|] {}\s+[|] ([^|]+)"#, row_name);
         let regex = Regex::new(&pattern).unwrap();
-        if let Some(caps) = regex.captures(&stdout) {
-            assert_eq!(caps.get(1).unwrap().as_str().trim(), value);
-        }
+        let caps = regex
+            .captures(&stdout)
+            .unwrap_or_else(|| panic!("no row {row_name} in:\n{stdout}"));
+        assert_eq!(
+            caps.get(1).unwrap().as_str().trim(),
+            value,
+            "row {row_name}"
+        );
     }
 
     Ok(())
@@ -1209,16 +859,29 @@ fn summarize(filename: &str, expected: Vec<(&str, &str)>) -> Result<()> {
 fn summarize_sufr1() -> Result<()> {
     summarize(
         SUFR1,
+        &[
+            "Filename",
+            "Modified",
+            "File Size",
+            "File Version",
+            "DNA",
+            "Ignore Softmask",
+            "Text Length",
+            "Len Suffixes",
+            "LCP array",
+            "Num sequences",
+            "Sequence starts",
+            "Sequence names",
+        ],
         vec![
+            ("Filename", SUFR1),
             ("File Size", "172 bytes"),
             ("File Version", &OUTFILE_VERSION.to_string()),
             ("DNA", "true"),
-            ("Allow Ambiguity", "false"),
             ("Ignore Softmask", "false"),
             ("Text Length", "11"),
-            ("Num Suffixes", "9"),
-            ("Max query len", "0"),
-            ("Seed mask", "None"),
+            ("Len Suffixes", "9"),
+            ("LCP array", "yes"),
             ("Num sequences", "1"),
             ("Sequence starts", "0"),
             ("Sequence names", "1"),
@@ -1227,60 +890,104 @@ fn summarize_sufr1() -> Result<()> {
 }
 
 // --------------------------------------------------
-fn file_is_sorted(filename: &str, mask: Option<&str>) -> Result<()> {
-    // Create the sufr file
-    let sufr_file = NamedTempFile::new()?;
-    let sufr_path = &sufr_file.path().to_string_lossy();
-    let mut args = vec![
-        "create".to_string(),
-        "-o".to_string(),
-        sufr_path.to_string(),
-        filename.to_string(),
+#[test]
+fn summarize_masked() -> Result<()> {
+    summarize(
+        "../data/expected/uniprot-masked.sufr",
+        &[
+            "Filename",
+            "Modified",
+            "File Size",
+            "File Version",
+            "DNA",
+            "Ignore Softmask",
+            "Text Length",
+            "Len Suffixes",
+            "LCP array",
+            "Seed mask",
+            "Num sequences",
+            "Sequence starts",
+            "Sequence names",
+        ],
+        vec![
+            ("File Size", "578,533 bytes"),
+            ("DNA", "false"),
+            ("Text Length", "63,220"),
+            ("Len Suffixes", "63,220"),
+            ("LCP array", "yes"),
+            ("Seed mask", "10111011"),
+            ("Num sequences", "296"),
+        ],
+    )
+}
+
+// --------------------------------------------------
+#[test]
+fn summarize_without_lcp() -> Result<()> {
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    Command::cargo_bin(PRG)?
+        .args(["create", "--dna", "-o", &outpath, SEQ1])
+        .assert()
+        .success();
+    summarize(
+        &outpath,
+        &[
+            "Filename",
+            "Modified",
+            "File Size",
+            "File Version",
+            "DNA",
+            "Ignore Softmask",
+            "Text Length",
+            "Len Suffixes",
+            "LCP array",
+            "Num sequences",
+            "Sequence starts",
+            "Sequence names",
+        ],
+        vec![("Len Suffixes", "9"), ("LCP array", "no")],
+    )
+}
+
+// --------------------------------------------------
+fn run_stdout(args: &[&str]) -> Result<(String, String)> {
+    let output = Command::cargo_bin(PRG)?.args(args).output().expect("fail");
+    assert!(output.status.success());
+    Ok((
+        String::from_utf8(output.stdout).expect("invalid UTF-8"),
+        String::from_utf8(output.stderr).expect("invalid UTF-8"),
+    ))
+}
+
+// --------------------------------------------------
+#[test]
+fn create_bytes_match_fixtures() -> Result<()> {
+    let cases: Vec<(&str, &[&str], &str)> = vec![
+        ("1", &["--dna"], SEQ1),
+        ("2", &["--dna"], SEQ2),
+        ("3", &["--dna"], SEQ3),
+        ("2d", &["--dna", "--sequence-delimiter", "N"], SEQ2),
+        ("abba", &[], "../data/inputs/abba.fa"),
+        ("1n", &[], SEQ1),
+        ("2n", &[], SEQ2),
+        ("2s", &["--dna", "--ignore-softmask"], SEQ2),
+        ("long_dna_sequence", &["--dna"], LONG),
+        ("long_dna_sequence_allow_ambiguity", &[], LONG),
+        ("uniprot", &[], UNIPROT),
+        ("uniprot-masked", &["-s", "10111011"], UNIPROT),
     ];
 
-    let seed_mask: Option<SeedMask> = mask.map(SeedMask::new).transpose()?;
-    if let Some(mask) = &seed_mask {
-        args.push("-s".to_string());
-        args.push(mask.to_string());
-    }
+    for (name, flags, input) in cases {
+        let outfile = NamedTempFile::new()?;
+        let outpath = outfile.path().to_string_lossy().to_string();
+        let mut args = vec!["create", "--write-lcp", "-o", &outpath, input];
+        args.extend(flags);
+        run_stdout(&args)?;
 
-    let output = Command::cargo_bin(PRG)?.args(&args).output()?;
-    assert!(output.status.success());
-    assert!(sufr_file.path().exists());
-
-    // Use "list" to write the sorted suffixes to a temp file
-    let list_file = NamedTempFile::new()?;
-    let list_path = &list_file.path().to_string_lossy();
-    let args = vec![
-        "list".to_string(),
-        "-o".to_string(),
-        list_path.to_string(),
-        sufr_path.to_string(),
-    ];
-
-    let output = Command::cargo_bin(PRG)?.args(&args).output()?;
-    assert!(output.status.success());
-    assert!(list_file.path().exists());
-
-    // Read the lines of the sorted suffixes and ensure they are sorted
-    let list_file = BufReader::new(File::open(list_file.path())?);
-    let mut prev_line: Option<String> = None;
-    for mut line in list_file.lines().map_while(Result::ok) {
-        if let Some(mask) = &seed_mask {
-            let chars: Vec<char> = line.chars().collect();
-            let masked: String = mask
-                .positions
-                .iter()
-                .filter_map(|&p| chars.get(p))
-                .collect();
-            line = masked;
-        }
-
-        if let Some(ref prev) = prev_line {
-            assert!(*prev <= line);
-        }
-
-        prev_line = Some(line.clone());
+        let actual = fs::read(&outpath)?;
+        let expected = fs::read(format!("../data/expected/{name}.sufr"))?;
+        assert!(actual == expected, "bytes differ from fixture {name}");
     }
 
     Ok(())
@@ -1288,24 +995,295 @@ fn file_is_sorted(filename: &str, mask: Option<&str>) -> Result<()> {
 
 // --------------------------------------------------
 #[test]
-fn long_dna_is_sorted() -> Result<()> {
-    file_is_sorted(LONG, None)
+fn create_num_partitions_same_bytes() -> Result<()> {
+    let mut outputs = vec![];
+    for parts in ["3", "1024"] {
+        let outfile = NamedTempFile::new()?;
+        let outpath = outfile.path().to_string_lossy().to_string();
+        run_stdout(&[
+            "create",
+            "--dna",
+            "--write-lcp",
+            "-n",
+            parts,
+            "-o",
+            &outpath,
+            SEQ1,
+        ])?;
+        outputs.push(fs::read(&outpath)?);
+    }
+    assert!(outputs[0] == outputs[1]);
+    assert!(outputs[0] == fs::read(SUFR1)?);
+    Ok(())
 }
 
 // --------------------------------------------------
 #[test]
-fn masked_long_dna_is_sorted() -> Result<()> {
-    file_is_sorted(LONG, Some("111010010100110111"))
+fn create_default_output_name() -> Result<()> {
+    let dir = TempDir::new()?;
+    let input = fs::canonicalize(SEQ1)?;
+    let output = Command::cargo_bin(PRG)?
+        .current_dir(dir.path())
+        .args(["create", "--dna", "--write-lcp"])
+        .arg(&input)
+        .output()
+        .expect("fail");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+
+    let names: Vec<_> = fs::read_dir(dir.path())?
+        .map(|e| e.map(|e| e.file_name().to_string_lossy().to_string()))
+        .collect::<std::io::Result<_>>()?;
+    assert_eq!(names, ["1.sufr"]);
+    assert!(fs::read(dir.path().join("1.sufr"))? == fs::read(SUFR1)?);
+    Ok(())
+}
+
+// --------------------------------------------------
+fn check_output_file(subcommand: &str, filename: &str, queries: &[&str]) -> Result<()> {
+    let mut args = vec![subcommand, filename];
+    args.extend(queries);
+    let (expected, _) = run_stdout(&args)?;
+    assert!(!expected.is_empty());
+
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    let mut args = vec![subcommand, "-o", &outpath, filename];
+    args.extend(queries);
+    let (stdout, _) = run_stdout(&args)?;
+
+    assert_eq!(stdout, "");
+    assert_eq!(fs::read_to_string(&outpath)?, expected);
+    Ok(())
 }
 
 // --------------------------------------------------
 #[test]
-fn uniprot_is_sorted() -> Result<()> {
-    file_is_sorted(UNIPROT, None)
+fn count_output_file() -> Result<()> {
+    check_output_file("count", SUFR1, &["AC", "X", "GT"])
 }
 
 // --------------------------------------------------
 #[test]
-fn masked_uniprot_is_sorted() -> Result<()> {
-    file_is_sorted(UNIPROT, Some("10111011"))
+fn extract_output_file() -> Result<()> {
+    check_output_file("extract", SUFR1, &["AC", "GT"])
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_output_file() -> Result<()> {
+    check_output_file("locate", SUFR2, &["AC", "GT"])
+}
+
+// --------------------------------------------------
+#[test]
+fn locate_not_found_goes_to_stderr() -> Result<()> {
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    let (stdout, stderr) = run_stdout(&["locate", "-o", &outpath, SUFR1, "AC", "X"])?;
+    assert_eq!(stdout, "");
+    assert_eq!(stderr, "X not found\n");
+    assert_eq!(fs::read_to_string(&outpath)?, "AC\n1 0,6\n//\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_ranks() -> Result<()> {
+    let (stdout, _) = run_stdout(&["list", SUFR1, "0", "2-3"])?;
+    assert_eq!(stdout, "$\nACGTNNACGT$\nCGT$\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_ranks_comma_with_columns() -> Result<()> {
+    let (stdout, stderr) = run_stdout(&["list", "-r", "-s", "-p", SUFR1, "5-6,9"])?;
+    assert_eq!(stdout, " 5  8  0 GT$\n 6  2  2 GTNNACGT$\n");
+    assert_eq!(stderr, "Invalid rank: 9\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_ranks_len() -> Result<()> {
+    let (stdout, _) = run_stdout(&["list", "--len", "3", SUFR1, "0", "2-3"])?;
+    assert_eq!(stdout, "$\nACG\nCGT\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_short_l_is_rejected() -> Result<()> {
+    Command::cargo_bin(PRG)?
+        .args(["list", "-l", SUFR1, "0"])
+        .assert()
+        .failure();
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_out_of_range_rank_warns_and_succeeds() -> Result<()> {
+    let (stdout, stderr) = run_stdout(&["list", SUFR1, "99"])?;
+    assert_eq!(stdout, "");
+    assert_eq!(stderr, "Invalid rank: 99\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn list_output_flag_writes_the_file() -> Result<()> {
+    let (expected, _) = run_stdout(&["list", SUFR1, "0", "1"])?;
+
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    let (stdout, _) = run_stdout(&["list", "-o", &outpath, SUFR1, "0", "1"])?;
+
+    assert_eq!(stdout, "");
+    assert_eq!(fs::read_to_string(&outpath)?, expected);
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn count_query_file() -> Result<()> {
+    let queries = NamedTempFile::new()?;
+    fs::write(queries.path(), "AC GT\nX\n")?;
+    let path = queries.path().to_string_lossy().to_string();
+    let (stdout, _) = run_stdout(&["count", SUFR1, "-q", &path])?;
+    assert_eq!(stdout, "AC 2\nGT 2\nX 0\n");
+
+    let (stdout, _) = run_stdout(&["count", SUFR1, "GT", "-q", &path])?;
+    assert_eq!(stdout, "GT 2\nAC 2\nGT 2\nX 0\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+// a cap changes which suffixes a search can tell apart, never how
+// many match a query shorter than it
+#[test]
+fn count_under_a_cap_matches_count_without_one() -> Result<()> {
+    // TODO: as in extract, HOME points at a temp dir until sufr-22b9c3
+    let home = TempDir::new()?;
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    Command::cargo_bin(PRG)?
+        .args(["create", "--dna", "-o", &outpath, "../data/inputs/smol.fa"])
+        .assert()
+        .success();
+
+    for cap in ["", "-m 2", "-m 3"] {
+        let mut args = vec!["count", &outpath, "A", "AC"];
+        args.extend(cap.split_whitespace());
+        let output = Command::cargo_bin(PRG)?
+            .env("HOME", home.path())
+            .args(&args)
+            .output()?;
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout)?, "A 93\nAC 11\n", "{cap}");
+    }
+
+    // the T group is the last one under -m 1
+    let output = Command::cargo_bin(PRG)?
+        .env("HOME", home.path())
+        .args(["count", "-m", "1", SUFR1, "T"])
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout)?, "T 2\n");
+    Ok(())
+}
+// --------------------------------------------------
+#[test]
+fn locate_query_file() -> Result<()> {
+    let queries = NamedTempFile::new()?;
+    fs::write(queries.path(), "AC GT\nX\n")?;
+    let path = queries.path().to_string_lossy().to_string();
+    let (stdout, stderr) = run_stdout(&["locate", SUFR1, "-q", &path])?;
+    assert_eq!(stdout, "AC\n1 0,6\n//\nGT\n1 2,8\n//\n");
+    assert_eq!(stderr, "X not found\n");
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn query_naming_a_file_is_a_query() -> Result<()> {
+    let (stdout, _) = run_stdout(&["count", SUFR1, SEQ1])?;
+    assert_eq!(stdout, format!("{SEQ1} 0\n"));
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn query_file_missing_is_an_error() -> Result<()> {
+    let dir = TempDir::new()?;
+    let missing = dir.path().join("missing.txt");
+    let missing = missing.to_string_lossy().to_string();
+    let output = Command::cargo_bin(PRG)?
+        .args(["count", SUFR1, "-q", &missing])
+        .output()?;
+    assert!(!output.status.success());
+    assert!(String::from_utf8(output.stderr)?.contains(&missing));
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn query_file_from_stdin() -> Result<()> {
+    let output = Command::cargo_bin(PRG)?
+        .args(["count", SUFR1, "-q", "-"])
+        .write_stdin("AC GT\n")
+        .output()?;
+    assert!(output.status.success());
+    let (expected, _) = run_stdout(&["count", SUFR1, "AC", "GT"])?;
+    assert_eq!(String::from_utf8(output.stdout)?, expected);
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn no_queries_is_an_error() -> Result<()> {
+    let queries = NamedTempFile::new()?;
+    let path = queries.path().to_string_lossy().to_string();
+    Command::cargo_bin(PRG)?
+        .args(["count", SUFR1, "-q", &path])
+        .assert()
+        .failure();
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn create_takes_threads_after_the_subcommand() -> Result<()> {
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    run_stdout(&[
+        "create",
+        "-t",
+        "2",
+        "--write-lcp",
+        "--dna",
+        "-o",
+        &outpath,
+        SEQ1,
+    ])?;
+    assert!(fs::read(&outpath)? == fs::read(SUFR1)?);
+    Ok(())
+}
+
+// --------------------------------------------------
+#[test]
+fn output_closed_early_is_not_an_error() -> Result<()> {
+    // the listing fills the pipe, so a write fails once the reader has
+    // closed it, as it does under head
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin(PRG))
+        .args(["list", "../data/expected/uniprot.sufr"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    drop(child.stdout.take());
+    let output = child.wait_with_output()?;
+    assert!(output.status.success(), "exit {:?}", output.status);
+    assert_eq!(String::from_utf8(output.stderr)?, "");
+    Ok(())
 }

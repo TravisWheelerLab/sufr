@@ -1,7 +1,7 @@
 [package]
 name = "libsufr"
 version = "0.7.12"
-rust-version = "1.80"
+rust-version = "1.88"
 edition = "2021"
 description = "Parallel Construction of Suffix Arrays in Rust"
 license = "BSD-3-Clause"
@@ -12,19 +12,25 @@ authors = [
     "Travis Wheeler <twheeler@arizona.edu>"
 ]
 
+[features]
+# The generic suffix array and its storage types, for a caller that
+# names them to skip the box in SuffixArray.
+typed = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 anyhow = "1.0.86"
 bincode = "1.3.3"
-chrono = "0.4.39"
 env_logger = "0.11.5"
-format_num = "0.1.0"
 home = "0.5.9"
 log = "0.4.22"
 needletail = "0.7.3"
 num_cpus = "1.16.0"
 rayon = "1.10.0"
 regex = "1.10.6"
-tempfile = "3.12.0"
 thread_local = "1.1.8"
 
 [dev-dependencies]

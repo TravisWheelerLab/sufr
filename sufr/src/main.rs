@@ -1,19 +1,33 @@
 use anyhow::Result;
 use clap::Parser;
 use log::info;
-use std::{fs::File, io::BufWriter};
+use std::{
+    fs::File,
+    io::{self, BufWriter},
+};
 use sufr::{Cli, Command, LogLevel};
 
-// --------------------------------------------------
 fn main() {
     if let Err(e) = run(Cli::parse()) {
+        // the reader of stdout closed it, as head does once it has its
+        // lines; what was written is correct, so this is not a failure
+        let broken_pipe = e
+            .chain()
+            .filter_map(|cause| cause.downcast_ref::<io::Error>())
+            .any(|e| e.kind() == io::ErrorKind::BrokenPipe);
+        if broken_pipe {
+            return;
+        }
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
 }
 
-// --------------------------------------------------
-fn run(args: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<()> {
+    let Some(command) = cli.command else {
+        unreachable!()
+    };
+    let args = command.run_args();
     env_logger::Builder::new()
         .filter_level(match args.log {
             Some(LogLevel::Debug) => log::LevelFilter::Debug,
@@ -21,7 +35,6 @@ fn run(args: Cli) -> Result<()> {
             _ => log::LevelFilter::Off,
         })
         .target(match args.log_file {
-            // Optional log file, default to STDOUT
             Some(ref filename) => env_logger::Target::Pipe(Box::new(BufWriter::new(
                 File::create(filename)?,
             ))),
@@ -39,36 +52,12 @@ fn run(args: Cli) -> Result<()> {
         .build_global()
         .unwrap();
 
-    match &args.command {
-        // TODO: enable once "check" is usable
-        //Some(Command::Check(args)) => {
-        //    sufr::check(args)?;
-        //    Ok(())
-        //}
-        Some(Command::Count(args)) => {
-            sufr::count(args)?;
-            Ok(())
-        }
-        Some(Command::Create(args)) => {
-            sufr::create(args)?;
-            Ok(())
-        }
-        Some(Command::Extract(args)) => {
-            sufr::extract(args)?;
-            Ok(())
-        }
-        Some(Command::List(args)) => {
-            sufr::list(args)?;
-            Ok(())
-        }
-        Some(Command::Locate(args)) => {
-            sufr::locate(args)?;
-            Ok(())
-        }
-        Some(Command::Summarize(args)) => {
-            sufr::summarize(args)?;
-            Ok(())
-        }
-        _ => unreachable!(),
+    match &command {
+        Command::Count(args) => sufr::count(args),
+        Command::Create(args) => sufr::create(args),
+        Command::Extract(args) => sufr::extract(args),
+        Command::List(args) => sufr::list(args),
+        Command::Locate(args) => sufr::locate(args),
+        Command::Summarize(args) => sufr::summarize(args),
     }
 }

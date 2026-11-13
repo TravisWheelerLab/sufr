@@ -1,14 +1,13 @@
 use anyhow::{anyhow, bail, Result};
+use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    types::{
-        CountOptions, ExtractOptions, ListOptions, LocateOptions, SeedMask,
-        SuffixSortType,
-    },
-    SuffixArray, SuffixArrayBuilder,
+    Alphabet, Context, Hits, OpenOptions, SeedMask, SourceKind, SuffixArray,
+    SuffixArrayBuilder, SuffixSortType,
 };
 use log::info;
+use rayon::prelude::*;
 use regex::Regex;
 use std::{
     ffi::OsStr,
@@ -16,27 +15,30 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     ops::Range,
-    path::{Path, PathBuf},
+    path::PathBuf,
+    str,
     time::Instant,
 };
 use tabled::Table;
 
-// --------------------------------------------------
 type PositionList = Vec<Range<usize>>;
 
-// --------------------------------------------------
 #[derive(Parser, Debug)]
 #[command(arg_required_else_help = true, version, about)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+}
 
+/// How a subcommand runs: its threads and its log.
+#[derive(Debug, clap::Args)]
+pub struct RunArgs {
     /// Number of threads
     #[arg(short, long, value_name = "THREADS")]
     pub threads: Option<usize>,
 
     /// Log level
-    #[arg(short, long)]
+    #[arg(long)]
     pub log: Option<LogLevel>,
 
     /// Log file
@@ -49,8 +51,6 @@ pub enum Command {
     /// Create sufr file
     Create(CreateArgs),
 
-    // Check sufr file for correctness
-    //Check(CheckArgs),
     /// Extract suffixes from a sufr file
     Extract(ExtractArgs),
 
@@ -67,17 +67,19 @@ pub enum Command {
     Summarize(SummarizeArgs),
 }
 
-//#[derive(Debug, Parser)]
-//#[command(about, alias = "ch")]
-//pub struct CheckArgs {
-//    /// Sufr file
-//    #[arg(value_name = "SUFR")]
-//    pub file: String,
-//
-//    /// List errors
-//    #[arg(short, long)]
-//    pub verbose: bool,
-//}
+impl Command {
+    /// The threads and log of the subcommand.
+    pub fn run_args(&self) -> &RunArgs {
+        match self {
+            Command::Count(args) => &args.run,
+            Command::Create(args) => &args.run,
+            Command::Extract(args) => &args.run,
+            Command::List(args) => &args.run,
+            Command::Locate(args) => &args.run,
+            Command::Summarize(args) => &args.run,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(about, alias = "cr")]
@@ -90,9 +92,9 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "NUM_PARTS", default_value = "1024")]
     pub num_partitions: usize,
 
-    /// Max context
-    #[arg(short, long, value_name = "CONTEXT", conflicts_with = "seed_mask")]
-    pub max_query_len: Option<usize>,
+    /// The extra memory budget (in MiB) during sorting; default: size of the input text
+    #[arg(long, value_name = "MIB")]
+    pub memory_budget: Option<usize>,
 
     /// Output file
     #[arg(short, long, value_name = "OUTPUT")]
@@ -103,7 +105,7 @@ pub struct CreateArgs {
     pub is_dna: bool,
 
     /// Ignore suffixes in soft-mask/lowercase regions
-    #[arg(short, long)]
+    #[arg(short, long, requires = "is_dna")]
     pub ignore_softmask: bool,
 
     /// Character to separate sequences
@@ -114,14 +116,12 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "MASK")]
     pub seed_mask: Option<String>,
 
-    /// Also write the LCP array (needed by "list --show-lcp"; speeds up
-    /// query-time max query lengths shorter than the build-time value)
+    /// Also write the LCP array
     #[arg(long)]
     pub write_lcp: bool,
 
-    /// Directory for temporary files (default: system temporary directory)
-    #[arg(short('T'), long, value_name = "DIR")]
-    pub tmp_dir: Option<PathBuf>,
+    #[command(flatten)]
+    pub run: RunArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -155,9 +155,11 @@ pub struct ExtractArgs {
     #[arg(value_name = "SUFR")]
     pub file: String,
 
-    /// Query
-    #[arg(value_name = "QUERY", required = true)]
-    pub query: Vec<String>,
+    #[command(flatten)]
+    pub queries: QueryArgs,
+
+    #[command(flatten)]
+    pub run: RunArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -198,6 +200,9 @@ pub struct ListArgs {
     /// Output
     #[arg(short, long, value_name = "OUT")]
     pub output: Option<String>,
+
+    #[command(flatten)]
+    pub run: RunArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -223,9 +228,11 @@ pub struct CountArgs {
     #[arg(value_name = "SUFR")]
     pub file: String,
 
-    /// Query
-    #[arg(value_name = "QUERY", required = true)]
-    pub query: Vec<String>,
+    #[command(flatten)]
+    pub queries: QueryArgs,
+
+    #[command(flatten)]
+    pub run: RunArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -255,9 +262,44 @@ pub struct LocateArgs {
     #[arg(value_name = "SUFR")]
     pub file: String,
 
+    #[command(flatten)]
+    pub queries: QueryArgs,
+
+    #[command(flatten)]
+    pub run: RunArgs,
+}
+
+/// The queries of count, extract and locate.
+#[derive(Debug, clap::Args)]
+pub struct QueryArgs {
     /// Query
-    #[arg(value_name = "QUERY", required = true)]
+    #[arg(value_name = "QUERY", required_unless_present = "query_file")]
     pub query: Vec<String>,
+
+    /// File of queries separated by whitespace; "-" reads stdin
+    #[arg(short = 'q', long, value_name = "FILE")]
+    pub query_file: Vec<PathBuf>,
+}
+
+impl QueryArgs {
+    /// The queries on the command line, then those in each query file in
+    /// the order given.
+    pub fn read(&self) -> Result<Vec<String>> {
+        let mut queries = self.query.clone();
+        for path in &self.query_file {
+            let contents = if path.as_os_str() == "-" {
+                io::read_to_string(io::stdin())?
+            } else {
+                fs::read_to_string(path)
+                    .map_err(|e| anyhow!("{}: {e}", path.display()))?
+            };
+            queries.extend(contents.split_whitespace().map(str::to_string));
+        }
+        if queries.is_empty() {
+            bail!("no queries");
+        }
+        Ok(queries)
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -266,9 +308,11 @@ pub struct SummarizeArgs {
     /// Sufr file
     #[arg(value_name = "SUFR")]
     pub file: String,
+
+    #[command(flatten)]
+    pub run: RunArgs,
 }
 
-// --------------------------------------------------
 #[derive(Debug, Clone)]
 pub enum LogLevel {
     Info,
@@ -288,36 +332,61 @@ impl ValueEnum for LogLevel {
     }
 }
 
-// --------------------------------------------------
-pub fn count(args: &CountArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
-    let mut output: Box<dyn Write> = match &args.output {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
+/// Open a _.sufr_ file for `count`, `extract` or `locate`.
+fn open_for_search(
+    file: &str,
+    low_memory: bool,
+    very_low_memory: bool,
+    max_query_len: Option<usize>,
+) -> Result<SuffixArray> {
+    let text = if very_low_memory {
+        SourceKind::Disk
+    } else {
+        SourceKind::Memory
     };
-
-    let queries = parse_locate_queries(&args.query)?;
-    let num_queries = queries.len();
-    let now = Instant::now();
-    let count_args = CountOptions {
-        queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
+    let suffixes = if low_memory || very_low_memory {
+        SourceKind::Disk
+    } else {
+        SourceKind::Memory
+    };
+    SuffixArray::open_with(
+        file,
+        &OpenOptions {
+            text,
+            suffixes,
+            max_query_len,
         },
-    };
+    )
+}
 
-    for res in suffix_array.count(count_args)? {
-        writeln!(output, "{} {}", res.query, res.count)?;
+/// The named output file, or stdout.
+fn create_output(output: &Option<String>) -> Result<Box<dyn Write>> {
+    match output {
+        Some(out_name) => Ok(Box::new(File::create(out_name)?)),
+        _ => Ok(Box::new(io::stdout())),
+    }
+}
+
+pub fn count(args: &CountArgs) -> Result<()> {
+    let suffix_array = open_for_search(
+        &args.file,
+        args.low_memory,
+        args.very_low_memory,
+        args.max_query_len,
+    )?;
+    let mut output = create_output(&args.output)?;
+    let queries = args.queries.read()?;
+    let now = Instant::now();
+
+    let hits = suffix_array.par_search_all(&queries)?;
+    for (query, hits) in queries.iter().zip(hits) {
+        writeln!(output, "{query} {}", hits.count())?;
     }
 
-    info!("Count of {} finished in {:?}", num_queries, now.elapsed());
+    info!("Count of {} finished in {:?}", queries.len(), now.elapsed());
     Ok(())
 }
 
-// --------------------------------------------------
 pub fn create(args: &CreateArgs) -> Result<()> {
     let outfile = &args.output.clone().unwrap_or(format!(
         "{}.sufr",
@@ -327,27 +396,31 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             .to_string_lossy()
     ));
 
+    let alphabet = if args.is_dna {
+        Alphabet::Dna {
+            ignore_softmask: args.ignore_softmask,
+        }
+    } else {
+        Alphabet::Bytes
+    };
     let mut builder = SuffixArrayBuilder::from_sequence_file(
         &args.input,
         args.sequence_delimiter as u8,
     )?
-    .with_dna_options(args.is_dna, args.ignore_softmask)
+    .with_alphabet(alphabet)
     .with_num_partitions(args.num_partitions);
+    if let Some(mib) = args.memory_budget {
+        builder = builder.with_memory_budget(mib << 20);
+    }
 
-    match (args.max_query_len, &args.seed_mask) {
-        (Some(_), Some(_)) => bail!("Cannot use max_query_len and seed_mask together"),
-        (Some(n), None) => builder = builder.with_max_query_len(n),
-        (None, Some(mask)) => builder = builder.with_seed_mask(SeedMask::new(mask)?),
-        (None, None) => (),
+    if let Some(mask) = &args.seed_mask {
+        builder = builder.with_seed_mask(SeedMask::new(mask)?);
     }
 
     builder = builder.with_write_lcp(args.write_lcp);
-    if let Some(tmp_dir) = &args.tmp_dir {
-        builder = builder.with_temp_dir(tmp_dir);
-    }
 
     let now = Instant::now();
-    builder.build_to_file(outfile, true)?;
+    builder.build_to_file(outfile)?;
 
     let meta = fs::metadata(outfile)?;
     let bytes_written = meta.len();
@@ -363,46 +436,40 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     Ok(())
 }
 
-// --------------------------------------------------
 pub fn extract(args: &ExtractArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
-    let queries = parse_locate_queries(&args.query)?;
+    let suffix_array = open_for_search(
+        &args.file,
+        args.low_memory,
+        args.very_low_memory,
+        args.max_query_len,
+    )?;
+    let queries = args.queries.read()?;
     let now = Instant::now();
-    let extract_args = ExtractOptions {
-        queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
-        prefix_len: args.prefix_len,
-        suffix_len: args.suffix_len,
-    };
+    let mut output = create_output(&args.output)?;
 
-    let mut output: Box<dyn Write> = match &args.output {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
-    };
-    for res in suffix_array.extract(extract_args)? {
-        if res.sequences.is_empty() {
-            eprintln!("{} not found", res.query);
-        } else {
-            for seq in res.sequences {
-                writeln!(
-                    output,
-                    ">{}:{}-{} {} {}\n{}",
-                    seq.sequence_name,
-                    seq.sequence_range.start,
-                    seq.sequence_range.end,
-                    res.query,
-                    seq.suffix_offset,
-                    suffix_array.string_at(
-                        seq.sequence_start + seq.sequence_range.start,
-                        Some(seq.sequence_range.end - seq.sequence_range.start),
-                    )?
-                )?;
-            }
+    let hits = suffix_array.par_search_all(&queries)?;
+    for (query, hits) in queries.iter().zip(hits) {
+        let context = Context {
+            before: args.prefix_len.unwrap_or(0),
+            after: args.suffix_len,
+        };
+        let extractions = hits.extract(context)?;
+        if extractions.is_empty() {
+            eprintln!("{query} not found");
+        }
+        for ex in extractions {
+            let start = ex.location.sequence_start;
+            let window = ex.sequence_range;
+            let text = suffix_array.text(start + window.start..start + window.end)?;
+            writeln!(
+                output,
+                ">{}:{}-{} {query} {}\n{}",
+                ex.location.sequence_name,
+                window.start,
+                window.end,
+                ex.suffix_offset,
+                str::from_utf8(&text)?
+            )?;
         }
     }
     info!("Extract finished in {:?}", now.elapsed());
@@ -410,131 +477,177 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
     Ok(())
 }
 
-// --------------------------------------------------
 pub fn list(args: &ListArgs) -> Result<()> {
-    let suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
-    let mut ranks: Vec<usize> = vec![];
-    for val in &args.ranks {
-        let mut parsed: Vec<_> = parse_pos(val)?
-            .into_iter()
-            .flat_map(|r| r.collect::<Vec<_>>())
-            .collect();
-        ranks.append(&mut parsed);
+    let text = if args.very_low_memory {
+        SourceKind::Disk
+    } else {
+        SourceKind::Memory
+    };
+    let suffix_array = SuffixArray::open_with(
+        &args.file,
+        &OpenOptions {
+            text,
+            ..OpenOptions::default()
+        },
+    )?;
+    let ranks = parse_ranks(&args.ranks)?;
+
+    if args.show_lcp && !suffix_array.header().has_lcp() {
+        bail!(
+            "{} has no LCP array; rebuild with --write-lcp to show LCP values",
+            args.file
+        );
     }
 
-    let list_opts = ListOptions {
-        ranks,
-        show_rank: args.show_rank,
-        show_suffix: args.show_suffix,
-        show_lcp: args.show_lcp,
-        len: args.len,
-        number: args.number,
-        // defaults to stdout
-        output: None,
+    let mut output = create_output(&args.output)?;
+    let text_len = suffix_array.header().text_len;
+    let num_suffixes = suffix_array.header().num_suffixes;
+    let width = text_len.to_string().len();
+    let row = |rank: usize, suffix: usize, lcp: Option<usize>| -> Result<String> {
+        let mut row = String::new();
+        if args.show_rank {
+            row += &format!("{rank:width$} ");
+        }
+        if args.show_suffix {
+            row += &format!("{suffix:width$} ");
+        }
+        if let Some(lcp) = lcp {
+            row += &format!("{lcp:width$} ");
+        }
+        let end = args.len.map_or(text_len, |len| suffix + len);
+        row += &String::from_utf8(suffix_array.text(suffix..end)?)?;
+        Ok(row)
     };
-    suffix_array.list(list_opts)?;
+
+    if ranks.is_empty() {
+        let end = match args.number {
+            Some(number) if number > 0 => number.min(num_suffixes),
+            _ => num_suffixes,
+        };
+
+        // a chunk of ranks at a time, so a file of billions of
+        // suffixes is never read whole
+        const CHUNK: usize = 1 << 16;
+        for start in (0..end).step_by(CHUNK) {
+            let ranks = start..(start + CHUNK).min(end);
+            let suffixes = suffix_array.suffixes(ranks.clone())?;
+            let lcps = if args.show_lcp {
+                suffix_array.lcps(ranks.clone())?
+            } else {
+                vec![]
+            };
+            for (i, rank) in ranks.enumerate() {
+                writeln!(output, "{}", row(rank, suffixes[i], lcps.get(i).copied())?)?;
+            }
+        }
+    } else {
+        for rank in ranks {
+            if rank >= num_suffixes {
+                eprintln!("Invalid rank: {rank}");
+                continue;
+            }
+            let suffix = suffix_array.suffixes(rank..rank + 1)?[0];
+            let lcp = if args.show_lcp {
+                Some(suffix_array.lcps(rank..rank + 1)?[0])
+            } else {
+                None
+            };
+            writeln!(output, "{}", row(rank, suffix, lcp)?)?;
+        }
+    }
 
     Ok(())
 }
 
-// --------------------------------------------------
-fn parse_locate_queries(queries: &[String]) -> Result<Vec<String>> {
-    let whitespace = Regex::new(r"\s+").unwrap();
-    let mut ret = vec![];
-    for query in queries {
-        if Path::new(&query).exists() {
-            let contents = fs::read_to_string(query)?;
-            let mut vals: Vec<String> = whitespace
-                .split(&contents)
-                .filter(|v| !v.is_empty())
-                .map(|v| v.to_string())
-                .collect();
-            ret.append(&mut vals);
-        } else {
-            ret.push(query.to_string());
-        }
+pub fn locate(args: &LocateArgs) -> Result<()> {
+    let suffix_array = open_for_search(
+        &args.file,
+        args.low_memory,
+        args.very_low_memory,
+        args.max_query_len,
+    )?;
+    let mut output = create_output(&args.output)?;
+    let queries = args.queries.read()?;
+    let now = Instant::now();
+
+    let hits = suffix_array.par_search_all(&queries)?;
+    if args.abs {
+        write_suffixes(&mut output, &queries, &hits)?;
+    } else {
+        write_locations(&mut output, &queries, &hits)?;
     }
 
-    Ok(ret)
+    info!(
+        "Locate of {} finished in {:?}",
+        queries.len(),
+        now.elapsed()
+    );
+
+    Ok(())
 }
 
-// --------------------------------------------------
-pub fn locate(args: &LocateArgs) -> Result<()> {
-    let mut suffix_array = SuffixArray::read(&args.file, args.very_low_memory)?;
-    let mut output: Box<dyn Write> = match &args.output {
-        Some(out_name) => Box::new(File::create(out_name)?),
-        _ => Box::new(io::stdout()),
-    };
-
-    let queries = parse_locate_queries(&args.query)?;
-    let num_queries = queries.len();
-    let now = Instant::now();
-    let loc_args = LocateOptions {
-        queries,
-        max_query_len: args.max_query_len,
-        low_memory: if args.very_low_memory {
-            true
-        } else {
-            args.low_memory
-        },
-    };
-
-    for mut res in suffix_array.locate(loc_args)? {
-        if res.positions.is_empty() {
-            eprintln!("{} not found", res.query);
+/// Write each query's hits as positions in the text.
+fn write_suffixes(
+    output: &mut dyn Write,
+    queries: &[String],
+    hits: &[Hits],
+) -> Result<()> {
+    let suffixes: Vec<_> = hits.par_iter().map(|hits| hits.suffixes()).collect();
+    for (query, suffixes) in queries.iter().zip(suffixes) {
+        let suffixes = suffixes?;
+        if suffixes.is_empty() {
+            eprintln!("{query} not found");
             continue;
         }
+        let suffixes: Vec<_> = suffixes.iter().map(|s| s.to_string()).collect();
+        writeln!(output, "{query} {}", suffixes.join(" "))?;
+    }
+    Ok(())
+}
 
-        if args.abs {
+/// Write each query's hits as positions within their sequences.
+fn write_locations(
+    output: &mut dyn Write,
+    queries: &[String],
+    hits: &[Hits],
+) -> Result<()> {
+    let locations: Vec<_> = hits.par_iter().map(|hits| hits.locate()).collect();
+    for (query, locations) in queries.iter().zip(locations) {
+        let locations = locations?;
+        if locations.is_empty() {
+            eprintln!("{query} not found");
+            continue;
+        }
+        writeln!(output, "{query}")?;
+        for sequence in locations.chunk_by(|a, b| a.sequence_name == b.sequence_name) {
+            let positions: Vec<_> = sequence
+                .iter()
+                .map(|loc| loc.position.to_string())
+                .collect();
             writeln!(
                 output,
                 "{} {}",
-                res.query,
-                res.positions
-                    .into_iter()
-                    .map(|p| p.suffix.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                sequence[0].sequence_name,
+                positions.join(",")
             )?;
-        } else {
-            // Sort by name then position
-            res.positions.sort_by(|a, b| {
-                a.sequence_name
-                    .cmp(&b.sequence_name)
-                    .then(a.sequence_position.cmp(&b.sequence_position))
-            });
-
-            writeln!(output, "{}", res.query)?;
-            let mut prev_seq = "".to_string();
-            let mut buffer = vec![];
-            for pos in res.positions {
-                if pos.sequence_name != prev_seq {
-                    if !buffer.is_empty() {
-                        writeln!(output, "{prev_seq} {}", buffer.join(","))?;
-                    }
-
-                    prev_seq = pos.sequence_name;
-                    buffer = vec![];
-                }
-                buffer.push(pos.sequence_position.to_string());
-            }
-
-            if !buffer.is_empty() {
-                writeln!(output, "{prev_seq} {}", buffer.join(","))?;
-            }
-
-            writeln!(output, "//")?;
         }
+        writeln!(output, "//")?;
     }
-
-    info!("Locate of {} finished in {:?}", num_queries, now.elapsed());
-
     Ok(())
 }
 
-// --------------------------------------------------
-// Parse an index from a string representation of an integer.
-// Ensures the number does not start with '+'.
+/// The ranks named by each of `ranks`, in order.
+fn parse_ranks(ranks: &[String]) -> Result<Vec<usize>> {
+    let mut parsed = vec![];
+    for val in ranks {
+        for range in parse_pos(val)? {
+            parsed.extend(range);
+        }
+    }
+    Ok(parsed)
+}
+
+/// Parse a rank that does not start with `+`.
 fn parse_index(input: &str) -> Result<usize> {
     let value_error = || anyhow!(r#"illegal list value: "{input}""#);
     if input.starts_with('+') {
@@ -544,7 +657,7 @@ fn parse_index(input: &str) -> Result<usize> {
     }
 }
 
-// --------------------------------------------------
+/// Parse a comma-separated list of ranks and `first-last` rank ranges.
 fn parse_pos(range: &str) -> Result<PositionList> {
     let range_re = Regex::new(r"^(\d+)-(\d+)$").unwrap();
     range
@@ -567,79 +680,54 @@ fn parse_pos(range: &str) -> Result<PositionList> {
         .collect::<Result<_, _>>()
 }
 
-// --------------------------------------------------
 pub fn summarize(args: &SummarizeArgs) -> Result<()> {
-    let suffix_array = SuffixArray::read(&args.file, true)?;
-    let meta = suffix_array.metadata()?;
+    let suffix_array = SuffixArray::open(&args.file)?;
+    let header = suffix_array.header();
+    let file = fs::metadata(&args.file)?;
+    let modified: DateTime<Local> = file.modified()?.into();
     let num_fmt = NumberFormat::new();
-    let mut rows = vec![vec!["Filename".to_string(), meta.filename.clone()]];
-    rows.push(vec![
-        "Modified".to_string(),
-        meta.modified.format("%Y-%m-%d %H:%M").to_string(),
-    ]);
-    rows.push(vec![
-        "File Size".to_string(),
-        format!("{} bytes", num_fmt.format(",.0", meta.file_size as f64)),
-    ]);
-    rows.push(vec![
-        "File Version".to_string(),
-        meta.file_version.to_string(),
-    ]);
-    rows.push(vec!["DNA".to_string(), meta.is_dna.to_string()]);
-    rows.push(vec![
-        "Ignore Softmask".to_string(),
-        meta.ignore_softmask.to_string(),
-    ]);
-    rows.push(vec![
-        "Text Length".to_string(),
-        num_fmt.format(",.0", meta.text_len as f64),
-    ]);
-    rows.push(vec![
-        "Len Suffixes".to_string(),
-        num_fmt.format(",.0", meta.len_suffixes as f64),
-    ]);
-    rows.push(vec![
-        "LCP array".to_string(),
-        if meta.has_lcp { "yes" } else { "no" }.to_string(),
-    ]);
-
-    match meta.sort_type {
-        SuffixSortType::Mask(seed_mask) => {
-            rows.push(vec!["Seed mask".to_string(), seed_mask.mask])
-        }
-        SuffixSortType::MaxQueryLen(max_query_len) => rows.push(vec![
-            "Max query len".to_string(),
-            num_fmt.format(",.0", max_query_len as f64),
-        ]),
-    };
-
-    rows.push(vec![
-        "Num sequences".to_string(),
-        num_fmt.format(",.0", meta.num_sequences as f64),
-    ]);
-    let seq_starts = meta
+    let number = |n: usize| num_fmt.format(",.0", n as f64);
+    let wrapped = |values: &[String]| textwrap::wrap(&values.join(", "), 40).join("\n");
+    let starts: Vec<String> = header
         .sequence_starts
-        .into_iter()
-        .map(|v| v.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    rows.push(vec![
-        "Sequence starts".to_string(),
-        textwrap::wrap(&seq_starts, 40).join("\n"),
-    ]);
-    let seq_names = meta.sequence_names.join(", ");
-    rows.push(vec![
-        "Sequence names".to_string(),
-        textwrap::wrap(&seq_names, 40).join("\n"),
-    ]);
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
-    let table = Table::from_iter(rows);
-    println!("{table}");
+    let mut rows = vec![
+        ("Filename", args.file.clone()),
+        ("Modified", modified.format("%Y-%m-%d %H:%M").to_string()),
+        (
+            "File Size",
+            format!("{} bytes", number(file.len() as usize)),
+        ),
+        ("File Version", header.version.to_string()),
+        ("DNA", header.is_dna.to_string()),
+        ("Ignore Softmask", header.ignore_softmask.to_string()),
+        ("Text Length", number(header.text_len)),
+        ("Len Suffixes", number(header.num_suffixes)),
+        (
+            "LCP array",
+            if header.has_lcp() { "yes" } else { "no" }.to_string(),
+        ),
+    ];
+    if let SuffixSortType::Mask(seed_mask) = &header.sort_type {
+        rows.push(("Seed mask", seed_mask.mask.clone()));
+    }
+    rows.extend([
+        ("Num sequences", number(header.sequence_starts.len())),
+        ("Sequence starts", wrapped(&starts)),
+        ("Sequence names", wrapped(&header.sequence_names)),
+    ]);
+    let table = Table::from_iter(
+        rows.into_iter()
+            .map(|(label, value)| [label.to_string(), value]),
+    );
+    writeln!(io::stdout(), "{table}")?;
 
     Ok(())
 }
 
-// --------------------------------------------------
 #[cfg(test)]
 mod tests {
     use super::{parse_index, parse_pos};
@@ -687,112 +775,5 @@ mod tests {
         let res = parse_pos("0");
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), vec![0..1]);
-
-        //let res = parse_pos("0-1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "0""#);
-        //
-        //// A leading "+" is an error
-        //let res = parse_pos("+1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "+1""#,);
-        //
-        //let res = parse_pos("+1-2".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(
-        //    res.unwrap_err().to_string(),
-        //    r#"illegal list value: "+1-2""#,
-        //);
-        //
-        //let res = parse_pos("1-+2".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(
-        //    res.unwrap_err().to_string(),
-        //    r#"illegal list value: "1-+2""#,
-        //);
-        //
-        //// Any non-number is an error
-        //let res = parse_pos("a".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a""#);
-        //
-        //let res = parse_pos("1,a".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a""#);
-        //
-        //let res = parse_pos("1-a".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "1-a""#,);
-        //
-        //let res = parse_pos("a-1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(res.unwrap_err().to_string(), r#"illegal list value: "a-1""#,);
-        //
-        //// Wonky ranges
-        //let res = parse_pos("-".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos(",".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos("1,".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos("1-".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos("1-1-1".to_string());
-        //assert!(res.is_err());
-        //
-        //let res = parse_pos("1-1-a".to_string());
-        //assert!(res.is_err());
-        //
-        //// First number must be less than second
-        //let res = parse_pos("1-1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(
-        //    res.unwrap_err().to_string(),
-        //    "First number in range (1) must be lower than second number (1)"
-        //);
-        //
-        //let res = parse_pos("2-1".to_string());
-        //assert!(res.is_err());
-        //assert_eq!(
-        //    res.unwrap_err().to_string(),
-        //    "First number in range (2) must be lower than second number (1)"
-        //);
-        //
-        //// All the following are acceptable
-        //let res = parse_pos("1".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1]);
-        //
-        //let res = parse_pos("01".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1]);
-        //
-        //let res = parse_pos("1,3".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1, 2..3]);
-        //
-        //let res = parse_pos("001,0003".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1, 2..3]);
-        //
-        //let res = parse_pos("1-3".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..3]);
-        //
-        //let res = parse_pos("0001-03".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..3]);
-        //
-        //let res = parse_pos("1,7,3-5".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![0..1, 6..7, 2..5]);
-        //
-        //let res = parse_pos("15,19-20".to_string());
-        //assert!(res.is_ok());
-        //assert_eq!(res.unwrap(), vec![14..15, 18..20]);
     }
 }

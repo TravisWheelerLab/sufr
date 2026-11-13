@@ -1,0 +1,309 @@
+//! Every small input built under every flag set, checked against a
+//! reference that applies the rules to the FASTA bytes and never calls
+//! the build.
+
+use anyhow::Result;
+use libsufr::{Alphabet, SeedMask, SuffixArray, SuffixArrayBuilder};
+use std::borrow::Cow;
+use std::fs;
+use tempfile::NamedTempFile;
+
+const SENTINEL: u8 = b'$';
+
+/// One build of the table.
+struct Case {
+    input: &'static str,
+
+    /// `ignore_softmask` for a DNA build, or `None` for the byte
+    /// alphabet.
+    dna: Option<bool>,
+
+    delimiter: u8,
+
+    mask: Option<&'static str>,
+
+    /// `None` for the builder's default.
+    partitions: Option<usize>,
+}
+
+/// The text the build should index: the records joined by the
+/// delimiter with the sentinel last, lowercase raised or turned to N.
+fn reference_text(
+    fasta: &[u8],
+    delimiter: u8,
+    ignore_softmask: bool,
+) -> (Vec<u8>, Vec<usize>, Vec<String>) {
+    let mut text = Vec::new();
+    let mut starts = Vec::new();
+    let mut names = Vec::new();
+    for record in fasta.split(|&b| b == b'>').skip(1) {
+        let mut lines = record.split(|&b| b == b'\n');
+        let header = String::from_utf8_lossy(lines.next().unwrap_or(&[]));
+        if !starts.is_empty() {
+            text.push(delimiter);
+        }
+        starts.push(text.len());
+        names.push(header.split_whitespace().next().unwrap_or("").to_string());
+        for &b in lines.flatten() {
+            if b == b'\r' {
+                continue;
+            }
+            text.push(if !b.is_ascii_lowercase() {
+                b
+            } else if ignore_softmask {
+                b'N'
+            } else {
+                b.to_ascii_uppercase()
+            });
+        }
+    }
+    text.push(SENTINEL);
+    (text, starts, names)
+}
+
+/// The positions the build should index: a DNA build keeps only
+/// suffixes starting `ACGT` or the sentinel.
+fn kept(text: &[u8], dna: Option<bool>) -> Vec<usize> {
+    let acgt_only = dna.is_some();
+    (0..text.len())
+        .filter(|&p| {
+            !acgt_only || matches!(text[p], b'A' | b'C' | b'G' | b'T' | SENTINEL)
+        })
+        .collect()
+}
+
+/// What the suffix at `p` sorts by: the whole suffix, or the bytes at
+/// the mask's positions that fall inside the text.
+fn key<'a>(text: &'a [u8], p: usize, mask: Option<&[usize]>) -> Cow<'a, [u8]> {
+    match mask {
+        Some(positions) => positions
+            .iter()
+            .map(|&offset| p + offset)
+            .take_while(|&i| i < text.len())
+            .map(|i| text[i])
+            .collect(),
+        None => Cow::Borrowed(&text[p..]),
+    }
+}
+
+/// The number of leading units two keys share.
+fn shared(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b).take_while(|(x, y)| x == y).count()
+}
+
+fn check(case: &Case) -> Result<()> {
+    let Case {
+        input,
+        dna,
+        delimiter,
+        mask,
+        partitions,
+    } = *case;
+    let label = format!(
+        "{} dna={dna:?} delimiter={} mask={mask:?} partitions={partitions:?}",
+        if input.starts_with('>') {
+            "inline"
+        } else {
+            input
+        },
+        delimiter as char
+    );
+    // an input starting with > is a FASTA string, not a file name
+    let inline;
+    let path = if input.starts_with('>') {
+        inline = NamedTempFile::new()?;
+        fs::write(inline.path(), input)?;
+        inline.path().to_string_lossy().to_string()
+    } else {
+        format!("../data/inputs/{input}.fa")
+    };
+    let mask = mask.map(SeedMask::new).transpose()?;
+    let positions = mask.as_ref().map(|m| m.positions.clone());
+
+    let ignore_softmask = dna == Some(true);
+    let (text, starts, names) =
+        reference_text(&fs::read(&path)?, delimiter, ignore_softmask);
+    let mut order = kept(&text, dna);
+
+    // under a mask, suffixes with equal keys go shortest first, which is
+    // the latest start first; without one, every key is unique
+    order.sort_by(|&a, &b| {
+        key(&text, a, positions.as_deref())
+            .cmp(&key(&text, b, positions.as_deref()))
+            .then(b.cmp(&a))
+    });
+
+    let alphabet = match dna {
+        Some(ignore_softmask) => Alphabet::Dna { ignore_softmask },
+        None => Alphabet::Bytes,
+    };
+    let mut builder = SuffixArrayBuilder::from_sequence_file(&path, delimiter)?
+        .with_alphabet(alphabet)
+        .with_write_lcp(true);
+    if let Some(mask) = mask {
+        builder = builder.with_seed_mask(mask);
+    }
+    if let Some(partitions) = partitions {
+        builder = builder.with_num_partitions(partitions);
+    }
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    builder.build_to_file(&outpath)?;
+
+    let built = SuffixArray::open(&outpath)?;
+    let header = built.header();
+    assert_eq!(header.text_len, text.len(), "{label}: text_len");
+    assert_eq!(built.text(0..text.len())?, text, "{label}: text");
+    assert_eq!(header.sequence_starts, starts, "{label}: sequence_starts");
+    assert_eq!(header.sequence_names, names, "{label}: sequence_names");
+    assert_eq!(header.num_suffixes, order.len(), "{label}: num_suffixes");
+
+    let n = order.len();
+    let suffixes = built.suffixes(0..n)?;
+    let lcps = built.lcps(0..n)?;
+    for rank in 0..n {
+        assert_eq!(
+            suffixes[rank], order[rank],
+            "{label}: suffix at rank {rank}"
+        );
+
+        let lcp = if rank == 0 {
+            0
+        } else {
+            shared(
+                &key(&text, order[rank - 1], positions.as_deref()),
+                &key(&text, order[rank], positions.as_deref()),
+            )
+        };
+        assert_eq!(lcps[rank], lcp, "{label}: lcp at rank {rank}");
+    }
+    Ok(())
+}
+
+const DNA_INPUTS: [&str; 7] = [
+    "1",
+    "2",
+    "3",
+    "smol",
+    "mostlya1",
+    "mostlya2",
+    "spaced_input",
+];
+
+fn dna(input: &'static str, ignore_softmask: bool) -> Case {
+    Case {
+        input,
+        dna: Some(ignore_softmask),
+        delimiter: b'%',
+        mask: None,
+        partitions: None,
+    }
+}
+
+fn bytes(input: &'static str) -> Case {
+    Case {
+        input,
+        dna: None,
+        delimiter: b'%',
+        mask: None,
+        partitions: None,
+    }
+}
+
+fn table() -> Vec<Case> {
+    let mut cases = Vec::new();
+    for input in DNA_INPUTS {
+        cases.push(dna(input, false));
+        cases.push(dna(input, true));
+        cases.push(bytes(input));
+    }
+    for input in ["2", "3"] {
+        cases.push(Case {
+            delimiter: b'N',
+            ..dna(input, false)
+        });
+    }
+    for input in ["2", "smol", "mostlya1", "mostlya2", "spaced_input"] {
+        for mask in ["101", "1101", "11011", "10111011"] {
+            cases.push(Case {
+                mask: Some(mask),
+                ..dna(input, false)
+            });
+            cases.push(Case {
+                mask: Some(mask),
+                ..bytes(input)
+            });
+        }
+    }
+    // a key holds 21 characters of DNA at 3 bits and 12 of protein at
+    // 5, so a mask's care positions fall short of the key or fill it;
+    // the PatternHunter seed is the usual shape
+    for input in ["2", "smol", "spaced_input"] {
+        for mask in [
+            "111111111111111111101",
+            "1111111111111111111101",
+            "111010010100110111",
+        ] {
+            cases.push(Case {
+                mask: Some(mask),
+                ..dna(input, false)
+            });
+            cases.push(Case {
+                mask: Some(mask),
+                ..bytes(input)
+            });
+        }
+    }
+    for partitions in [1, 2, 3] {
+        cases.push(Case {
+            partitions: Some(partitions),
+            ..dna("2", false)
+        });
+        cases.push(Case {
+            partitions: Some(partitions),
+            mask: Some("101"),
+            ..dna("2", false)
+        });
+    }
+    // two runs of 1200 N with equal remaining lengths, whose LCP is
+    // the run plus what follows it
+    let n_runs = format!(
+        ">r\nACGT{n}\nGATTACATTTT\n{n}\nGATTACA\n",
+        n = "N".repeat(1200)
+    );
+    let n_runs: &'static str = Box::leak(n_runs.into_boxed_str());
+    cases.push(dna(n_runs, false));
+    cases.push(bytes(n_runs));
+    // runs of N that end at a record boundary, so suffixes start
+    // with N and the delimiter from runs of different lengths
+    let n_ends = format!(
+        ">a\nACGT{long}\n>b\nGATTACA{short}\n>c\nTTGA\n",
+        long = "N".repeat(1200),
+        short = "N".repeat(1100)
+    );
+    let n_ends: &'static str = Box::leak(n_ends.into_boxed_str());
+    cases.push(dna(n_ends, false));
+    cases.push(bytes(n_ends));
+    cases.push(bytes("abba"));
+    cases.push(bytes("uniprot"));
+    for mask in [
+        "10111011",
+        "111111111101",
+        "1111111111101",
+        "111010010100110111",
+    ] {
+        cases.push(Case {
+            mask: Some(mask),
+            ..bytes("uniprot")
+        });
+    }
+    cases
+}
+
+#[test]
+fn every_build_matches_the_reference() -> Result<()> {
+    for case in table() {
+        check(&case)?;
+    }
+    Ok(())
+}

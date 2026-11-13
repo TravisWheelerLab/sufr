@@ -1,11 +1,15 @@
 //! Functions for LCP computation and caching.
 
+use crate::format::SeedMask;
+use std::cmp::min;
+
 /// A cache of LCP values for optimized calculation.
 ///
 /// Given two indices i and j, with an LCP of l at that position,
 /// the LCP of i+1 and j+1 is l-1, of i+2 and j+2 is l-2, and so on.
 /// This structure caches LCP values using the difference between i and j
-/// as a key, so that LCP values can be reused.
+/// and the block of the smaller of them as a key, so that LCP values can
+/// be reused.
 pub struct LcpCache {
     // (2^CACHE_BITS) entries
     // (distance between two starts, smaller start value, lcp)
@@ -30,10 +34,18 @@ impl LcpCache {
     const CACHE_BITS: usize = 16;
     const CACHE_SIZE: usize = 1 << Self::CACHE_BITS;
 
-    fn idx(d: usize) -> usize {
+    /// The positions sharing a slot for one distance: 64 KiB.
+    const BLOCK_BITS: usize = 16;
+
+    // keyed by the distance alone, one slot served every copy of a
+    // repeat at that distance, and an entry covers only the copy it
+    // was made in, so ten copies of a unit thrashed the slot and
+    // nearly every comparison between copies walked the whole copy:
+    // 16 million walks of a million characters on 10 MiB
+    fn idx(d: usize, first: usize) -> usize {
         // Fibonacci hash for 64-bit integers
-        ((d as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - Self::CACHE_BITS))
-            as usize
+        let key = (d as u64) ^ ((first >> Self::BLOCK_BITS) as u64).rotate_left(32);
+        (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - Self::CACHE_BITS)) as usize
     }
 
     /// Adds the LCP of i,j to the cache for later lookup.
@@ -42,7 +54,7 @@ impl LcpCache {
     pub fn set(&mut self, i: usize, j: usize, lcp: usize) {
         let first = i.min(j);
         let d = i.abs_diff(j);
-        let idx = Self::idx(d);
+        let idx = Self::idx(d, first);
         let loc = &mut self.cache[idx];
 
         // Eviction conditions:
@@ -59,7 +71,7 @@ impl LcpCache {
     pub fn get(&self, i: usize, j: usize) -> Option<usize> {
         let first = i.min(j);
         let d = i.abs_diff(j);
-        let idx = Self::idx(d);
+        let idx = Self::idx(d, first);
         let (loc_d, loc_start, loc_lcp) = self.cache[idx];
         if d == loc_d && first >= loc_start && first <= loc_start + loc_lcp {
             Some(loc_lcp - (first - loc_start))
@@ -71,11 +83,64 @@ impl LcpCache {
 
 const _: () = assert!(LcpCache::MIN_CACHEABLE >= LcpCache::PROBE_AT);
 
-/// Computes the LCP of `a` and `b`, automatically selecting an optimized
-/// implementation for the target platform.
-///
-/// If `cache` is provided, it should be provided as `Some((cache, ia, ib))`,
-/// `ia` and `ib` are the offsets at which `a` and `b` begin in the original sequence.
+/// The LCP of the suffixes of `text` at `start1` and `start2`, which share
+/// their first `skip` bytes, comparing at most `len` bytes past `skip`.
+#[inline(always)]
+pub fn suffix_lcp(
+    text: &[u8],
+    start1: usize,
+    start2: usize,
+    skip: usize,
+    len: usize,
+    cache: Option<&mut LcpCache>,
+) -> usize {
+    let text_len = text.len();
+    let from1 = start1 + skip;
+    let from2 = start2 + skip;
+    let end1 = min(from1 + len, text_len);
+    let end2 = min(from2 + len, text_len);
+    let lcp = lcp(
+        &text[from1..end1],
+        &text[from2..end2],
+        cache.as_deref().map(|c| (c, from1, from2)),
+    );
+
+    // a capped LCP is not the true LCP of the two
+    // suffixes, and the cache holds only true LCPs
+    if skip + lcp >= LcpCache::MIN_CACHEABLE && lcp < len {
+        if let Some(c) = cache {
+            c.set(start1, start2, skip + lcp);
+        }
+    }
+    skip + lcp
+}
+
+/// The number of leading `positions` at which `a` and `b` hold the same
+/// byte, stopping at the first position past the end of either.
+#[inline(always)]
+pub fn masked_lcp(a: &[u8], b: &[u8], positions: &[usize]) -> usize {
+    positions
+        .iter()
+        .take_while(|&&offset| {
+            matches!((a.get(offset), b.get(offset)), (Some(x), Some(y)) if x == y)
+        })
+        .count()
+}
+
+/// The offset of the byte that follows a masked LCP of `lcp` care
+/// positions: the next care position, or one past the last one.
+pub fn mask_offset(lcp: usize, mask: &SeedMask) -> usize {
+    if lcp == 0 || lcp > mask.bytes.len() {
+        return lcp;
+    }
+    match mask.positions.get(lcp) {
+        Some(&next) => next,
+        None => mask.positions[lcp - 1] + 1,
+    }
+}
+
+/// The LCP of `a` and `b`, using AVX2 or NEON when the CPU has it. `cache` holds
+/// the cache and the text positions where `a` and `b` start.
 pub fn lcp(a: &[u8], b: &[u8], cache: Option<(&LcpCache, usize, usize)>) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
@@ -94,11 +159,13 @@ pub fn lcp(a: &[u8], b: &[u8], cache: Option<(&LcpCache, usize, usize)>) -> usiz
     lcp_scalar(a, b)
 }
 
+/// The LCP of `a` and `b`, comparing 32 bytes at a time.
+///
+/// # Safety
+///
+/// The CPU must support AVX2.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-/// AVX2 implementation of LCP with an unrolled loop
-///
-/// SAFETY: This function must only be called after validating that avx2 is actually available
 unsafe fn lcp_avx2(
     a: &[u8],
     b: &[u8],
@@ -109,12 +176,13 @@ unsafe fn lcp_avx2(
     let mut i = 0;
 
     const UNROLL: usize = 4;
-    const _: () = assert!(LcpCache::PROBE_AT % (UNROLL * 32) == 0);
+    const _: () = assert!(LcpCache::PROBE_AT.is_multiple_of(UNROLL * 32));
 
     while i + UNROLL * 32 <= n {
         for j in 0..UNROLL {
             let off = i + j * 32;
-            // SAFETY: the bounds of a and b (256bits = 32 bytes; 4 iterations) are checked at the top of the while loop
+            // SAFETY: the loop condition keeps the 32 bytes at
+            //         `off` within both `a` and `b`
             let va = unsafe { _mm256_loadu_si256(a.as_ptr().add(off) as *const _) };
             let vb = unsafe { _mm256_loadu_si256(b.as_ptr().add(off) as *const _) };
             let eq = _mm256_cmpeq_epi8(va, vb);
@@ -135,11 +203,13 @@ unsafe fn lcp_avx2(
     i + lcp_scalar(&a[i..n], &b[i..n])
 }
 
+/// The LCP of `a` and `b`, comparing 16 bytes at a time.
+///
+/// # Safety
+///
+/// The CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-/// NEON implementation of LCP with an unrolled loop
-///
-/// SAFETY: This function must only be called after validating that neon is actually available
 unsafe fn lcp_neon(
     a: &[u8],
     b: &[u8],
@@ -184,7 +254,7 @@ unsafe fn lcp_neon(
     i + lcp_scalar(&a[i..n], &b[i..n])
 }
 
-/// Scalar implementation of LCP
+/// The LCP of `a` and `b`, comparing a byte at a time.
 pub fn lcp_scalar(a: &[u8], b: &[u8]) -> usize {
     std::iter::zip(a, b).take_while(|(a, b)| a == b).count()
 }
@@ -192,6 +262,7 @@ pub fn lcp_scalar(a: &[u8], b: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
 
     #[test]
     fn test_lcp_cache() {
@@ -220,5 +291,37 @@ mod tests {
             1024,
             lcp(&text[0..], &text[2048..], Some((&cache, 0, 2048)))
         );
+    }
+
+    #[test]
+    fn test_suffix_lcp() {
+        let text = b"ACGTNNACGT$";
+        assert_eq!(suffix_lcp(text, 0, 6, 0, text.len(), None), 4);
+        assert_eq!(suffix_lcp(text, 0, 6, 0, 2, None), 2);
+        assert_eq!(suffix_lcp(text, 0, 6, 2, 1, None), 3);
+    }
+
+    #[test]
+    fn test_mask_offset() -> Result<()> {
+        let seed_mask = SeedMask::new("101")?;
+        assert_eq!(mask_offset(0, &seed_mask), 0);
+        assert_eq!(mask_offset(1, &seed_mask), 2);
+        assert_eq!(mask_offset(2, &seed_mask), 3);
+
+        let seed_mask = SeedMask::new("11011")?;
+        assert_eq!(mask_offset(0, &seed_mask), 0);
+        assert_eq!(mask_offset(1, &seed_mask), 1);
+        assert_eq!(mask_offset(2, &seed_mask), 3);
+        assert_eq!(mask_offset(3, &seed_mask), 4);
+        assert_eq!(mask_offset(4, &seed_mask), 5);
+
+        let seed_mask = SeedMask::new("10011001")?;
+        assert_eq!(mask_offset(0, &seed_mask), 0);
+        assert_eq!(mask_offset(1, &seed_mask), 3);
+        assert_eq!(mask_offset(2, &seed_mask), 4);
+        assert_eq!(mask_offset(3, &seed_mask), 7);
+        assert_eq!(mask_offset(4, &seed_mask), 8);
+
+        Ok(())
     }
 }

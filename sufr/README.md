@@ -5,7 +5,7 @@ We copied many ideas from the original C++ implementation [CaPS-SA](https://gith
 
 ## Setup
 
-* [Install Rust](https://www.rust-lang.org/tools/install)   (this is easy)
+* [Install Rust](https://www.rust-lang.org/tools/install) 1.88 or later  (this is easy)
 * Run **`cargo install sufr`** to install the CLI
 * Alternately, execute `cargo run` in the source code directory to build a debug version of the program from source
 
@@ -13,7 +13,7 @@ We copied many ideas from the original C++ implementation [CaPS-SA](https://gith
 $ cargo run
 Parallel Construction of Suffix Arrays in Rust
 
-Usage: sufr [OPTIONS] [COMMAND]
+Usage: sufr [COMMAND]
 
 Commands:
   create     Create sufr file
@@ -25,11 +25,8 @@ Commands:
   help       Print this message or the help of the given subcommand(s)
 
 Options:
-  -t, --threads <THREADS>    Number of threads
-  -l, --log <LOG>            Log level [possible values: info, debug]
-      --log-file <LOG_FILE>  Log file
-  -h, --help                 Print help
-  -V, --version              Print version
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
 * Execute `cargo build --release` to build an optimized binary in _./target/release/sufr_, which you can execute directly and copy into your `$PATH`:
@@ -40,7 +37,7 @@ $ cargo build --release
 $ ./target/release/sufr -h
 Parallel Construction of Suffix Arrays in Rust
 
-Usage: sufr [OPTIONS] [COMMAND]
+Usage: sufr [COMMAND]
 
 Commands:
   create     Create sufr file
@@ -52,15 +49,12 @@ Commands:
   help       Print this message or the help of the given subcommand(s)
 
 Options:
-  -t, --threads <THREADS>    Number of threads
-  -l, --log <LOG>            Log level [possible values: info, debug]
-      --log-file <LOG_FILE>  Log file
-  -h, --help                 Print help
-  -V, --version              Print version
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
 Some of the commands may produce debug/info messages.
-Use the `-l|--log` option to view these on STDOUT or optionally write to a given `--log-file`.
+Use the `--log` option of a command to view these on STDOUT, or write them to a given `--log-file`.
 
 ### Create a suffix array
 
@@ -77,12 +71,16 @@ Arguments:
 
 Options:
   -n, --num-partitions <NUM_PARTS>  Subproblem count [default: 1024]
-  -m, --max-query-len <CONTEXT>     Max context
+      --memory-budget <MIB>         The extra memory budget (in MiB) during sorting; default: size of the input text
   -o, --output <OUTPUT>             Output file
   -d, --dna                         Input is DNA
   -i, --ignore-softmask             Ignore suffixes in soft-mask/lowercase regions
   -D, --sequence-delimiter <DELIM>  Character to separate sequences [default: %]
   -s, --seed-mask <MASK>            Spaced seeds mask
+      --write-lcp                   Also write the LCP array
+  -t, --threads <THREADS>           Number of threads
+      --log <LOG>                   Log level [possible values: info, debug]
+      --log-file <LOG_FILE>         Log file
   -h, --help                        Print help
 ```
 
@@ -91,7 +89,7 @@ The resulting binary-encoded output file will contain:
 * metadata about the input
 * the entire input text encoded as `u8` (bytes)
 * a fully sorted suffix array (SA)
-* an array of the LCP (longest common prefix) for the SA
+* with `--write-lcp`, an array of the LCP (longest common prefix) for the SA
 
 The input file is a required positional argument and should be a FASTA/Q-formatted file with one or more sequences, e.g.:
 
@@ -103,29 +101,35 @@ acgtacgt
 acgtacgt
 ```
 
-To briefly describe our algorigthm, the input sequences is read into a vector of `u8` bytes.
-Unless we are told to ignore softmasked input, lowercase values are converted to uppercase; in the case that we do ignore softmask data, lowercase are converted to an ambiguity character (_N_ for nucleotides and _X_ otherwise, e.g., protein).
-Multiple sequence are separated by a specified character (`%` by default).
-A sentinel character is appended to the end (default `$`) is appended to the end of the input text.
-If the `--dna` flag is present, suffixes are skipped if they begin with any character other than _A_, _C_, _G_, or _T_.
+To briefly describe our algorithm, we read the input sequences into a vector of `u8` bytes and convert lowercase letters to uppercase.
+We separate multiple sequences with a delimiter (`%` by default) and append the sentinel `$` to the end of the text.
+With the `--dna` flag, we skip suffixes that begin with any character other than _A_, _C_, _G_, or _T_.
+With `-i|--ignore-softmask`, which requires `--dna`, we convert lowercase letters to _N_ instead, so we also skip suffixes that start in soft-masked regions.
 
-Next, we partition the suffixes into bins based on the first few bytes of each suffix. The bins are calculated and chosen based on the
-observed alphabet of the sequence (nucleic acid alphabet for only `ACGTN`, amino acid alphabet otherwise).
-Adjacent bins are then aggregated into the specified `--num-partitions` partitions, aiming for roughly equally sized partitions.
-The partitions are sorted using a merge sort algorithm that also generates an LCP (longest common prefix) array.
-The sorted suffix/LCP arrays are then concatenated to produce the final output.
+Next, we pack the first characters of each suffix into a 64-bit key, using as few bits per character as the bytes in the text allow; a key typically holds 21 characters of DNA.
+With `--seed-mask`, the key holds only the mask's care positions.
+In a first pass, we count the suffixes in each bucket of leading characters and group adjacent buckets into at most `--num-partitions` partitions of roughly equal size.
+We sort each partition by its keys and merge sort only the runs of suffixes whose keys are equal.
+`--memory-budget` sets how many bytes of suffixes we hold in memory at once; if the suffixes need more, we scan the text once per budget.
+We write each sorted partition straight to its place in the output file.
 
-The `sufr` CLI will create an output file containing a binary-encoded representation of the sorted suffix/LCP arrays along with the original sequence data and other metadata used to generate the arrays.
-For instance, with the _1.fa_ file, the default output file will be _1.sufr_:
+The `sufr` CLI writes an output file containing the original sequence data, the sorted suffix array, and other metadata used to generate it, plus the LCP array when given `--write-lcp`.
+For instance, with the _1.fa_ file, the default output file will be _1.sufr_.
+We pass `--write-lcp` here so that the `list` example below can show LCP values:
 
 ```
-$ sufr --log debug create data/inputs/1.fa -n 2 --dna
-[2025-01-29T18:56:00Z INFO  sufr] Using 8 threads
-[2025-01-29T18:56:00Z INFO  sufr] Read input of len 11 in 980.5µs
-[2025-01-29T18:56:00Z INFO  libsufr::sufr_builder] Selected 1 pivot in 51.917µs
-[2025-01-29T18:56:00Z INFO  libsufr::sufr_builder] Wrote 9 unsorted suffixes to partition in 282.208µs
-[2025-01-29T18:56:00Z INFO  libsufr::sufr_builder] Sorted 9 suffixes in 2 partitions (avg 4) in 530.292µs
-[2025-01-29T18:56:00Z INFO  sufr] Wrote 172 bytes to '1.sufr' in 1.822333ms
+$ sufr create -t 8 --log info --write-lcp data/inputs/1.fa -n 2 --dna
+[2026-11-13T19:57:44Z INFO  sufr] Using 8 threads
+[2026-11-13T19:57:44Z INFO  libsufr::build] Read input of len 11 in 52.341µs
+[2026-11-13T19:57:44Z INFO  libsufr::build] Normalized the text in 316ns
+[2026-11-13T19:57:44Z INFO  libsufr::build] 6 distinct bytes at 3 bits: 21-character keys, 5-character buckets
+[2026-11-13T19:57:44Z INFO  libsufr::build] Counted 9 suffixes into 32768 buckets and 2 partitions in 289.694µs
+[2026-11-13T19:57:44Z INFO  libsufr::build] Gathered 5 suffixes of partitions 0..1 in 25.669µs
+[2026-11-13T19:57:44Z INFO  libsufr::build] Sorted partitions 0..1 in 3.069µs
+[2026-11-13T19:57:44Z INFO  libsufr::build] Gathered 4 suffixes of partitions 1..2 in 102.769µs
+[2026-11-13T19:57:44Z INFO  libsufr::build] Sorted partitions 1..2 in 1.529µs
+[2026-11-13T19:57:44Z INFO  libsufr::build] Wrote suffix array to '1.sufr' in 175.287µs
+[2026-11-13T19:57:44Z INFO  sufr] Wrote 172 bytes to '1.sufr' in 782.813µs
 ```
 
 ### Summarize a sufr file
@@ -136,13 +140,16 @@ Use the `summarize` (`su`) action to view metadata about a _.sufr_ file:
 $ sufr su -h
 Summarize sufr file
 
-Usage: sufr summarize <SUFR>
+Usage: sufr summarize [OPTIONS] <SUFR>
 
 Arguments:
   <SUFR>  Sufr file
 
 Options:
-  -h, --help  Print help
+  -t, --threads <THREADS>    Number of threads
+      --log <LOG>            Log level [possible values: info, debug]
+      --log-file <LOG_FILE>  Log file
+  -h, --help                 Print help
 ```
 
 For instance:
@@ -160,15 +167,13 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | DNA             | true             |
 +-----------------+------------------+
-| Allow Ambiguity | false            |
-+-----------------+------------------+
 | Ignore Softmask | false            |
 +-----------------+------------------+
 | Text Length     | 11               |
 +-----------------+------------------+
 | Len Suffixes    | 9                |
 +-----------------+------------------+
-| Max query len   | 0                |
+| LCP array       | yes              |
 +-----------------+------------------+
 | Num sequences   | 1                |
 +-----------------+------------------+
@@ -193,14 +198,17 @@ Arguments:
   [RANK]...  Ranks of suffixes to show
 
 Options:
-  -r, --show-rank        Show rank column
-  -s, --show-suffix      Show suffix position column
-  -p, --show-lcp         Show LCP column
-  -v, --very-low-memory  Very low memory
-      --len <LEN>        Length of suffixes to show
-  -n, --number <LEN>     Number of suffixes to show
-  -o, --output <OUT>     Output
-  -h, --help             Print help
+  -r, --show-rank            Show rank column
+  -s, --show-suffix          Show suffix position column
+  -p, --show-lcp             Show LCP column
+  -v, --very-low-memory      Very low memory
+      --len <LEN>            Length of suffixes to show
+  -n, --number <LEN>         Number of suffixes to show
+  -o, --output <OUT>         Output
+  -t, --threads <THREADS>    Number of threads
+      --log <LOG>            Log level [possible values: info, debug]
+      --log-file <LOG_FILE>  Log file
+  -h, --help                 Print help
 ```
 
 For example, to view the _1.sufr_ file including rank, suffix, and LCP:
@@ -230,7 +238,7 @@ CGTNNACGT$
 GT$
 ```
 
-As suffixes can get quite long, use the `-l|--len` option to restrict the length of the shown suffix:
+As suffixes can get quite long, use the `--len` option to restrict the length of the shown suffix:
 
 ```
 $ sufr ls 1.sufr 2-3 --len 3
@@ -246,17 +254,21 @@ Use the `count` (`co`) command to find the number of occurrences of suffixes:
 $ sufr co -h
 Count occurrences of sequences in a sufr file
 
-Usage: sufr count [OPTIONS] <SUFR> <QUERY>...
+Usage: sufr count [OPTIONS] <SUFR> [QUERY]...
 
 Arguments:
   <SUFR>      Sufr file
-  <QUERY>...  Query
+  [QUERY]...  Query
 
 Options:
   -m, --max-query-len <LEN>  Maximum query length
   -o, --output <OUT>         Output
   -l, --low-memory           Low memory
   -v, --very-low-memory      Very low memory
+  -q, --query-file <FILE>    File of queries separated by whitespace; "-" reads stdin
+  -t, --threads <THREADS>    Number of threads
+      --log <LOG>            Log level [possible values: info, debug]
+      --log-file <LOG_FILE>  Log file
   -h, --help                 Print help
 ```
 
@@ -265,7 +277,8 @@ Options:
 The `-l|--low-memory` option will force the suffixes to be read from disk rather than loaded into memory. 
 The `-v|--very-low-memory` option will also force the text to be read from disk rather than loaded into memory. 
 The time to load a large index (e.g., human genome) into memory may take longer than the actual search, so you may find this is faster for only a few queries but slower for a large number.
-Also consider the `-m|--max-query-len` option to create a down-sampled suffix array.
+Also consider the `-m|--max-query-len` option.
+Without `-l` or `-v`, sufr then loads a down-sampled suffix array into memory and caches it in a file under `~/.sufr` for later searches.
 ****
 
 For example:
@@ -285,11 +298,11 @@ Use the `locate` (`lo`) command to find the positions of a given suffix:
 $ sufr lo -h
 Locate sequences in a sufr file
 
-Usage: sufr locate [OPTIONS] <SUFR> <QUERY>...
+Usage: sufr locate [OPTIONS] <SUFR> [QUERY]...
 
 Arguments:
   <SUFR>      Sufr file
-  <QUERY>...  Query
+  [QUERY]...  Query
 
 Options:
   -o, --output <OUT>         Output
@@ -297,6 +310,10 @@ Options:
   -l, --low-memory           Low memory
   -v, --very-low-memory      Very low memory
   -a, --abs                  Show absolute position in text
+  -q, --query-file <FILE>    File of queries separated by whitespace; "-" reads stdin
+  -t, --threads <THREADS>    Number of threads
+      --log <LOG>            Log level [possible values: info, debug]
+      --log-file <LOG_FILE>  Log file
   -h, --help                 Print help
 ```
 
@@ -328,10 +345,10 @@ GTT
 X not found
 ```
 
-Use the `-a|--absolute` flag if you prefer to see the raw suffix position:
+Use the `-a|--abs` flag if you prefer to see the raw suffix position:
 
 ```
-$ sufr lo 3.sufr ACT GTT -a
+$ sufr lo data/expected/3.sufr ACT GTT -a
 ACT 14 88
 GTT 92
 ```
@@ -344,11 +361,11 @@ Use the `extract` (`ex`) to print suffixes in FASTA format:
 $ sufr ex -h
 Extract suffixes from a sufr file
 
-Usage: sufr extract [OPTIONS] <SUFR> <QUERY>...
+Usage: sufr extract [OPTIONS] <SUFR> [QUERY]...
 
 Arguments:
   <SUFR>      Sufr file
-  <QUERY>...  Query
+  [QUERY]...  Query
 
 Options:
   -m, --max-query-len <LEN>      Maximum query length
@@ -357,6 +374,10 @@ Options:
   -p, --prefix-len <PREFIX_LEN>  Prefix length
   -s, --suffix-len <SUFFIX_LEN>  Suffix length
   -o, --output <OUT>             Output
+  -q, --query-file <FILE>        File of queries separated by whitespace; "-" reads stdin
+  -t, --threads <THREADS>        Number of threads
+      --log <LOG>                Log level [possible values: info, debug]
+      --log-file <LOG_FILE>      Log file
   -h, --help                     Print help
 ```
 
