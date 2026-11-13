@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T21:40:44.880971666Z",
-  "updated_at": "2026-11-09T21:40:44.880971666Z",
+  "updated_at": "2026-11-13T03:26:51.08520147Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "59ba4555",
+      "at": "2026-11-13T03:26:51.08520086Z",
+      "author": "Jack Roddy/16cf998c",
+      "text": "Measured at `e537747` with the benchmark suite on `bench` at `3c6279a`: 100 MiB fixtures, 4 threads, median of 5, an AMD Ryzen 7 9800X3D. Three builds ran:\n\n- `rolled` is `e537747` as it is.\n- `rolled-nopext` is `e537747` with `has_bmi2` forced to `false`.\n- `direct` replaces both scans with one function that computes each suffix's key from the characters at `i + offset`. The offsets are `0..chars_per_key` without a mask and the care positions with one. It has no rolling, no windows and no pext.\n\nAll three wrote the same output.\n\n| row | rolled | rolled-nopext | direct |\n|---|---|---|---|\n| `normal` | 1.36 s | 1.36 s | 3.75 s |\n| `protein` | 1.27 s | 1.28 s | 2.56 s |\n| `mask-dna` | 1.39 s | 5.85 s | 2.60 s |\n| `mask-dna-heavy` | 1.60 s | 8.99 s | 3.54 s |\n| `mask-dna-wide` | 1.97 s | 7.67 s | 3.66 s |\n| `mask-protein` | 1.62 s | 5.51 s | 2.62 s |\n\nRolling with pext is the fastest in every row. Without a mask, `direct` takes 2.75 times as long on DNA and 2.0 times on protein. Under a mask, `direct` takes 1.6 to 2.2 times as long as rolled with pext. It takes 0.39 to 0.48 times as long as rolled without pext, so on a CPU without BMI2 a masked build would run faster with direct keys than with today's portable path. Nobody looked into why.",
+      "commit": "e537747",
+      "branch": "refactor"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "1995d7c",
