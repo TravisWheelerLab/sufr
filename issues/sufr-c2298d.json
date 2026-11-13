@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-03T18:59:48.877880025Z",
-  "updated_at": "2026-11-04T06:55:31.6971353Z",
+  "updated_at": "2026-11-13T06:15:06.214385206Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -32,6 +32,14 @@
       "author": "Jack Roddy/1ddc0e5b",
       "text": "Retyped from bug to feature on 2026-11-03: the results are right in every disk mode, and the per-probe reads are a design to change with a benchmark, not a defect.",
       "commit": "4e873cf",
+      "branch": "refactor"
+    },
+    {
+      "id": "c1f8c292",
+      "at": "2026-11-13T06:15:06.214384516Z",
+      "author": "Jack Roddy/16cf998c",
+      "text": "Commit fce1756 renamed `Storage` to `SourceKind`, so `Storage::Disk` above is now `SourceKind::Disk`.",
+      "commit": "fce1756",
       "branch": "refactor"
     }
   ],
