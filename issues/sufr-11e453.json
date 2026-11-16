@@ -13,9 +13,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:48:42.629473275Z",
-  "updated_at": "2026-11-13T21:27:35.406701138Z",
+  "updated_at": "2026-11-16T18:46:55.021702976Z",
   "closed_at": "2026-11-13T21:27:35.406701138Z",
-  "close_reason": "Took the option to record the width and make the hook public, in eb6d175 on branch `worktree-release-0.8.0`. `SuffixArrayBuilder::with_force_64bit` is public, the u64 unit test in `lib.rs` opens its file through `SuffixArray::open`, and `libsufr/tests/oracle.rs` runs every case at both widths.",
+  "close_reason": "Took the option to record the width and make the hook public, in bb556b8 on branch `worktree-release-0.8.0`. `SuffixArrayBuilder::with_force_64bit` is public, the u64 unit test in `lib.rs` opens its file through `SuffixArray::open`, and `libsufr/tests/oracle.rs` runs every case at both widths.",
   "resolution": "done",
   "notes": [],
   "stamps": {
