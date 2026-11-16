@@ -231,21 +231,27 @@ mod tests {
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
 
-        let index = TypedSuffixArray::<u64, MemorySource<u8>, DiskSource<u64>>::open(
-            &outpath, None, false,
-        )?;
-        assert_eq!(index.header.version, OUTFILE_VERSION);
-        assert!(!index.header.is_dna);
-        assert_eq!(index.header.text_len, 11);
-        assert_eq!(index.header.sequence_starts, [0]);
-        assert_eq!(index.header.sequence_names, ["1"]);
+        let index = SuffixArray::open(&outpath)?;
+        let header = index.header();
+        assert_eq!(header.version, OUTFILE_VERSION);
+        assert_eq!(header.int_size, 8);
+        assert!(!header.is_dna);
+        assert_eq!(header.text_len, 11);
+        assert_eq!(header.sequence_starts, [0]);
+        assert_eq!(header.sequence_names, ["1"]);
         assert_eq!(index.text(0..11)?, b"ACGTNNACGT$");
-        assert_eq!(index.header.num_suffixes, 11);
+        assert_eq!(header.num_suffixes, 11);
 
-        let file_sa = index.suffixes(0..index.header.num_suffixes)?;
-        assert_eq!(file_sa, &[10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3]);
-        let file_lcp = index.lcps(0..index.header.num_suffixes)?;
-        assert_eq!(file_lcp, &[0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1]);
+        let file_sa = index.suffixes(0..header.num_suffixes)?;
+        assert_eq!(file_sa, [10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3]);
+        let file_lcp = index.lcps(0..header.num_suffixes)?;
+        assert_eq!(file_lcp, [0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1]);
+
+        // a u32 reader refuses the file rather than misreading it
+        let narrow = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            &outpath, None, false,
+        );
+        assert!(narrow.is_err());
         Ok(())
     }
 
@@ -488,7 +494,7 @@ mod tests {
     fn test_suffix_array_header() -> Result<()> {
         let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
         let header = suffix_array.header();
-        assert_eq!(header.version, 6);
+        assert_eq!(header.version, 7);
         assert!(header.is_dna);
         assert!(!header.ignore_softmask);
         assert_eq!(header.text_len, 11);

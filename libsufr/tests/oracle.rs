@@ -91,7 +91,7 @@ fn shared(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b).take_while(|(x, y)| x == y).count()
 }
 
-fn check(case: &Case) -> Result<()> {
+fn check(case: &Case, force_64bit: bool) -> Result<()> {
     let Case {
         input,
         dna,
@@ -100,7 +100,7 @@ fn check(case: &Case) -> Result<()> {
         partitions,
     } = *case;
     let label = format!(
-        "{} dna={dna:?} delimiter={} mask={mask:?} partitions={partitions:?}",
+        "{} dna={dna:?} delimiter={} mask={mask:?} partitions={partitions:?} force_64bit={force_64bit}",
         if input.starts_with('>') {
             "inline"
         } else {
@@ -139,6 +139,7 @@ fn check(case: &Case) -> Result<()> {
     };
     let mut builder = SuffixArrayBuilder::from_sequence_file(&path, delimiter)?
         .with_alphabet(alphabet)
+        .with_force_64bit(force_64bit)
         .with_write_lcp(true);
     if let Some(mask) = mask {
         builder = builder.with_seed_mask(mask);
@@ -303,7 +304,8 @@ fn table() -> Vec<Case> {
 #[test]
 fn every_build_matches_the_reference() -> Result<()> {
     for case in table() {
-        check(&case)?;
+        check(&case, false)?;
+        check(&case, true)?;
     }
     Ok(())
 }

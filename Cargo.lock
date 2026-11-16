@@ -679,16 +679,14 @@ dependencies = [
 
 [[package]]
 name = "libsufr"
-version = "0.7.12"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
  "bincode",
- "env_logger",
  "home",
  "log",
  "needletail",
- "num_cpus",
  "pretty_assertions",
  "rayon",
  "regex",
@@ -1028,7 +1026,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "sufr"
-version = "0.7.12"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "assert_cmd",

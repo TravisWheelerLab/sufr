@@ -24,7 +24,7 @@ fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
 }
 fn check_common(sufr: &SuffixArray) {
     let header = sufr.header();
-    assert_eq!(header.version, 6);
+    assert_eq!(header.version, 7);
     assert!(header.is_dna);
     assert!(!header.ignore_softmask);
     assert_eq!(header.text_len, 11);

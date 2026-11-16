@@ -11,27 +11,25 @@ use std::{
 };
 
 /// The serialization version.
-pub const OUTFILE_VERSION: u8 = 6;
+pub const OUTFILE_VERSION: u8 = 7;
 
 // the file is laid out as below, where u64 fields are
 // little-endian, and the sequence starts, suffix array
-// and LCP array hold `int_size` (4 or 8) bytes per value
+// and LCP array hold `int_size` bytes per value
 // in native byte order
 //
 //               offset  field
 //                    0  version (u8)
 //                    1  is_dna (u8, 0/1)
-//                    2  all_suffixes (u8, 0/1, ignored on read)
-//                    3  ignore_softmask (u8, 0/1)
+//                    2  ignore_softmask (u8, 0/1)
+//                    3  int_size (u8, 4 or 8)
 //                    4  text_len (u64)
 //                   12  text_pos (u64)
 //                   20  suffix_array_pos (u64)
 //                   28  lcp_pos (u64, 0 when there is no LCP array)
 //                   36  num_suffixes (u64)
-//                   44  max_query_len (u64, always 0; an older file with
-//                       a cap here is refused)
-//                   52  num_sequences (u64)
-//                   60  sequence starts (num_sequences values)
+//                   44  num_sequences (u64)
+//                   52  sequence starts (num_sequences values)
 //                    .  seed mask length (u64)
 //                    .  seed mask (u8 per position, 0/1)
 //             text_pos  text (text_len bytes)
@@ -40,15 +38,15 @@ pub const OUTFILE_VERSION: u8 = 6;
 //                    .  sequence names (bincode Vec<String>)
 const VERSION: usize = 0;
 const IS_DNA: usize = 1;
-const IGNORE_SOFTMASK: usize = 3;
+const IGNORE_SOFTMASK: usize = 2;
+const INT_SIZE: usize = 3;
 const TEXT_LEN: usize = 4;
 const TEXT_POS: usize = 12;
 const SUFFIX_ARRAY_POS: usize = 20;
 const LCP_POS: usize = 28;
 const NUM_SUFFIXES: usize = 36;
-const MAX_QUERY_LEN: usize = 44;
-const NUM_SEQUENCES: usize = 52;
-const SEQUENCE_STARTS: usize = 60;
+const NUM_SEQUENCES: usize = 44;
+const SEQUENCE_STARTS: usize = 52;
 
 /// The header of a _.sufr_ file.
 #[derive(Debug, PartialEq)]
@@ -91,9 +89,8 @@ pub struct Header {
 }
 
 impl Header {
-    /// Read the header of `filename`, whose arrays hold `int_size`
-    /// bytes per value.
-    pub(crate) fn read(filename: &str, int_size: usize) -> Result<Header> {
+    /// Read the header of `filename`.
+    pub(crate) fn read(filename: &str) -> Result<Header> {
         let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
 
         let mut fixed = [0u8; SEQUENCE_STARTS];
@@ -101,6 +98,10 @@ impl Header {
         let version = fixed[VERSION];
         if version != OUTFILE_VERSION {
             bail!("Unknown sufr version {version}");
+        }
+        let int_size = fixed[INT_SIZE] as usize;
+        if int_size != 4 && int_size != 8 {
+            bail!("{filename}: integer size {int_size} is not 4 or 8");
         }
         let u64_at =
             |pos: usize| u64::from_le_bytes(fixed[pos..pos + 8].try_into().unwrap());
@@ -125,12 +126,6 @@ impl Header {
         file.read_exact(&mut buffer)?;
         let mut seed_mask = vec![0u8; u64::from_le_bytes(buffer) as usize];
         file.read_exact(&mut seed_mask)?;
-        // a file sorted by only the first characters of each suffix
-        // cannot be searched correctly by this version
-        let max_query_len = u64_at(MAX_QUERY_LEN) as usize;
-        if max_query_len > 0 {
-            bail!("{filename}: built with a max query length of {max_query_len}, which is no longer supported");
-        }
         let sort_type = if seed_mask.is_empty() {
             SuffixSortType::MaxQueryLen(0)
         } else {
@@ -202,27 +197,22 @@ impl Header {
     /// Write the header and the sequence names into `file`, leaving
     /// the text and arrays to the caller. Returns the file's length.
     pub(crate) fn write(&self, file: &File) -> Result<usize> {
-        let (max_query_len, seed_mask): (usize, &[u8]) = match &self.sort_type {
-            SuffixSortType::MaxQueryLen(max_query_len) => (*max_query_len, &[]),
-            SuffixSortType::Mask(seed_mask) => (0, &seed_mask.bytes),
+        let seed_mask: &[u8] = match &self.sort_type {
+            SuffixSortType::MaxQueryLen(_) => &[],
+            SuffixSortType::Mask(seed_mask) => &seed_mask.bytes,
         };
 
-        // readers ignore byte 2. it records whether suffixes
-        // starting with a byte other than A, C, G or T were
-        // indexed, which holds for all but DNA input
-        let all_suffixes = !self.is_dna;
         let mut bytes = vec![
             self.version,
             self.is_dna as u8,
-            all_suffixes as u8,
             self.ignore_softmask as u8,
+            self.int_size as u8,
         ];
         bytes.extend((self.text_len as u64).to_le_bytes());
         bytes.extend((self.text_pos as u64).to_le_bytes());
         bytes.extend((self.suffix_array_pos as u64).to_le_bytes());
         bytes.extend((self.lcp_pos.unwrap_or(0) as u64).to_le_bytes());
         bytes.extend((self.num_suffixes as u64).to_le_bytes());
-        bytes.extend((max_query_len as u64).to_le_bytes());
         bytes.extend((self.sequence_starts.len() as u64).to_le_bytes());
         for &start in &self.sequence_starts {
             match self.int_size {
@@ -240,27 +230,6 @@ impl Header {
 
         Ok(self.names_pos() + names.len())
     }
-}
-
-/// Read the length of the text in a _.sufr_ file, which decides
-/// whether its arrays hold `u32` or `u64` values.
-pub(crate) fn read_text_length(filename: &str) -> Result<usize> {
-    let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
-
-    let mut flags = [0u8; TEXT_LEN];
-    file.read_exact(&mut flags)?;
-    let version = flags[VERSION];
-    if version != OUTFILE_VERSION {
-        bail!("Unknown sufr version {version}");
-    }
-
-    let mut buffer = [0u8; 8];
-    file.read_exact(&mut buffer)?;
-    let text_len = u64::from_le_bytes(buffer);
-    if mem::size_of::<usize>() == 4 && text_len > usize::MAX as u64 {
-        bail!("text_len exceeds native usize");
-    }
-    Ok(text_len as usize)
 }
 
 /// How the suffixes in a _.sufr_ file were sorted.
@@ -383,20 +352,10 @@ impl Display for SeedMask {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_text_length, Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
+    use super::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use tempfile::NamedTempFile;
-
-    #[test]
-    fn test_read_text_length() -> Result<()> {
-        let sufr_file = "../data/inputs/2.sufr";
-        let res = read_text_length(sufr_file);
-        assert!(res.is_ok());
-        let len = res.unwrap();
-        assert_eq!(len, 18);
-        Ok(())
-    }
 
     #[test]
     fn test_header_round_trip() -> Result<()> {
@@ -426,11 +385,16 @@ mod tests {
             assert_eq!(len as u64, outfile.as_file().metadata()?.len());
 
             let path = outfile.path().to_string_lossy().to_string();
-            assert_eq!(Header::read(&path, int_size)?, header);
+            assert_eq!(Header::read(&path)?, header);
+
+            // the same file with a width that is neither 4 nor 8
+            crate::io::write_all_at(outfile.as_file(), &[2], 3)?;
+            let err = Header::read(&path).unwrap_err();
+            assert!(err.to_string().ends_with("integer size 2 is not 4 or 8"));
 
             // the same file with the next version in its first byte
             crate::io::write_all_at(outfile.as_file(), &[OUTFILE_VERSION + 1], 0)?;
-            let err = Header::read(&path, int_size).unwrap_err();
+            let err = Header::read(&path).unwrap_err();
             assert_eq!(
                 err.to_string(),
                 format!("Unknown sufr version {}", OUTFILE_VERSION + 1)

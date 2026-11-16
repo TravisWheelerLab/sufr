@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `Header` and `SuffixArray::header`, `suffixes`, `lcps` and `text`,
   which read a file's header and its arrays by range. The byte positions
   of the arrays in the header are not public.
+- Add `SuffixArrayBuilder::with_force_64bit`, which writes 64-bit
+  integers for a text that fits 32-bit ones. `SuffixArray::open` reads
+  either width.
 - Add the cargo feature `typed`, which exports `Int`, `TypedSuffixArray`
   and the storage types `Source`, `MemorySource` and `DiskSource`
 - Add the example `libsufr/examples/search.rs`
@@ -94,9 +97,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - (breaking) `sufr create -i` requires `--dna`. It no longer converts
   lowercase protein to `X`.
 - (breaking) Raise the minimum supported Rust version from 1.80 to 1.88
-- Byte 2 of the header records whether suffixes starting with a byte
-  other than A, C, G or T were indexed. It is 1 for all but DNA input.
-  A non-DNA file differs from before in that byte. Readers ignore it.
+- (breaking) Raise the _.sufr_ format version from 6 to 7. The header
+  drops byte 2, which no reader used, and the build-time max query
+  length, which this release writes as 0 in every file. Byte 3 now
+  records the integer width of the arrays, 4 or 8 bytes, which a reader
+  used to infer from the text length. This release does not open a file
+  written by 0.7.12 or earlier; rebuild it with `sufr create`.
 - `sufr locate` orders the hits by the order of the sequences in the
   input, not by their names
 - An `extract` window holds only its sequence's own bytes. It no longer
@@ -121,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read_sequence_file`, `read_text_length` and `find_lcp_full_offset` are
   private or gone.
 - (breaking) Remove the build-time max query length, `sufr create -m`.
-  Opening a file built with one is an error. The query-time `-m` of
+  The query-time `-m` of
   `count`, `locate` and `extract` stays.
 - Remove `sufr create -r,--random-seed`,
   which is not used for the prefix-based partitioning

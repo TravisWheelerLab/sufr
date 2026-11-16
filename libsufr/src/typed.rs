@@ -1,7 +1,7 @@
 //! A _.sufr_ file opened for queries
 
 use crate::{
-    format::{read_text_length, Header, SeedMask, SuffixSortType},
+    format::{Header, SeedMask, SuffixSortType},
     io::{as_bytes, as_bytes_mut, Int},
     search::{Context, Extraction, Location},
     source::{DiskSource, MemorySource, Source},
@@ -89,7 +89,14 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         max_query_len: Option<usize>,
         subsample: bool,
     ) -> Result<Self> {
-        let header = Header::read(filename, mem::size_of::<W>())?;
+        let header = Header::read(filename)?;
+        if header.int_size != mem::size_of::<W>() {
+            bail!(
+                "{filename}: holds {}-byte integers, not {}",
+                header.int_size,
+                mem::size_of::<W>()
+            );
+        }
         let path = Path::new(filename);
         let text = T::open(path, header.text_pos as u64, header.text_len)?;
         let suffixes =
@@ -438,19 +445,18 @@ impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S
 }
 
 /// Open `filename` as [`crate::SuffixArray::open_with`] asks, at the int
-/// width its text length needs.
+/// width its header records.
 pub(crate) fn open(
     filename: &str,
     options: &OpenOptions,
 ) -> Result<Box<dyn Queryable>> {
     use SourceKind::{Disk as D, Memory as M};
     let cap = options.max_query_len;
-    let text_len = read_text_length(filename)?;
-    let wide = text_len as u64 >= u32::MAX as u64;
+    let header = Header::read(filename)?;
+    let wide = header.int_size == 8;
 
     // suffixes in memory under a cap shorter than the sort means
     // the subsample in memory and the whole array on disk
-    let header = Header::read(filename, if wide { 8 } else { 4 })?;
     let subsample =
         options.suffixes == M && subsample_len(&header, cap) < header.sorted_len();
     let suffixes = if subsample { D } else { options.suffixes };

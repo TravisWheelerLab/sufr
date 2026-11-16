@@ -123,10 +123,9 @@ impl SuffixArrayBuilder {
         self
     }
 
-    // only TypedSuffixArray::<u64> can read a small text written this
-    // way, so this is for tests
-    #[cfg(test)]
-    pub(crate) fn with_force_64bit(mut self, force_64bit: bool) -> Self {
+    /// Set whether to write 64-bit integers for a text that fits 32-bit
+    /// ones (default: `false`).
+    pub fn with_force_64bit(mut self, force_64bit: bool) -> Self {
         self.force_64bit = force_64bit;
         self
     }

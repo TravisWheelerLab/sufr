@@ -129,7 +129,7 @@ $ sufr create -t 8 --log info --write-lcp data/inputs/1.fa -n 2 --dna
 [2026-11-13T19:57:44Z INFO  libsufr::build] Gathered 4 suffixes of partitions 1..2 in 102.769µs
 [2026-11-13T19:57:44Z INFO  libsufr::build] Sorted partitions 1..2 in 1.529µs
 [2026-11-13T19:57:44Z INFO  libsufr::build] Wrote suffix array to '1.sufr' in 175.287µs
-[2026-11-13T19:57:44Z INFO  sufr] Wrote 172 bytes to '1.sufr' in 782.813µs
+[2026-11-13T19:57:44Z INFO  sufr] Wrote 164 bytes to '1.sufr' in 782.813µs
 ```
 
 ### Summarize a sufr file
@@ -161,9 +161,9 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | Modified        | 2025-01-29 11:56 |
 +-----------------+------------------+
-| File Size       | 172 bytes        |
+| File Size       | 164 bytes        |
 +-----------------+------------------+
-| File Version    | 6                |
+| File Version    | 7                |
 +-----------------+------------------+
 | DNA             | true             |
 +-----------------+------------------+

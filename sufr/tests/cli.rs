@@ -875,7 +875,7 @@ fn summarize_sufr1() -> Result<()> {
         ],
         vec![
             ("Filename", SUFR1),
-            ("File Size", "172 bytes"),
+            ("File Size", "164 bytes"),
             ("File Version", &OUTFILE_VERSION.to_string()),
             ("DNA", "true"),
             ("Ignore Softmask", "false"),
@@ -910,7 +910,7 @@ fn summarize_masked() -> Result<()> {
             "Sequence names",
         ],
         vec![
-            ("File Size", "578,533 bytes"),
+            ("File Size", "578,525 bytes"),
             ("DNA", "false"),
             ("Text Length", "63,220"),
             ("Len Suffixes", "63,220"),

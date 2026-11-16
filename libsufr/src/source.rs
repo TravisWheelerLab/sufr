@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn test_open_region() -> Result<()> {
         let input_file = "../data/expected/abba.sufr";
-        let header = Header::read(input_file, 4)?;
+        let header = Header::read(input_file)?;
         let file = Path::new(input_file);
         let suffixes: DiskSource<u32> = DiskSource::open(
             file,
