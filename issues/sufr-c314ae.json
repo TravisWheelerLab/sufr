@@ -13,9 +13,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T20:31:56.855660858Z",
-  "updated_at": "2026-11-13T21:14:10.503770944Z",
+  "updated_at": "2026-11-16T18:46:54.961313631Z",
   "closed_at": "2026-11-13T21:14:10.503770944Z",
-  "close_reason": "Removed in 9c793bb on branch worktree-release-0.8.0, not yet merged to dev. The workspace builds and its tests pass without them.",
+  "close_reason": "Removed in bb556b8 on branch `worktree-release-0.8.0`, the squashed 0.8.0 commit. The workspace builds and its tests pass without them.",
   "resolution": "done",
   "notes": [],
   "stamps": {
