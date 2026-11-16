@@ -13,9 +13,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:48:42.620433833Z",
-  "updated_at": "2026-11-13T21:27:35.37506978Z",
+  "updated_at": "2026-11-16T18:46:54.991493532Z",
   "closed_at": "2026-11-13T21:27:35.37506978Z",
-  "close_reason": "Jeb chose to record the width with the 0.8.0 format change. eb6d175 on branch `worktree-release-0.8.0` (format 7) stores it as a u8 at header byte 3. `Header::read` takes it from the file, `typed::open` dispatches on it, and `TypedSuffixArray::open` refuses a file of the other width.",
+  "close_reason": "Jeb chose to record the width with the 0.8.0 format change. bb556b8 on branch `worktree-release-0.8.0` (format 7) stores it as a u8 at header byte 3. `Header::read` takes it from the file, `typed::open` dispatches on it, and `TypedSuffixArray::open` refuses a file of the other width.",
   "resolution": "done",
   "notes": [
     {
