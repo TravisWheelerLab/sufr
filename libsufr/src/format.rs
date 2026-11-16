@@ -66,8 +66,8 @@ pub struct Header {
     /// The number of suffixes in the suffix array.
     pub num_suffixes: usize,
 
-    /// How the suffixes were sorted.
-    pub sort_type: SuffixSortType,
+    /// The seed mask the suffixes were sorted by, if any.
+    pub(crate) seed_mask: Option<SeedMask>,
 
     /// The start of each sequence in the text.
     pub sequence_starts: Vec<usize>,
@@ -126,10 +126,10 @@ impl Header {
         file.read_exact(&mut buffer)?;
         let mut seed_mask = vec![0u8; u64::from_le_bytes(buffer) as usize];
         file.read_exact(&mut seed_mask)?;
-        let sort_type = if seed_mask.is_empty() {
-            SuffixSortType::MaxQueryLen(0)
+        let seed_mask = if seed_mask.is_empty() {
+            None
         } else {
-            SuffixSortType::Mask(SeedMask::from_bytes(&seed_mask)?)
+            Some(SeedMask::from_bytes(&seed_mask)?)
         };
 
         let lcp_pos = u64_at(LCP_POS) as usize;
@@ -139,7 +139,7 @@ impl Header {
             ignore_softmask: fixed[IGNORE_SOFTMASK] == 1,
             text_len: text_len as usize,
             num_suffixes: u64_at(NUM_SUFFIXES) as usize,
-            sort_type,
+            seed_mask,
             sequence_starts,
             sequence_names: vec![],
             int_size,
@@ -159,10 +159,7 @@ impl Header {
     /// Set the text, suffix array, and LCP positions from the
     /// header's contents, placing an LCP array when `write_lcp`.
     pub(crate) fn set_positions(&mut self, write_lcp: bool) {
-        let seed_mask_len = match &self.sort_type {
-            SuffixSortType::Mask(seed_mask) => seed_mask.bytes.len(),
-            SuffixSortType::MaxQueryLen(_) => 0,
-        };
+        let seed_mask_len = self.seed_mask.as_ref().map_or(0, |m| m.bytes.len());
         self.text_pos = SEQUENCE_STARTS
             + self.sequence_starts.len() * self.int_size
             + mem::size_of::<u64>()
@@ -178,14 +175,16 @@ impl Header {
         self.lcp_pos.is_some()
     }
 
+    /// The seed mask the suffixes were sorted by, or `None` when they were
+    /// sorted on whole suffixes.
+    pub fn seed_mask(&self) -> Option<&SeedMask> {
+        self.seed_mask.as_ref()
+    }
+
     /// The number of characters the suffixes were sorted by: the text
     /// length for a full sort, the weight of a seed mask.
     pub(crate) fn sorted_len(&self) -> usize {
-        match &self.sort_type {
-            SuffixSortType::MaxQueryLen(0) => self.text_len,
-            SuffixSortType::MaxQueryLen(mql) => *mql,
-            SuffixSortType::Mask(seed_mask) => seed_mask.weight,
-        }
+        self.seed_mask.as_ref().map_or(self.text_len, |m| m.weight)
     }
 
     /// The byte position of the sequence names, after the arrays.
@@ -197,10 +196,7 @@ impl Header {
     /// Write the header and the sequence names into `file`, leaving
     /// the text and arrays to the caller. Returns the file's length.
     pub(crate) fn write(&self, file: &File) -> Result<usize> {
-        let seed_mask: &[u8] = match &self.sort_type {
-            SuffixSortType::MaxQueryLen(_) => &[],
-            SuffixSortType::Mask(seed_mask) => &seed_mask.bytes,
-        };
+        let seed_mask: &[u8] = self.seed_mask.as_ref().map_or(&[], |m| &m.bytes);
 
         let mut bytes = vec![
             self.version,
@@ -230,16 +226,6 @@ impl Header {
 
         Ok(self.names_pos() + names.len())
     }
-}
-
-/// How the suffixes in a _.sufr_ file were sorted.
-#[derive(Debug, Clone, PartialEq)]
-pub enum SuffixSortType {
-    /// By their first `n` characters, or by all of them when `n` is 0.
-    MaxQueryLen(usize),
-
-    /// By the care positions of a seed mask.
-    Mask(SeedMask),
 }
 
 /// A seed mask of care (1) and don't-care (0) positions.
@@ -352,25 +338,22 @@ impl Display for SeedMask {
 
 #[cfg(test)]
 mod tests {
-    use super::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
+    use super::{Header, SeedMask, OUTFILE_VERSION};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use tempfile::NamedTempFile;
 
     #[test]
     fn test_header_round_trip() -> Result<()> {
-        let cases = [
-            (4, SuffixSortType::Mask(SeedMask::new("1101")?), true),
-            (8, SuffixSortType::MaxQueryLen(0), false),
-        ];
-        for (int_size, sort_type, write_lcp) in cases {
+        let cases = [(4, Some(SeedMask::new("1101")?), true), (8, None, false)];
+        for (int_size, seed_mask, write_lcp) in cases {
             let mut header = Header {
                 version: OUTFILE_VERSION,
                 is_dna: true,
                 ignore_softmask: true,
                 text_len: 20,
                 num_suffixes: 17,
-                sort_type,
+                seed_mask,
                 sequence_starts: vec![0, 7, 13],
                 sequence_names: vec!["a".to_string(), "b".into(), "c".into()],
                 int_size,

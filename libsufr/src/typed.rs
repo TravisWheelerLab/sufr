@@ -1,7 +1,7 @@
 //! A _.sufr_ file opened for queries
 
 use crate::{
-    format::{Header, SeedMask, SuffixSortType},
+    format::Header,
     io::{as_bytes, as_bytes_mut, Int},
     search::{Context, Extraction, Location},
     source::{DiskSource, MemorySource, Source},
@@ -56,9 +56,6 @@ pub struct TypedSuffixArray<W: Int, T: Source<u8>, S: Source<W>> {
     /// `max_query_len` is shorter than the sort.
     subsample: Option<Subsample<W>>,
 
-    /// The seed mask the suffixes were sorted by, if any.
-    pub(crate) seed_mask: Option<SeedMask>,
-
     /// The number of query characters a search compares, or 0 for all.
     pub(crate) max_query_len: usize,
 }
@@ -108,15 +105,6 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
             None => None,
         };
 
-        let (seed_mask, search_max_query_len) = match &header.sort_type {
-            SuffixSortType::Mask(seed_mask) => {
-                (Some(seed_mask.clone()), max_query_len.unwrap_or(0))
-            }
-            SuffixSortType::MaxQueryLen(built) => {
-                (None, searched_len(*built, max_query_len))
-            }
-        };
-
         let mut index = TypedSuffixArray {
             filename: filename.to_string(),
             header,
@@ -124,8 +112,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
             suffixes,
             lcps,
             subsample: None,
-            seed_mask,
-            max_query_len: search_max_query_len,
+            max_query_len: max_query_len.unwrap_or(0),
         };
         if subsample {
             let len = subsample_len(&index.header, max_query_len);
@@ -308,7 +295,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         let text = self.text.range(0..text_len)?;
         let text: &[u8] = &text;
 
-        let subsample = match &self.seed_mask {
+        let subsample = match self.header.seed_mask() {
             Some(seed_mask) => {
                 let positions =
                     &seed_mask.positions[..min(max_query_len, seed_mask.weight)];
@@ -504,16 +491,6 @@ pub(crate) fn open(
         >::open(filename, cap, subsample)?),
     };
     Ok(inner)
-}
-
-/// The number of query characters a search compares, or 0 for all, in a
-/// file sorted by its first `built` characters.
-fn searched_len(built: usize, max_query_len: Option<usize>) -> usize {
-    match max_query_len {
-        Some(0) | None => built,
-        Some(mql) if built > 0 => min(built, mql),
-        Some(mql) => mql,
-    }
 }
 
 /// Find or create the `~/.sufr` directory.

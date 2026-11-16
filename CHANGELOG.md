@@ -121,11 +121,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ListOptions`, `SearchOptions`, `SearchResult`,
   `SearchResultLocations`). Use `SuffixArray::search` and `Hits` instead.
 - (breaking) Remove `SufrFile`. Use `SuffixArray::open_with` instead.
-- (breaking) Remove the public modules. `SeedMask`, `SuffixSortType` and
-  `OUTFILE_VERSION` are at the crate root.
+- (breaking) Remove the public modules. `SeedMask` and `OUTFILE_VERSION`
+  are at the crate root.
   `SENTINEL_CHARACTER`, `Comparison`, `SequenceFileData`,
   `read_sequence_file`, `read_text_length` and `find_lcp_full_offset` are
   private or gone.
+- (breaking) Remove `SuffixSortType` and `Header::sort_type`. Use
+  `Header::seed_mask`, which is `None` for a file sorted on whole
+  suffixes. With the build-time max query length gone,
+  `MaxQueryLen(0)` was the only other value a file could hold.
 - (breaking) Remove the build-time max query length, `sufr create -m`.
   The query-time `-m` of
   `count`, `locate` and `extract` stays.

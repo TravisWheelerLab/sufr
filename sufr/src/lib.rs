@@ -4,7 +4,7 @@ use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
     Alphabet, Context, Hits, OpenOptions, SeedMask, SourceKind, SuffixArray,
-    SuffixArrayBuilder, SuffixSortType,
+    SuffixArrayBuilder,
 };
 use log::info;
 use rayon::prelude::*;
@@ -711,7 +711,7 @@ pub fn summarize(args: &SummarizeArgs) -> Result<()> {
             if header.has_lcp() { "yes" } else { "no" }.to_string(),
         ),
     ];
-    if let SuffixSortType::Mask(seed_mask) = &header.sort_type {
+    if let Some(seed_mask) = header.seed_mask() {
         rows.push(("Seed mask", seed_mask.mask.clone()));
     }
     rows.extend([

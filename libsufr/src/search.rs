@@ -230,7 +230,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         let cmp = if (max_query_len > 0) && (lcp >= max_query_len) {
             Ordering::Equal
         } else {
-            let full_offset = match &self.seed_mask {
+            let full_offset = match self.header.seed_mask() {
                 Some(seed_mask) => mask_offset(lcp, seed_mask),
                 None => lcp,
             };
@@ -257,7 +257,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     fn query_lcp(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Result<usize> {
         let text_len = self.header.text_len;
         let max_query_len = self.max_query_len;
-        Ok(match &self.seed_mask {
+        Ok(match self.header.seed_mask() {
             None => {
                 if (max_query_len > 0) && (skip >= max_query_len) {
                     skip

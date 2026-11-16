@@ -1,7 +1,5 @@
 use anyhow::Result;
-use libsufr::{
-    Alphabet, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder, SuffixSortType,
-};
+use libsufr::{Alphabet, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder};
 use tempfile::NamedTempFile;
 
 fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
@@ -31,7 +29,7 @@ fn check_common(sufr: &SuffixArray) {
     assert_eq!(header.num_suffixes, 9);
     assert_eq!(header.sequence_starts, [0]);
     assert_eq!(header.sequence_names, ["1"]);
-    assert_eq!(header.sort_type, SuffixSortType::MaxQueryLen(0));
+    assert_eq!(header.seed_mask(), None);
     assert_eq!(sufr.text(0..11).unwrap(), b"ACGTNNACGT$");
 }
 

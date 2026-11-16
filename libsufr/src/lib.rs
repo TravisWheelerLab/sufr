@@ -27,7 +27,7 @@ mod source;
 mod typed;
 
 pub use build::{Alphabet, SuffixArrayBuilder};
-pub use format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION};
+pub use format::{Header, SeedMask, OUTFILE_VERSION};
 pub use search::{Context, Extraction, Hits, Location};
 pub use typed::SourceKind;
 
@@ -176,8 +176,7 @@ mod tests {
     use super::{
         source::{DiskSource, MemorySource},
         typed::TypedSuffixArray,
-        Alphabet, Hits, SeedMask, SuffixArray, SuffixArrayBuilder, SuffixSortType,
-        OUTFILE_VERSION,
+        Alphabet, Hits, SeedMask, SuffixArray, SuffixArrayBuilder, OUTFILE_VERSION,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -501,7 +500,7 @@ mod tests {
         assert_eq!(header.num_suffixes, 9);
         assert_eq!(header.sequence_starts, vec![0]);
         assert_eq!(header.sequence_names, vec!["1".to_string()]);
-        assert_eq!(header.sort_type, SuffixSortType::MaxQueryLen(0));
+        assert_eq!(header.seed_mask(), None);
         assert!(header.has_lcp());
         Ok(())
     }

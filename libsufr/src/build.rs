@@ -1,5 +1,5 @@
 use crate::{
-    format::{Header, SeedMask, SuffixSortType, OUTFILE_VERSION},
+    format::{Header, SeedMask, OUTFILE_VERSION},
     io::{as_bytes, write_all_at, Int},
     lcp::{masked_lcp, suffix_lcp, LcpCache},
 };
@@ -250,10 +250,7 @@ impl SuffixArrayBuilder {
             ignore_softmask,
             text_len: text.len(),
             num_suffixes,
-            sort_type: match &self.seed_mask {
-                Some(seed_mask) => SuffixSortType::Mask(seed_mask.clone()),
-                None => SuffixSortType::MaxQueryLen(0),
-            },
+            seed_mask: self.seed_mask.clone(),
             sequence_starts: self.sequences.iter().map(|(start, _)| *start).collect(),
             sequence_names: self
                 .sequences
