@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T12:01:51.522341991Z",
-  "updated_at": "2026-11-13T06:42:46.107222263Z",
+  "updated_at": "2026-11-17T17:09:15.341011785Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "730209ec",
+      "at": "2026-11-17T17:09:15.341010314Z",
+      "author": "Jeb Rosen/74a7e9a5",
+      "text": "Likely settled by sufr-6d7056, which proposes declared key symbols with one shared rank for every other byte: the second option above. Decide sufr-6d7056 first unless this needs a fix sooner. This is a soft dependency, so no `foam dep` was added.",
+      "commit": "52144cf",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "cabe70c",
