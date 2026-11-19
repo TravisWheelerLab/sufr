@@ -13,9 +13,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T17:17:22.216067806Z",
-  "updated_at": "2026-11-19T17:42:07.41450971Z",
+  "updated_at": "2026-11-19T17:43:53.68553544Z",
   "closed_at": "2026-11-19T17:19:56.258902073Z",
-  "close_reason": "Landed in 087418c on branch `worktree-seed-mask-fromstr`, off dev at 5b90b69. `SeedMask::new` is replaced by `impl FromStr for SeedMask`, and the CHANGELOG records the break. The same commit lets clap parse the CLI flag (sufr-620f73).",
+  "close_reason": "Landed in 4595984 on branch `worktree-seed-mask-fromstr`, which replaces 5b90b69 on dev. `SeedMask::new` is replaced by `impl FromStr for SeedMask`, and the CHANGELOG records the break. The same commit lets clap parse the CLI flag (sufr-620f73).",
   "resolution": "done",
   "notes": [],
   "stamps": {
