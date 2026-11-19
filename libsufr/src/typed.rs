@@ -576,7 +576,7 @@ mod tests {
     use super::TypedSuffixArray;
     use crate::{
         source::{DiskSource, MemorySource, Source},
-        Alphabet, SuffixArrayBuilder,
+        SuffixArrayBuilder,
     };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -687,9 +687,7 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
         let mut builder =
             SuffixArrayBuilder::from_data(text.to_vec(), vec![(0, "s".to_string())])
-                .with_alphabet(Alphabet::Dna {
-                    ignore_softmask: false,
-                })
+                .with_starts(b"ACGT")
                 .with_num_partitions(3)
                 .with_write_lcp(write_lcp);
         if let Some(mask) = seed_mask {

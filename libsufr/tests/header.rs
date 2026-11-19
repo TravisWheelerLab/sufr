@@ -1,14 +1,12 @@
 use anyhow::Result;
-use libsufr::{Alphabet, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder};
+use libsufr::{OpenOptions, SoftMask, SourceKind, SuffixArray, SuffixArrayBuilder};
 use tempfile::NamedTempFile;
 
 fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
     let outfile = NamedTempFile::new()?;
     let outpath = outfile.path().to_string_lossy().to_string();
     SuffixArrayBuilder::from_sequence_file("../data/inputs/1.fa", b'%')?
-        .with_alphabet(Alphabet::Dna {
-            ignore_softmask: false,
-        })
+        .with_starts(b"ACGT")
         .with_write_lcp(write_lcp)
         .build_to_file(&outpath)?;
     Ok(SuffixArray::open_with(
@@ -23,8 +21,8 @@ fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
 fn check_common(sufr: &SuffixArray) {
     let header = sufr.header();
     assert_eq!(header.version, 7);
-    assert!(header.is_dna);
-    assert!(!header.ignore_softmask);
+    assert_eq!(header.starts.as_deref(), Some(b"ACGT".as_slice()));
+    assert_eq!(header.soft_mask, SoftMask::Fold);
     assert_eq!(header.text_len, 11);
     assert_eq!(header.num_suffixes, 9);
     assert_eq!(header.sequence_starts, [0]);

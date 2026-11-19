@@ -23,8 +23,8 @@ pub(crate) const OUTFILE_VERSION: u8 = 7;
 //
 //               offset  field
 //                    0  version (u8)
-//                    1  is_dna (u8, 0/1)
-//                    2  ignore_softmask (u8, 0/1)
+//                    1  soft mask (u8, 0 fold, 1 preserve, 2 replace)
+//                    2  soft mask replacement (u8, 0 unless replace)
 //                    3  int_size (u8, 4 or 8)
 //                    4  text_len (u64)
 //                   12  text_pos (u64)
@@ -35,13 +35,15 @@ pub(crate) const OUTFILE_VERSION: u8 = 7;
 //                   52  sequence starts (num_sequences values)
 //                    .  seed mask length (u64)
 //                    .  seed mask (u8 per position, 0/1)
+//                    .  starts (32 bytes, bit b % 8 of byte b / 8 set
+//                       when suffixes starting with byte b are indexed)
 //             text_pos  text (text_len bytes)
 //     suffix_array_pos  suffix array (num_suffixes values)
 //              lcp_pos  LCP array (num_suffixes values), optional
 //                    .  sequence names (bincode Vec<String>)
 const VERSION: usize = 0;
-const IS_DNA: usize = 1;
-const IGNORE_SOFTMASK: usize = 2;
+const SOFT_MASK: usize = 1;
+const SOFT_MASK_BYTE: usize = 2;
 const INT_SIZE: usize = 3;
 const TEXT_LEN: usize = 4;
 const TEXT_POS: usize = 12;
@@ -50,6 +52,22 @@ const LCP_POS: usize = 28;
 const NUM_SUFFIXES: usize = 36;
 const NUM_SEQUENCES: usize = 44;
 const SEQUENCE_STARTS: usize = 52;
+const STARTS_LEN: usize = 32;
+
+/// How the build writes lowercase (soft-masked) bytes into the text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SoftMask {
+    /// Upper-case them.
+    #[default]
+    Fold,
+
+    /// Keep them as they are.
+    Preserve,
+
+    /// Write this byte over each of them.
+    Replace(u8),
+}
 
 /// The header of a _.sufr_ file.
 #[derive(Debug, PartialEq)]
@@ -57,11 +75,12 @@ pub struct Header {
     /// The serialization version.
     pub version: u8,
 
-    /// Whether the text holds nucleotides.
-    pub is_dna: bool,
+    /// How lowercase bytes were written into the text.
+    pub soft_mask: SoftMask,
 
-    /// Whether softmasked (lowercase) nucleotides were ignored.
-    pub ignore_softmask: bool,
+    /// The first bytes of the indexed suffixes besides the sentinel, or
+    /// `None` when every suffix is indexed.
+    pub starts: Option<Vec<u8>>,
 
     /// The length of the text.
     pub text_len: usize,
@@ -149,11 +168,25 @@ impl Header {
             })?)
         };
 
+        let mut bitmap = [0u8; STARTS_LEN];
+        file.read_exact(&mut bitmap).map_err(read_error)?;
+        let starts: Vec<u8> = (0..=255u8)
+            .filter(|&b| bitmap[b as usize / 8] & (1 << (b % 8)) != 0)
+            .collect();
+        let starts = (starts.len() < 256).then_some(starts);
+
+        let soft_mask = match fixed[SOFT_MASK] {
+            0 => SoftMask::Fold,
+            1 => SoftMask::Preserve,
+            2 => SoftMask::Replace(fixed[SOFT_MASK_BYTE]),
+            other => return Err(invalid(format!("unknown soft mask {other}"))),
+        };
+
         let lcp_pos = u64_at(LCP_POS) as usize;
         let mut header = Header {
             version: fixed[VERSION],
-            is_dna: fixed[IS_DNA] == 1,
-            ignore_softmask: fixed[IGNORE_SOFTMASK] == 1,
+            soft_mask,
+            starts,
             text_len: text_len as usize,
             num_suffixes: u64_at(NUM_SUFFIXES) as usize,
             seed_mask,
@@ -182,7 +215,8 @@ impl Header {
         self.text_pos = SEQUENCE_STARTS
             + self.sequence_starts.len() * self.int_size
             + mem::size_of::<u64>()
-            + seed_mask_len;
+            + seed_mask_len
+            + STARTS_LEN;
         self.suffix_array_pos = self.text_pos + self.text_len;
         let suffix_array_end =
             self.suffix_array_pos + self.num_suffixes * self.int_size;
@@ -219,12 +253,13 @@ impl Header {
     pub(crate) fn write(&self, file: &File) -> io::Result<usize> {
         let seed_mask = self.seed_mask.as_ref().map_or(vec![], |m| m.to_bytes());
 
-        let mut bytes = vec![
-            self.version,
-            self.is_dna as u8,
-            self.ignore_softmask as u8,
-            self.int_size as u8,
-        ];
+        let (soft_mask, soft_mask_byte) = match self.soft_mask {
+            SoftMask::Fold => (0, 0),
+            SoftMask::Preserve => (1, 0),
+            SoftMask::Replace(b) => (2, b),
+        };
+        let mut bytes =
+            vec![self.version, soft_mask, soft_mask_byte, self.int_size as u8];
         bytes.extend((self.text_len as u64).to_le_bytes());
         bytes.extend((self.text_pos as u64).to_le_bytes());
         bytes.extend((self.suffix_array_pos as u64).to_le_bytes());
@@ -239,6 +274,17 @@ impl Header {
         }
         bytes.extend((seed_mask.len() as u64).to_le_bytes());
         bytes.extend_from_slice(&seed_mask);
+        let mut bitmap = [0u8; STARTS_LEN];
+        for b in 0..=255u8 {
+            if self
+                .starts
+                .as_ref()
+                .is_none_or(|starts| starts.contains(&b))
+            {
+                bitmap[b as usize / 8] |= 1 << (b % 8);
+            }
+        }
+        bytes.extend(bitmap);
         debug_assert_eq!(bytes.len(), self.text_pos);
         write_all_at(file, &bytes, 0)?;
 
@@ -320,6 +366,16 @@ impl FromStr for SeedMask {
     }
 }
 
+impl Display for SoftMask {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SoftMask::Fold => write!(f, "fold"),
+            SoftMask::Preserve => write!(f, "preserve"),
+            SoftMask::Replace(b) => write!(f, "replace with {}", *b as char),
+        }
+    }
+}
+
 impl Display for SeedMask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for b in self.to_bytes() {
@@ -331,7 +387,7 @@ impl Display for SeedMask {
 
 #[cfg(test)]
 mod tests {
-    use super::{Header, SeedMask, OUTFILE_VERSION};
+    use super::{Header, SeedMask, SoftMask, OUTFILE_VERSION};
     use crate::error::OpenError;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -339,12 +395,22 @@ mod tests {
 
     #[test]
     fn test_header_round_trip() -> Result<()> {
-        let cases = [(4, Some("1101".parse()?), true), (8, None, false)];
-        for (int_size, seed_mask, write_lcp) in cases {
+        let cases = [
+            (
+                4,
+                Some("1101".parse()?),
+                true,
+                SoftMask::Replace(b'N'),
+                None,
+            ),
+            (8, None, false, SoftMask::Preserve, Some(b"$ACGT".to_vec())),
+            (4, None, false, SoftMask::Fold, Some(vec![])),
+        ];
+        for (int_size, seed_mask, write_lcp, soft_mask, starts) in cases {
             let mut header = Header {
                 version: OUTFILE_VERSION,
-                is_dna: true,
-                ignore_softmask: true,
+                soft_mask,
+                starts,
                 text_len: 20,
                 num_suffixes: 17,
                 seed_mask,

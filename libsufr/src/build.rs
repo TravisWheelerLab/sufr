@@ -1,6 +1,6 @@
 use crate::{
     error::BuildError,
-    format::{Header, SeedMask, OUTFILE_VERSION},
+    format::{Header, SeedMask, SoftMask, OUTFILE_VERSION},
     io::{as_bytes, write_all_at, Int},
     lcp::{masked_lcp, suffix_lcp, LcpCache},
 };
@@ -23,24 +23,6 @@ use thread_local::ThreadLocal;
 /// the text.
 const SENTINEL_CHARACTER: u8 = b'$';
 
-/// The kind of text a suffix array is built over.
-#[non_exhaustive]
-pub enum Alphabet {
-    /// Nucleotides, of which only suffixes starting with `A`, `C`, `G`
-    /// or `T` are indexed.
-    Dna {
-        /// Whether to replace lowercase bytes with `N` rather than
-        /// upper-case them.
-        ignore_softmask: bool,
-    },
-
-    /// Amino acids.
-    Amino,
-
-    /// Any bytes.
-    Bytes,
-}
-
 /// Configuration and construction of a _.sufr_ file.
 ///
 /// Start from a sequence file with [`SuffixArrayBuilder::from_sequence_file`] or
@@ -49,7 +31,11 @@ pub enum Alphabet {
 pub struct SuffixArrayBuilder {
     text: Vec<u8>,
     sequences: Vec<(usize, String)>,
-    alphabet: Alphabet,
+    soft_mask: SoftMask,
+
+    /// The first bytes of the indexed suffixes besides the sentinel, in
+    /// order, or `None` for every suffix.
+    starts: Option<Vec<u8>>,
 
     /// The seed mask the suffixes are sorted by, if any.
     seed_mask: Option<SeedMask>,
@@ -69,8 +55,8 @@ impl SuffixArrayBuilder {
     ///
     /// The delimiter must not occur in any sequence or sort below the
     /// sentinel `$`. It counts as one more distinct byte, which can
-    /// shorten the sort key. Under [`Alphabet::Dna`], no suffix starting
-    /// with it is indexed.
+    /// shorten the sort key. With [`Self::with_starts`], no suffix
+    /// starting with it is indexed unless the given bytes include it.
     pub fn from_sequence_file(
         path: impl AsRef<Path>,
         sequence_delimiter: u8,
@@ -100,7 +86,8 @@ impl SuffixArrayBuilder {
         Self {
             text,
             sequences,
-            alphabet: Alphabet::Bytes,
+            soft_mask: SoftMask::Fold,
+            starts: None,
             seed_mask: None,
             num_partitions: 1024,
             memory_budget: None,
@@ -109,9 +96,21 @@ impl SuffixArrayBuilder {
         }
     }
 
-    /// Set the alphabet of the text (default: `Alphabet::Bytes`).
-    pub fn with_alphabet(mut self, alphabet: Alphabet) -> Self {
-        self.alphabet = alphabet;
+    /// Set how lowercase bytes are written into the text
+    /// (default: `SoftMask::Fold`).
+    pub fn with_soft_mask(mut self, soft_mask: SoftMask) -> Self {
+        self.soft_mask = soft_mask;
+        self
+    }
+
+    /// Index only the suffix at the sentinel and those starting with one
+    /// of `bytes` once the soft mask has rewritten the text
+    /// (default: every suffix). `b"ACGT"` suits DNA.
+    pub fn with_starts(mut self, bytes: &[u8]) -> Self {
+        let mut starts = bytes.to_vec();
+        starts.sort_unstable();
+        starts.dedup();
+        self.starts = Some(starts);
         self
     }
 
@@ -167,9 +166,9 @@ impl SuffixArrayBuilder {
     /// write it to `path`.
     fn construct<W: Int>(mut self, path: &Path) -> Result<(), BuildError> {
         let mut text = mem::take(&mut self.text);
-        let occupancy = normalize(&mut text, &self.alphabet);
+        let occupancy = normalize(&mut text, self.soft_mask);
         let text = text.as_slice();
-        let keep = keep_table(&self.alphabet);
+        let keep = keep_table(self.starts.as_deref());
         let packing = Packing::from_occupancy(occupancy);
         match &self.seed_mask {
             None => self.build::<W, _>(text, &keep, &UnmaskedKeys { packing }, path),
@@ -251,14 +250,10 @@ impl SuffixArrayBuilder {
         // ---
         // the header, the file and the text
 
-        let (is_dna, ignore_softmask) = match self.alphabet {
-            Alphabet::Dna { ignore_softmask } => (true, ignore_softmask),
-            Alphabet::Amino | Alphabet::Bytes => (false, false),
-        };
         let mut header = Header {
             version: OUTFILE_VERSION,
-            is_dna,
-            ignore_softmask,
+            soft_mask: self.soft_mask,
+            starts: self.starts.clone(),
             text_len: text.len(),
             num_suffixes,
             seed_mask: self.seed_mask.clone(),
@@ -433,24 +428,18 @@ impl SuffixArrayBuilder {
     }
 }
 
-/// Upper-case soft-masked characters, or replace them with `N` when the
-/// alphabet is `Dna` with `ignore_softmask`, and return which bytes occur.
-fn normalize(text: &mut [u8], alphabet: &Alphabet) -> [bool; 256] {
+/// Rewrite the lowercase bytes of `text` as `soft_mask` says, and return
+/// which bytes occur.
+fn normalize(text: &mut [u8], soft_mask: SoftMask) -> [bool; 256] {
     let now = Instant::now();
-    let ignore_softmask = matches!(
-        alphabet,
-        Alphabet::Dna {
-            ignore_softmask: true,
-            ..
-        }
-    );
     let mut table = [0u8; 256];
     for (b, to) in table.iter_mut().enumerate() {
         let b = b as u8;
-        *to = match (b.is_ascii_lowercase(), ignore_softmask) {
-            (false, _) => b,
-            (true, false) => b.to_ascii_uppercase(),
-            (true, true) => b'N',
+        *to = match soft_mask {
+            _ if !b.is_ascii_lowercase() => b,
+            SoftMask::Fold => b.to_ascii_uppercase(),
+            SoftMask::Preserve => b,
+            SoftMask::Replace(with) => with,
         };
     }
     let occupancy = text
@@ -476,20 +465,18 @@ fn normalize(text: &mut [u8], alphabet: &Alphabet) -> [bool; 256] {
     occupancy
 }
 
-/// The first bytes of the suffixes that are indexed: `ACGT` and the
-/// sentinel for `Dna`, else every byte.
-fn keep_table(alphabet: &Alphabet) -> [bool; 256] {
-    match alphabet {
-        Alphabet::Dna { .. } => {
-            let mut keep = [false; 256];
-            for &c in b"ACGT" {
-                keep[c as usize] = true;
-            }
-            keep[SENTINEL_CHARACTER as usize] = true;
-            keep
-        }
-        Alphabet::Amino | Alphabet::Bytes => [true; 256],
+/// The first bytes of the suffixes that are indexed: `starts` and the
+/// sentinel, or every byte when `starts` is `None`.
+fn keep_table(starts: Option<&[u8]>) -> [bool; 256] {
+    let Some(starts) = starts else {
+        return [true; 256];
+    };
+    let mut keep = [false; 256];
+    for &c in starts {
+        keep[c as usize] = true;
     }
+    keep[SENTINEL_CHARACTER as usize] = true;
+    keep
 }
 
 /// The text and sequences read from a FASTA/FASTQ file.
@@ -1338,10 +1325,14 @@ fn find_lcp(
 #[cfg(test)]
 mod test {
     use super::{
-        counting_sort, cut_partitions, find_lcp, keep_table, read_sequence_file, turns,
-        Alphabet, KeyScheme, MaskedKeys, Packing, SuffixArrayBuilder,
+        counting_sort, cut_partitions, find_lcp, keep_table, normalize,
+        read_sequence_file, turns, KeyScheme, MaskedKeys, Packing, SuffixArrayBuilder,
     };
-    use crate::{error::BuildError, format::SeedMask, SuffixArray};
+    use crate::{
+        error::BuildError,
+        format::{SeedMask, SoftMask},
+        SuffixArray,
+    };
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::path::Path;
@@ -1362,28 +1353,37 @@ mod test {
 
     #[test]
     fn test_keep_table() {
-        let kept = |alphabet| -> Vec<u8> {
-            let keep = keep_table(&alphabet);
+        let kept = |starts| -> Vec<u8> {
+            let keep = keep_table(starts);
             (0..=255u8).filter(|&c| keep[c as usize]).collect()
         };
         let every_byte: Vec<u8> = (0..=255).collect();
-        assert_eq!(
-            kept(Alphabet::Dna {
-                ignore_softmask: false,
-            }),
-            b"$ACGT"
-        );
-        assert_eq!(kept(Alphabet::Amino), every_byte);
-        assert_eq!(kept(Alphabet::Bytes), every_byte);
+        assert_eq!(kept(Some(b"ACGT")), b"$ACGT");
+        assert_eq!(kept(Some(b"")), b"$");
+        assert_eq!(kept(None), every_byte);
+    }
+
+    #[test]
+    fn test_normalize() {
+        let cases: [(SoftMask, &[u8]); 4] = [
+            (SoftMask::Fold, b"ACGT%N$"),
+            (SoftMask::Preserve, b"ACgt%n$"),
+            (SoftMask::Replace(b'N'), b"ACNN%N$"),
+            (SoftMask::Replace(b'X'), b"ACXX%X$"),
+        ];
+        for (soft_mask, expected) in cases {
+            let mut text = b"ACgt%n$".to_vec();
+            normalize(&mut text, soft_mask);
+            assert_eq!(text, expected, "{soft_mask:?}");
+        }
     }
 
     #[test]
     fn test_write() -> Result<()> {
         let outfile = NamedTempFile::new()?;
         SuffixArrayBuilder::from_sequence_file("../data/inputs/3.fa", b'%')?
-            .with_alphabet(Alphabet::Dna {
-                ignore_softmask: true,
-            })
+            .with_soft_mask(SoftMask::Replace(b'N'))
+            .with_starts(b"ACGT")
             .build_to_file(outfile.path())?;
         let suffix_array = SuffixArray::open(outfile.path())?;
         let header = suffix_array.header();

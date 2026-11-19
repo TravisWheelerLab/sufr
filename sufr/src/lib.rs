@@ -3,7 +3,7 @@ use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    Alphabet, Context, Hits, OpenOptions, SeedMask, SourceKind, SuffixArray,
+    Context, Hits, OpenOptions, SeedMask, SoftMask, SourceKind, SuffixArray,
     SuffixArrayBuilder,
 };
 use log::info;
@@ -100,13 +100,21 @@ pub struct CreateArgs {
     #[arg(short, long, value_name = "OUTPUT")]
     pub output: Option<String>,
 
-    /// Input is DNA
-    #[arg(short('d'), long("dna"))]
+    /// Input is DNA: same as --starts ACGT
+    #[arg(short('d'), long("dna"), conflicts_with = "starts")]
     pub is_dna: bool,
 
-    /// Ignore suffixes in soft-mask/lowercase regions
-    #[arg(short, long, requires = "is_dna")]
+    /// Index only suffixes starting with one of these characters
+    #[arg(long, value_name = "CHARS")]
+    pub starts: Option<String>,
+
+    /// Ignore suffixes in soft-mask/lowercase regions: same as --soft-mask N
+    #[arg(short, long, requires = "is_dna", conflicts_with = "soft_mask")]
     pub ignore_softmask: bool,
+
+    /// Lowercase characters: fold (to uppercase), preserve, or one character to write over each [default: fold]
+    #[arg(long, value_name = "MODE", value_parser = parse_soft_mask)]
+    pub soft_mask: Option<SoftMask>,
 
     /// Character to separate sequences, not in any sequence and not below $
     #[arg(short('D'), long, default_value = "%", value_name = "DELIM")]
@@ -396,19 +404,22 @@ pub fn create(args: &CreateArgs) -> Result<()> {
             .to_string_lossy()
     ));
 
-    let alphabet = if args.is_dna {
-        Alphabet::Dna {
-            ignore_softmask: args.ignore_softmask,
-        }
-    } else {
-        Alphabet::Bytes
+    let soft_mask = match args.soft_mask {
+        Some(soft_mask) => soft_mask,
+        None if args.ignore_softmask => SoftMask::Replace(b'N'),
+        None => SoftMask::Fold,
     };
     let mut builder = SuffixArrayBuilder::from_sequence_file(
         &args.input,
         args.sequence_delimiter as u8,
     )?
-    .with_alphabet(alphabet)
+    .with_soft_mask(soft_mask)
     .with_num_partitions(args.num_partitions);
+    if args.is_dna {
+        builder = builder.with_starts(b"ACGT");
+    } else if let Some(starts) = &args.starts {
+        builder = builder.with_starts(starts.as_bytes());
+    }
     if let Some(mib) = args.memory_budget {
         builder = builder.with_memory_budget(mib << 20);
     }
@@ -637,6 +648,18 @@ fn write_locations(
 }
 
 /// The ranks named by each of `ranks`, in order.
+fn parse_soft_mask(mode: &str) -> Result<SoftMask> {
+    match mode {
+        "fold" => Ok(SoftMask::Fold),
+        "preserve" => Ok(SoftMask::Preserve),
+        _ => match mode.as_bytes() {
+            &[b] if b.is_ascii() => Ok(SoftMask::Replace(b)),
+            _ => bail!("expected fold, preserve, or one ASCII character"),
+        },
+    }
+}
+
+// --------------------------------------------------
 fn parse_ranks(ranks: &[String]) -> Result<Vec<usize>> {
     let mut parsed = vec![];
     for val in ranks {
@@ -702,8 +725,14 @@ pub fn summarize(args: &SummarizeArgs) -> Result<()> {
             format!("{} bytes", number(file.len() as usize)),
         ),
         ("File Version", header.version.to_string()),
-        ("DNA", header.is_dna.to_string()),
-        ("Ignore Softmask", header.ignore_softmask.to_string()),
+        ("Soft Mask", header.soft_mask.to_string()),
+        (
+            "Starts",
+            match &header.starts {
+                Some(starts) => String::from_utf8_lossy(starts).into_owned(),
+                None => "all".to_string(),
+            },
+        ),
         ("Text Length", number(header.text_len)),
         ("Len Suffixes", number(header.num_suffixes)),
         (

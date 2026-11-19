@@ -863,8 +863,8 @@ fn summarize_sufr1() -> Result<()> {
             "Modified",
             "File Size",
             "File Version",
-            "DNA",
-            "Ignore Softmask",
+            "Soft Mask",
+            "Starts",
             "Text Length",
             "Len Suffixes",
             "LCP array",
@@ -874,10 +874,10 @@ fn summarize_sufr1() -> Result<()> {
         ],
         vec![
             ("Filename", SUFR1),
-            ("File Size", "164 bytes"),
+            ("File Size", "196 bytes"),
             ("File Version", "7"),
-            ("DNA", "true"),
-            ("Ignore Softmask", "false"),
+            ("Soft Mask", "fold"),
+            ("Starts", "ACGT"),
             ("Text Length", "11"),
             ("Len Suffixes", "9"),
             ("LCP array", "yes"),
@@ -898,8 +898,8 @@ fn summarize_masked() -> Result<()> {
             "Modified",
             "File Size",
             "File Version",
-            "DNA",
-            "Ignore Softmask",
+            "Soft Mask",
+            "Starts",
             "Text Length",
             "Len Suffixes",
             "LCP array",
@@ -909,8 +909,8 @@ fn summarize_masked() -> Result<()> {
             "Sequence names",
         ],
         vec![
-            ("File Size", "578,525 bytes"),
-            ("DNA", "false"),
+            ("File Size", "578,557 bytes"),
+            ("Starts", "all"),
             ("Text Length", "63,220"),
             ("Len Suffixes", "63,220"),
             ("LCP array", "yes"),
@@ -936,8 +936,8 @@ fn summarize_without_lcp() -> Result<()> {
             "Modified",
             "File Size",
             "File Version",
-            "DNA",
-            "Ignore Softmask",
+            "Soft Mask",
+            "Starts",
             "Text Length",
             "Len Suffixes",
             "LCP array",
@@ -947,6 +947,56 @@ fn summarize_without_lcp() -> Result<()> {
         ],
         vec![("Len Suffixes", "9"), ("LCP array", "no")],
     )
+}
+
+// --------------------------------------------------
+#[test]
+fn create_soft_mask_and_starts() -> Result<()> {
+    let outfile = NamedTempFile::new()?;
+    let outpath = outfile.path().to_string_lossy().to_string();
+    Command::cargo_bin(PRG)?
+        .args(["create", "--soft-mask", "preserve", "--starts", "ACGT"])
+        .args(["-o", &outpath, SEQ2])
+        .assert()
+        .success();
+
+    // the text is ACGTacgt%acgtACGT$: eight uppercase starts and the
+    // sentinel
+    summarize(
+        &outpath,
+        &[
+            "Filename",
+            "Modified",
+            "File Size",
+            "File Version",
+            "Soft Mask",
+            "Starts",
+            "Text Length",
+            "Len Suffixes",
+            "LCP array",
+            "Num sequences",
+            "Sequence starts",
+            "Sequence names",
+        ],
+        vec![
+            ("Soft Mask", "preserve"),
+            ("Starts", "ACGT"),
+            ("Len Suffixes", "9"),
+        ],
+    )?;
+
+    for args in [
+        ["--dna", "--starts", "ACGT"],
+        ["--ignore-softmask", "--soft-mask", "N"],
+        ["--soft-mask", "NN", "--dna"],
+    ] {
+        Command::cargo_bin(PRG)?
+            .args(["create", "-o", &outpath, SEQ2])
+            .args(args)
+            .assert()
+            .failure();
+    }
+    Ok(())
 }
 
 // --------------------------------------------------

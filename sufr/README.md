@@ -73,9 +73,11 @@ Options:
   -n, --num-partitions <NUM_PARTS>  Subproblem count [default: 1024]
       --memory-budget <MIB>         The extra memory budget (in MiB) during sorting; default: size of the input text
   -o, --output <OUTPUT>             Output file
-  -d, --dna                         Input is DNA
-  -i, --ignore-softmask             Ignore suffixes in soft-mask/lowercase regions
-  -D, --sequence-delimiter <DELIM>  Character to separate sequences [default: %]
+  -d, --dna                         Input is DNA: same as --starts ACGT
+      --starts <CHARS>              Index only suffixes starting with one of these characters
+  -i, --ignore-softmask             Ignore suffixes in soft-mask/lowercase regions: same as --soft-mask N
+      --soft-mask <MODE>            Lowercase characters: fold (to uppercase), preserve, or one character to write over each [default: fold]
+  -D, --sequence-delimiter <DELIM>  Character to separate sequences, not in any sequence and not below $ [default: %]
   -s, --seed-mask <MASK>            Spaced seeds mask
       --write-lcp                   Also write the LCP array
   -t, --threads <THREADS>           Number of threads
@@ -102,9 +104,11 @@ acgtacgt
 ```
 
 To briefly describe our algorithm, we read the input sequences into a vector of `u8` bytes and convert lowercase letters to uppercase.
+With `--soft-mask preserve` we keep lowercase letters as they are, and with `--soft-mask N` we write _N_ over each of them.
 We separate multiple sequences with a delimiter (`%` by default) and append the sentinel `$` to the end of the text.
-With the `--dna` flag, we skip suffixes that begin with any character other than _A_, _C_, _G_, or _T_.
-With `-i|--ignore-softmask`, which requires `--dna`, we convert lowercase letters to _N_ instead, so we also skip suffixes that start in soft-masked regions.
+With `--starts ACGT`, we skip suffixes that begin with any character other than _A_, _C_, _G_, _T_ or the sentinel.
+`--dna` is short for `--starts ACGT`.
+`-i|--ignore-softmask` is short for `--soft-mask N` and requires `--dna`, so we also skip suffixes that start in soft-masked regions.
 
 Next, we pack the first characters of each suffix into a 64-bit key, using as few bits per character as the bytes in the text allow; a key typically holds 21 characters of DNA.
 With `--seed-mask`, the key holds only the mask's care positions.
@@ -129,7 +133,7 @@ $ sufr create -t 8 --log info --write-lcp data/inputs/1.fa -n 2 --dna
 [2026-11-13T19:57:44Z INFO  libsufr::build] Gathered 4 suffixes of partitions 1..2 in 102.769µs
 [2026-11-13T19:57:44Z INFO  libsufr::build] Sorted partitions 1..2 in 1.529µs
 [2026-11-13T19:57:44Z INFO  libsufr::build] Wrote suffix array to '1.sufr' in 175.287µs
-[2026-11-13T19:57:44Z INFO  sufr] Wrote 172 bytes to '1.sufr' in 782.813µs
+[2026-11-13T19:57:44Z INFO  sufr] Wrote 196 bytes to '1.sufr' in 782.813µs
 ```
 
 ### Summarize a sufr file
@@ -161,13 +165,13 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | Modified        | 2025-01-29 11:56 |
 +-----------------+------------------+
-| File Size       | 172 bytes        |
+| File Size       | 196 bytes        |
 +-----------------+------------------+
-| File Version    | 6                |
+| File Version    | 7                |
 +-----------------+------------------+
-| DNA             | true             |
+| Soft Mask       | fold             |
 +-----------------+------------------+
-| Ignore Softmask | false            |
+| Starts          | ACGT             |
 +-----------------+------------------+
 | Text Length     | 11               |
 +-----------------+------------------+

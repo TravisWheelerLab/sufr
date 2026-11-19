@@ -27,9 +27,9 @@ mod search;
 mod source;
 mod typed;
 
-pub use build::{Alphabet, SuffixArrayBuilder};
+pub use build::SuffixArrayBuilder;
 pub use error::{BuildError, InvalidSeedMask, OpenError, QueryError};
-pub use format::{Header, SeedMask};
+pub use format::{Header, SeedMask, SoftMask};
 pub use search::{Context, Extraction, Hits, Location};
 pub use typed::SourceKind;
 
@@ -196,7 +196,7 @@ mod tests {
         format::OUTFILE_VERSION,
         source::{DiskSource, MemorySource},
         typed::TypedSuffixArray,
-        Alphabet, Hits, SuffixArray, SuffixArrayBuilder,
+        Hits, SoftMask, SuffixArray, SuffixArrayBuilder,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -209,9 +209,7 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_alphabet(Alphabet::Dna {
-                ignore_softmask: false,
-            })
+            .with_starts(b"ACGT")
             .with_num_partitions(2)
             .with_write_lcp(true)
             .build_to_file(&outpath)?;
@@ -221,7 +219,7 @@ mod tests {
             &outpath, None, false,
         )?;
         assert_eq!(index.header.version, OUTFILE_VERSION);
-        assert!(index.header.is_dna);
+        assert_eq!(index.header.starts.as_deref(), Some(b"ACGT".as_slice()));
         assert_eq!(index.header.text_len, 18);
         assert_eq!(index.header.sequence_starts, [0, 9]);
         assert_eq!(index.header.sequence_names, ["ABC", "DEF"]);
@@ -254,7 +252,7 @@ mod tests {
         let header = index.header();
         assert_eq!(header.version, OUTFILE_VERSION);
         assert_eq!(header.int_size, 8);
-        assert!(!header.is_dna);
+        assert_eq!(header.starts, None);
         assert_eq!(header.text_len, 11);
         assert_eq!(header.sequence_starts, [0]);
         assert_eq!(header.sequence_names, ["1"]);
@@ -281,9 +279,7 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_alphabet(Alphabet::Dna {
-                ignore_softmask: false,
-            })
+            .with_starts(b"ACGT")
             .with_num_partitions(2)
             .with_write_lcp(true)
             .build_to_file(&outpath)?;
@@ -360,9 +356,7 @@ mod tests {
         // 3 CAAA$
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_alphabet(Alphabet::Dna {
-                ignore_softmask: false,
-            })
+            .with_starts(b"ACGT")
             .with_num_partitions(1)
             .with_seed_mask("101".parse().unwrap())
             .with_write_lcp(true)
@@ -405,9 +399,7 @@ mod tests {
         // 16  3 CAAACAAACAAAC$
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_alphabet(Alphabet::Dna {
-                ignore_softmask: false,
-            })
+            .with_starts(b"ACGT")
             .with_num_partitions(1)
             .with_seed_mask("11011".parse().unwrap())
             .with_write_lcp(true)
@@ -435,9 +427,7 @@ mod tests {
         let outpath = outfile.path().to_string_lossy().to_string();
 
         SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
-            .with_alphabet(Alphabet::Dna {
-                ignore_softmask: false,
-            })
+            .with_starts(b"ACGT")
             .with_num_partitions(1)
             .with_seed_mask("11000111".parse().unwrap())
             .with_write_lcp(true)
@@ -525,9 +515,9 @@ mod tests {
     fn test_suffix_array_header() -> Result<()> {
         let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
         let header = suffix_array.header();
-        assert_eq!(header.version, 7);
-        assert!(header.is_dna);
-        assert!(!header.ignore_softmask);
+        assert_eq!(header.version, OUTFILE_VERSION);
+        assert_eq!(header.starts.as_deref(), Some(b"ACGT".as_slice()));
+        assert_eq!(header.soft_mask, SoftMask::Fold);
         assert_eq!(header.text_len, 11);
         assert_eq!(header.num_suffixes, 9);
         assert_eq!(header.sequence_starts, vec![0]);

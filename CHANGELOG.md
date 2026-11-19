@@ -13,8 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `libsufr::SuffixArrayBuilder`, a builder-style API for creating a
   suffix array from a sequence file (`from_sequence_file`) or from in-memory
   text (`from_data`)
-- Add `libsufr::Alphabet` (`Dna`, `Amino`, `Bytes`) and
-  `SuffixArrayBuilder::with_alphabet` to choose how the text is read
+- Add `libsufr::SoftMask` (`Fold`, `Preserve`, `Replace`) and
+  `SuffixArrayBuilder::with_soft_mask`, which set how the build writes
+  lowercase bytes into the text, and `SuffixArrayBuilder::with_starts`, which
+  indexes only the suffixes starting with the given bytes and the
+  sentinel. `Header::soft_mask` and `Header::starts` record both.
+  `SoftMask` is `#[non_exhaustive]`.
+- Add `sufr create --soft-mask` and `--starts`. `--dna` is short for
+  `--starts ACGT`, and `-i` for `--soft-mask N`.
 - Add `SuffixArrayBuilder::with_memory_budget` and `sufr create
   --memory-budget`, the most bytes of suffixes held in memory while
   sorting. The default is the length of the text. A text whose suffixes
@@ -99,11 +105,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - (breaking) `sufr create -i` requires `--dna`. It no longer converts
   lowercase protein to `X`.
 - (breaking) Raise the minimum supported Rust version from 1.80 to 1.88
+- (breaking) `sufr summarize` prints the rows `Soft Mask` and `Starts` in
+  place of `DNA` and `Ignore Softmask`
 - (breaking) Raise the _.sufr_ format version from 6 to 7. The header
-  drops byte 2, which no reader used, and the build-time max query
-  length, which this release writes as 0 in every file. Byte 3 now
-  records the integer width of the arrays, 4 or 8 bytes, which a reader
-  used to infer from the text length. This release does not open a file
+  drops the build-time max query length, which this release writes as 0
+  in every file. Bytes 1 and 2 record the soft mask in place of the DNA
+  and soft-mask flags, and a 32-byte bitmap of the indexed starts
+  follows the seed mask. Byte 3 now records the integer width of the
+  arrays, 4 or 8 bytes, which a reader used to infer from the text
+  length. This release does not open a file
   written by 0.7.12 or earlier; rebuild it with `sufr create`.
 - `sufr locate` orders the hits by the order of the sequences in the
   input, not by their names

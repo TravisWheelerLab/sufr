@@ -3,16 +3,14 @@
 
 use anyhow::Result;
 use libsufr::{
-    Alphabet, Context, Hits, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder,
+    Context, Hits, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder,
 };
 use std::fs;
 use std::sync::OnceLock;
 use tempfile::{NamedTempFile, TempDir};
 
-/// The DNA alphabet without `ignore_softmask`.
-const DNA: Alphabet = Alphabet::Dna {
-    ignore_softmask: false,
-};
+/// The first bytes of the suffixes a DNA build indexes.
+const DNA: Option<&[u8]> = Some(b"ACGT");
 
 /// Every way a file can be opened: text and suffixes each in memory or
 /// on disk, with and without a cap at search time. A cap with the
@@ -29,7 +27,11 @@ const MODES: [(SourceKind, SourceKind, Option<usize>); 8] = [
 ];
 
 /// Build `fasta` under data/inputs, or a FASTA string, to a temp file.
-fn build(fasta: &str, alphabet: Alphabet, mask: Option<&str>) -> Result<NamedTempFile> {
+fn build(
+    fasta: &str,
+    starts: Option<&[u8]>,
+    mask: Option<&str>,
+) -> Result<NamedTempFile> {
     let input;
     let path = if fasta.starts_with('>') {
         input = NamedTempFile::new()?;
@@ -38,9 +40,11 @@ fn build(fasta: &str, alphabet: Alphabet, mask: Option<&str>) -> Result<NamedTem
     } else {
         format!("../data/inputs/{fasta}.fa").into()
     };
-    let mut builder = SuffixArrayBuilder::from_sequence_file(path, b'%')?
-        .with_alphabet(alphabet)
-        .with_write_lcp(true);
+    let mut builder =
+        SuffixArrayBuilder::from_sequence_file(path, b'%')?.with_write_lcp(true);
+    if let Some(starts) = starts {
+        builder = builder.with_starts(starts);
+    }
     if let Some(mask) = mask {
         builder = builder.with_seed_mask(mask.parse()?);
     }
@@ -148,7 +152,7 @@ fn every_mode_finds_the_same_hits() -> Result<()> {
 #[test]
 fn query_kinds() -> Result<()> {
     let plain = build("1", DNA, None)?;
-    let bytes = build("1", Alphabet::Bytes, None)?;
+    let bytes = build("1", None, None)?;
     for (text, suffixes, _) in &MODES[..4] {
         let label = format!("{text:?} {suffixes:?}");
         let sa = open(&plain, *text, *suffixes, None)?;
