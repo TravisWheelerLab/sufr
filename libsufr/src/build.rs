@@ -166,8 +166,7 @@ impl SuffixArrayBuilder {
         match &self.seed_mask {
             None => self.build::<W, _>(text, &keep, &UnmaskedKeys { packing }, path),
             Some(mask) => {
-                let scheme =
-                    MaskedKeys::new(packing, &mask.positions, mask.bytes.len())?;
+                let scheme = MaskedKeys::new(packing, mask)?;
                 self.build::<W, _>(text, &keep, &scheme, path)
             }
         }
@@ -772,14 +771,11 @@ pub(super) struct MaskedKeys {
 }
 
 impl MaskedKeys {
-    /// The keys for the mask with the care positions `positions` over
-    /// `span` characters. The result is an error if a key cannot hold the
-    /// mask.
-    pub(super) fn new(
-        packing: Packing,
-        positions: &[usize],
-        span: usize,
-    ) -> Result<Self> {
+    /// The keys for `mask`. The result is an error if a key cannot hold
+    /// the mask.
+    pub(super) fn new(packing: Packing, mask: &SeedMask) -> Result<Self> {
+        let positions = mask.positions();
+
         // a key holds every care position of a mask, so the sort by key
         // is the whole sort under one; a longer mask is refused, as is
         // one spanning more windows than the scan rolls
@@ -790,16 +786,15 @@ impl MaskedKeys {
                 packing.chars_per_key
             );
         }
-        if span > MAX_WINDOWS * packing.chars_per_key {
+        if mask.len() > MAX_WINDOWS * packing.chars_per_key {
             bail!(
                 "the seed mask spans {} characters, and the scan covers {} of this alphabet",
-                span,
+                mask.len(),
                 MAX_WINDOWS * packing.chars_per_key
             );
         }
 
-        let windows =
-            (positions[positions.len() - 1] + 1).div_ceil(packing.chars_per_key);
+        let windows = mask.len().div_ceil(packing.chars_per_key);
         let char_ones = (1u64 << packing.bits_per_char) - 1;
         let mut care_bits = [0; MAX_WINDOWS];
         for &p in positions {
@@ -1454,8 +1449,8 @@ mod test {
         assert_eq!(packing.key_at(text, 4), packed(&[4, 1, 0], 3));
 
         // care positions 0, 1 and 3, then past the mask: A C T
-        let mask = SeedMask::new("1101")?;
-        let scheme = MaskedKeys::new(packing, &mask.positions, mask.bytes.len())?;
+        let mask: SeedMask = "1101".parse()?;
+        let scheme = MaskedKeys::new(packing, &mask)?;
         let masked = |i| scheme.key(&scheme.start(text, i));
         assert_eq!(masked(0), packed(&[1, 2, 5], 3));
         // A $ and position 8 past the end
@@ -1486,12 +1481,12 @@ mod test {
             "11011011011011011011011011011",
             "1000000000000000000000000000000000000000001",
         ] {
-            let mask = SeedMask::new(mask)?;
+            let mask: SeedMask = mask.parse()?;
             let packing = packing(text);
-            let scheme = MaskedKeys::new(packing, &mask.positions, mask.bytes.len())?;
+            let scheme = MaskedKeys::new(packing, &mask)?;
             let mut windows = scheme.start(text, 0);
             for i in 0..text.len() {
-                let expected = lookup(&packing, text, i, &mask.positions);
+                let expected = lookup(&packing, text, i, mask.positions());
                 assert_eq!(scheme.masked_key(&windows), expected, "{mask:?} at {i}");
                 #[cfg(target_arch = "x86_64")]
                 if super::has_bmi2() {
@@ -1574,7 +1569,7 @@ mod test {
         let outfile = NamedTempFile::new()?;
         let build = |mask: &str| {
             SuffixArrayBuilder::from_data(text.clone(), vec![(0, "s".to_string())])
-                .with_seed_mask(SeedMask::new(mask)?)
+                .with_seed_mask(mask.parse()?)
                 .build_to_file(outfile.path())
         };
         assert!(build(&format!("{}01", "1".repeat(20))).is_ok());

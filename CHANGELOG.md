@@ -141,9 +141,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   C, G or T.
 - Remove and make private the `unsafe` byte-reading utilities
   `slice_u8_to_vec`, `usize_to_bytes`, `vec_to_slice_u8`.
+- (breaking) Make the fields of `SeedMask` private, and remove
+  `differences` and `SeedMask::from_bytes`. `SeedMask::positions` and
+  `SeedMask::weight` return the care positions and their number, and
+  `Display` writes the mask as 1s and 0s.
+- (breaking) Replace `SeedMask::new` with `impl FromStr for SeedMask`.
+  Parse a mask with `"101".parse::<SeedMask>()`.
 
 ### Fixed
 
+- `Header::read` and `SuffixArray::open` refuse a file whose seed mask
+  would not parse as a `SeedMask`. Previously these would drop bytes other than 0
+  and 1, and accept a mask with no 0 or one that starts or ends with 0.
 - `sufr` exits 0 with nothing on stderr when the reader of its output
   stops early, as `head` does. `summarize` panicked there, and `list`,
   `locate` and `extract` reported "Broken pipe" and exited 1.

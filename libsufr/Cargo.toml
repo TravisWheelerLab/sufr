@@ -28,7 +28,6 @@ home = "0.5.9"
 log = "0.4.22"
 needletail = "0.7.3"
 rayon = "1.10.0"
-regex = "1.10.6"
 thread_local = "1.1.8"
 
 [dev-dependencies]

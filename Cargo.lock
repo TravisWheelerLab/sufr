@@ -689,7 +689,6 @@ dependencies = [
  "needletail",
  "pretty_assertions",
  "rayon",
- "regex",
  "tempfile",
  "thread_local",
 ]

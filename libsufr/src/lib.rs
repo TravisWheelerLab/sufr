@@ -176,7 +176,7 @@ mod tests {
     use super::{
         source::{DiskSource, MemorySource},
         typed::TypedSuffixArray,
-        Alphabet, Hits, SeedMask, SuffixArray, SuffixArrayBuilder, OUTFILE_VERSION,
+        Alphabet, Hits, SuffixArray, SuffixArrayBuilder, OUTFILE_VERSION,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -344,7 +344,7 @@ mod tests {
                 ignore_softmask: false,
             })
             .with_num_partitions(1)
-            .with_seed_mask(SeedMask::new("101").unwrap())
+            .with_seed_mask("101".parse().unwrap())
             .with_write_lcp(true)
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
@@ -389,7 +389,7 @@ mod tests {
                 ignore_softmask: false,
             })
             .with_num_partitions(1)
-            .with_seed_mask(SeedMask::new("11011").unwrap())
+            .with_seed_mask("11011".parse().unwrap())
             .with_write_lcp(true)
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());
@@ -419,7 +419,7 @@ mod tests {
                 ignore_softmask: false,
             })
             .with_num_partitions(1)
-            .with_seed_mask(SeedMask::new("11000111").unwrap())
+            .with_seed_mask("11000111".parse().unwrap())
             .with_write_lcp(true)
             .build_to_file(&outpath)?;
         assert!(outfile.path().exists());

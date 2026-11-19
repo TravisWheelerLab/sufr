@@ -114,7 +114,7 @@ pub struct CreateArgs {
 
     /// Spaced seeds mask
     #[arg(short, long, value_name = "MASK")]
-    pub seed_mask: Option<String>,
+    pub seed_mask: Option<SeedMask>,
 
     /// Also write the LCP array
     #[arg(long)]
@@ -414,7 +414,7 @@ pub fn create(args: &CreateArgs) -> Result<()> {
     }
 
     if let Some(mask) = &args.seed_mask {
-        builder = builder.with_seed_mask(SeedMask::new(mask)?);
+        builder = builder.with_seed_mask(mask.clone());
     }
 
     builder = builder.with_write_lcp(args.write_lcp);
@@ -712,7 +712,7 @@ pub fn summarize(args: &SummarizeArgs) -> Result<()> {
         ),
     ];
     if let Some(seed_mask) = header.seed_mask() {
-        rows.push(("Seed mask", seed_mask.mask.clone()));
+        rows.push(("Seed mask", seed_mask.to_string()));
     }
     rows.extend([
         ("Num sequences", number(header.sequence_starts.len())),

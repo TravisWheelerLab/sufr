@@ -298,7 +298,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         let subsample = match self.header.seed_mask() {
             Some(seed_mask) => {
                 let positions =
-                    &seed_mask.positions[..min(max_query_len, seed_mask.weight)];
+                    &seed_mask.positions()[..min(max_query_len, seed_mask.weight())];
                 self.keep_differing(|a, b| {
                     !positions.iter().all(|&offset| {
                         matches!(
@@ -535,7 +535,6 @@ pub(crate) fn subsample_len(header: &Header, max_query_len: Option<usize>) -> us
 mod tests {
     use super::TypedSuffixArray;
     use crate::{
-        format::SeedMask,
         source::{DiskSource, MemorySource, Source},
         Alphabet, SuffixArrayBuilder,
     };
@@ -654,7 +653,7 @@ mod tests {
                 .with_num_partitions(3)
                 .with_write_lcp(write_lcp);
         if let Some(mask) = seed_mask {
-            builder = builder.with_seed_mask(SeedMask::new(mask)?);
+            builder = builder.with_seed_mask(mask.parse()?);
         }
         builder.build_to_file(&outpath)?;
         let index = Index::open(&outpath, None, false)?;

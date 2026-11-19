@@ -130,12 +130,12 @@ pub fn masked_lcp(a: &[u8], b: &[u8], positions: &[usize]) -> usize {
 /// The offset of the byte that follows a masked LCP of `lcp` care
 /// positions: the next care position, or one past the last one.
 pub fn mask_offset(lcp: usize, mask: &SeedMask) -> usize {
-    if lcp == 0 || lcp > mask.bytes.len() {
+    if lcp == 0 || lcp > mask.len() {
         return lcp;
     }
-    match mask.positions.get(lcp) {
+    match mask.positions().get(lcp) {
         Some(&next) => next,
-        None => mask.positions[lcp - 1] + 1,
+        None => mask.positions()[lcp - 1] + 1,
     }
 }
 
@@ -303,19 +303,19 @@ mod tests {
 
     #[test]
     fn test_mask_offset() -> Result<()> {
-        let seed_mask = SeedMask::new("101")?;
+        let seed_mask: SeedMask = "101".parse()?;
         assert_eq!(mask_offset(0, &seed_mask), 0);
         assert_eq!(mask_offset(1, &seed_mask), 2);
         assert_eq!(mask_offset(2, &seed_mask), 3);
 
-        let seed_mask = SeedMask::new("11011")?;
+        let seed_mask: SeedMask = "11011".parse()?;
         assert_eq!(mask_offset(0, &seed_mask), 0);
         assert_eq!(mask_offset(1, &seed_mask), 1);
         assert_eq!(mask_offset(2, &seed_mask), 3);
         assert_eq!(mask_offset(3, &seed_mask), 4);
         assert_eq!(mask_offset(4, &seed_mask), 5);
 
-        let seed_mask = SeedMask::new("10011001")?;
+        let seed_mask: SeedMask = "10011001".parse()?;
         assert_eq!(mask_offset(0, &seed_mask), 0);
         assert_eq!(mask_offset(1, &seed_mask), 3);
         assert_eq!(mask_offset(2, &seed_mask), 4);

@@ -2,12 +2,12 @@
 
 use crate::io::write_all_at;
 use anyhow::{anyhow, bail, Result};
-use regex::Regex;
 use std::{
     fmt::{self, Display},
     fs::File,
     io::{Read, Seek, SeekFrom},
     mem,
+    str::FromStr,
 };
 
 /// The serialization version.
@@ -159,7 +159,7 @@ impl Header {
     /// Set the text, suffix array, and LCP positions from the
     /// header's contents, placing an LCP array when `write_lcp`.
     pub(crate) fn set_positions(&mut self, write_lcp: bool) {
-        let seed_mask_len = self.seed_mask.as_ref().map_or(0, |m| m.bytes.len());
+        let seed_mask_len = self.seed_mask.as_ref().map_or(0, |m| m.len());
         self.text_pos = SEQUENCE_STARTS
             + self.sequence_starts.len() * self.int_size
             + mem::size_of::<u64>()
@@ -184,7 +184,9 @@ impl Header {
     /// The number of characters the suffixes were sorted by: the text
     /// length for a full sort, the weight of a seed mask.
     pub(crate) fn sorted_len(&self) -> usize {
-        self.seed_mask.as_ref().map_or(self.text_len, |m| m.weight)
+        self.seed_mask
+            .as_ref()
+            .map_or(self.text_len, |m| m.weight())
     }
 
     /// The byte position of the sequence names, after the arrays.
@@ -196,7 +198,7 @@ impl Header {
     /// Write the header and the sequence names into `file`, leaving
     /// the text and arrays to the caller. Returns the file's length.
     pub(crate) fn write(&self, file: &File) -> Result<usize> {
-        let seed_mask: &[u8] = self.seed_mask.as_ref().map_or(&[], |m| &m.bytes);
+        let seed_mask = self.seed_mask.as_ref().map_or(vec![], |m| m.to_bytes());
 
         let mut bytes = vec![
             self.version,
@@ -217,7 +219,7 @@ impl Header {
             }
         }
         bytes.extend((seed_mask.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(seed_mask);
+        bytes.extend_from_slice(&seed_mask);
         debug_assert_eq!(bytes.len(), self.text_pos);
         write_all_at(file, &bytes, 0)?;
 
@@ -229,110 +231,82 @@ impl Header {
 }
 
 /// A seed mask of care (1) and don't-care (0) positions.
-#[derive(Debug, PartialEq, Clone)]
+///
+/// The first and last positions must be a 1, and at
+/// least one position must be a 0.
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SeedMask {
-    /// The mask as a string of 1s and 0s.
-    pub mask: String,
-
-    /// The mask as one 1 or 0 byte per position.
-    pub bytes: Vec<u8>,
-
-    /// The offsets of the care positions.
-    pub positions: Vec<usize>,
-
-    /// The difference between each care position and its index in
-    /// `positions`.
-    pub differences: Vec<usize>,
-
-    /// The number of care positions.
-    pub weight: usize,
+    /// The offsets of the care positions, ascending.
+    positions: Vec<usize>,
 }
 
 impl SeedMask {
-    /// Parse a mask of 1s and 0s that starts and ends with 1 and holds
-    /// at least one 0.
-    pub fn new(mask: &str) -> Result<Self> {
-        if !Self::is_valid(mask) {
-            bail!("Invalid seed mask '{mask}'")
-        }
-
-        let bytes = Self::parse(mask);
-        let positions = Self::get_positions(&bytes);
-        let differences = Self::get_differences(&positions);
-        let weight = positions.len();
-
-        Ok(Self {
-            mask: mask.to_string(),
-            bytes,
-            positions,
-            differences,
-            weight,
-        })
-    }
-
     /// The mask stored in a _.sufr_ header as one 1 or 0 byte per
     /// position.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let mask: String = bytes
-            .iter()
-            .filter_map(|b| match b {
-                0 => Some('0'),
-                1 => Some('1'),
-                _ => None,
-            })
-            .collect();
-        if mask.is_empty() {
-            bail!("Bytes must be 1 or 0");
-        }
-        let positions = Self::get_positions(bytes);
-        let differences = Self::get_differences(&positions);
-        let weight = positions.len();
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let cares = bytes.iter().map(|&b| match b {
+            1 => Some(true),
+            0 => Some(false),
+            _ => None,
+        });
+        Self::from_cares(cares)
+            .ok_or_else(|| anyhow!("Invalid seed mask bytes {bytes:?}"))
+    }
 
-        Ok(Self {
-            mask,
-            bytes: bytes.to_vec(),
-            positions,
-            differences,
-            weight,
+    fn from_cares(cares: impl Iterator<Item = Option<bool>>) -> Option<Self> {
+        let cares: Vec<bool> = cares.collect::<Option<_>>()?;
+        let valid = cares.first() == Some(&true)
+            && cares.last() == Some(&true)
+            && cares.contains(&false);
+        valid.then(|| Self {
+            positions: (0..cares.len()).filter(|&i| cares[i]).collect(),
         })
     }
 
-    fn is_valid(mask: &str) -> bool {
-        let seed_re = Regex::new("^1+0[01]*1$").unwrap();
-        seed_re.is_match(mask)
+    /// The offsets of the care positions, ascending.
+    pub fn positions(&self) -> &[usize] {
+        &self.positions
     }
 
-    fn parse(mask: &str) -> Vec<u8> {
-        mask.as_bytes()
-            .iter()
-            .flat_map(|b| match b {
-                b'1' => Some(1),
-                b'0' => Some(0),
-                _ => None,
-            })
-            .collect()
+    /// The number of care positions.
+    pub fn weight(&self) -> usize {
+        self.positions.len()
     }
 
-    fn get_differences(positions: &[usize]) -> Vec<usize> {
-        // mask "1001101":
-        //   positions    [0, 3, 4, 6]
-        //   indices      [0, 1, 2, 3]
-        //   differences  [0, 2, 2, 3]
-        positions.iter().enumerate().map(|(i, &m)| m - i).collect()
+    /// The number of positions, care and don't-care.
+    pub(crate) fn len(&self) -> usize {
+        self.positions[self.positions.len() - 1] + 1
     }
 
-    fn get_positions(bytes: &[u8]) -> Vec<usize> {
+    /// The mask as one 1 or 0 byte per position.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![0; self.len()];
+        for &i in &self.positions {
+            bytes[i] = 1;
+        }
         bytes
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &b)| (b == 1).then_some(i))
-            .collect()
+    }
+}
+
+impl FromStr for SeedMask {
+    type Err = anyhow::Error;
+
+    fn from_str(mask: &str) -> Result<Self> {
+        let cares = mask.bytes().map(|b| match b {
+            b'1' => Some(true),
+            b'0' => Some(false),
+            _ => None,
+        });
+        Self::from_cares(cares).ok_or_else(|| anyhow!("Invalid seed mask '{mask}'"))
     }
 }
 
 impl Display for SeedMask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.mask)
+        for b in self.to_bytes() {
+            write!(f, "{b}")?;
+        }
+        Ok(())
     }
 }
 
@@ -345,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_header_round_trip() -> Result<()> {
-        let cases = [(4, Some(SeedMask::new("1101")?), true), (8, None, false)];
+        let cases = [(4, Some("1101".parse()?), true), (8, None, false)];
         for (int_size, seed_mask, write_lcp) in cases {
             let mut header = Header {
                 version: OUTFILE_VERSION,
@@ -387,142 +361,41 @@ mod tests {
     }
 
     #[test]
-    fn test_seed_mask_new() -> Result<()> {
-        let mask = SeedMask::new("110110101")?;
-        let expected = SeedMask {
-            mask: "110110101".to_string(),
-            bytes: vec![1, 1, 0, 1, 1, 0, 1, 0, 1],
-            positions: vec![0, 1, 3, 4, 6, 8],
-            differences: vec![0, 0, 1, 1, 2, 3],
-            weight: 6,
-        };
-        assert_eq!(mask, expected);
-
-        assert!(SeedMask::new("").is_err());
-        assert!(SeedMask::new("0").is_err());
-        assert!(SeedMask::new("01").is_err());
-        assert!(SeedMask::new("10").is_err());
-        assert!(SeedMask::new("11").is_err());
-        assert!(SeedMask::new("101").is_ok());
-        Ok(())
-    }
-
-    #[test]
-    fn test_seed_mask_from_bytes() -> Result<()> {
-        let bytes: Vec<u8> = vec![1, 1, 0, 1, 1, 0, 1, 0, 1];
-        let mask = SeedMask::from_bytes(&bytes)?;
-        let expected = SeedMask {
-            mask: "110110101".to_string(),
-            bytes,
-            positions: vec![0, 1, 3, 4, 6, 8],
-            differences: vec![0, 0, 1, 1, 2, 3],
-            weight: 6,
-        };
-        assert_eq!(mask, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn test_create_seed_mask() -> Result<()> {
-        // No 0 at beginning
-        let res = SeedMask::new("0101");
-        assert!(res.is_err());
-
-        // No 0 at end
-        let res = SeedMask::new("1010");
-        assert!(res.is_err());
-
-        // Nothing other than 0/1
-        let res = SeedMask::new("1021");
-        assert!(res.is_err());
-
-        // Must have a 0
-        let res = SeedMask::new("1111");
-        assert!(res.is_err());
-
-        // Valid
-        let res = SeedMask::new("101");
-        assert!(res.is_ok());
-
-        let expected = SeedMask {
-            mask: "101".to_string(),
-            bytes: vec![1, 0, 1],
-            positions: vec![0, 2],
-            differences: vec![0, 1],
-            weight: 2,
-        };
-        assert_eq!(res.unwrap(), expected);
-
-        let res = SeedMask::new("11101101101000011");
-        assert!(res.is_ok());
-
-        let expected = SeedMask {
-            mask: "11101101101000011".to_string(),
-            bytes: vec![1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1],
-            positions: vec![0, 1, 2, 4, 5, 7, 8, 10, 15, 16],
-            differences: vec![0, 0, 0, 1, 1, 2, 2, 3, 7, 7],
-            weight: 10,
-        };
-        assert_eq!(res.unwrap(), expected);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_display_seed_mask() -> Result<()> {
-        for val in &["101", "11101101101000011"] {
-            let mask = SeedMask::new(val).unwrap();
-            assert_eq!(format!("{mask}"), val.to_string());
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_valid_seed_mask() -> Result<()> {
-        let valid = ["101", "1001", "1101", "10101", "1110110110100001"];
-        for pattern in valid {
-            assert!(SeedMask::is_valid(pattern));
-        }
-
-        let invalid = [
-            "", "abc", "1", "11", "111", "0", "00", "0111", "11100", "1a01",
+    fn test_seed_mask() -> Result<()> {
+        let cases: [(&str, &[usize]); 4] = [
+            ("101", &[0, 2]),
+            ("11011", &[0, 1, 3, 4]),
+            ("110110101", &[0, 1, 3, 4, 6, 8]),
+            ("11101101101000011", &[0, 1, 2, 4, 5, 7, 8, 10, 15, 16]),
         ];
-        for pattern in invalid {
-            assert!(!SeedMask::is_valid(pattern));
+        for (text, positions) in cases {
+            let mask: SeedMask = text.parse()?;
+            assert_eq!(mask.positions(), positions);
+            assert_eq!(mask.weight(), positions.len());
+            assert_eq!(mask.len(), text.len());
+            assert_eq!(mask.to_string(), text);
+
+            let bytes = mask.to_bytes();
+            let expected: Vec<u8> = text.bytes().map(|b| b - b'0').collect();
+            assert_eq!(bytes, expected);
+            assert_eq!(SeedMask::from_bytes(&bytes)?, mask);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_seed_mask() {
+        let invalid = [
+            "", "abc", "1", "11", "111", "1111", "0", "00", "0101", "0111", "1010",
+            "11100", "1021", "1a01",
+        ];
+        for text in invalid {
+            assert!(text.parse::<SeedMask>().is_err(), "{text}");
         }
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_seed_mask_positions() -> Result<()> {
-        assert_eq!(SeedMask::get_positions(&[1, 0, 1]), [0, 2]);
-        assert_eq!(SeedMask::get_positions(&[1, 1, 0, 1, 1]), [0, 1, 3, 4]);
-        assert_eq!(SeedMask::get_positions(&[1, 0, 1, 1, 0, 1]), [0, 2, 3, 5]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_seed_mask_difference() -> Result<()> {
-        assert_eq!(SeedMask::get_differences(&[]), []);
-
-        // "11011" -> [0, 1, 3, 4]
-        //           - 0  1  2  3
-        //            ------------
-        //            [0, 0, 1, 1]
-        assert_eq!(SeedMask::get_differences(&[0, 1, 3, 4]), [0, 0, 1, 1]);
-
-        // "100001" -> [0, 5]
-        //            - 0  1
-        //            --------
-        //             [0, 4]
-        assert_eq!(SeedMask::get_differences(&[0, 5]), [0, 4]);
-
-        // "1001101" -> [0, 3, 4, 6]
-        //             - 0  1  2  3
-        //             -------------
-        //              [0, 2, 2, 3]
-        assert_eq!(SeedMask::get_differences(&[0, 3, 4, 6]), [0, 2, 2, 3]);
-        Ok(())
+        let invalid: [&[u8]; 6] = [&[], &[1], &[1, 1], &[0, 1], &[1, 0], &[1, 2, 1]];
+        for bytes in invalid {
+            assert!(SeedMask::from_bytes(bytes).is_err(), "{bytes:?}");
+        }
     }
 }

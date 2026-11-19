@@ -3,8 +3,7 @@
 
 use anyhow::Result;
 use libsufr::{
-    Alphabet, Context, Hits, OpenOptions, SeedMask, SourceKind, SuffixArray,
-    SuffixArrayBuilder,
+    Alphabet, Context, Hits, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder,
 };
 use std::fs;
 use std::sync::OnceLock;
@@ -43,7 +42,7 @@ fn build(fasta: &str, alphabet: Alphabet, mask: Option<&str>) -> Result<NamedTem
         .with_alphabet(alphabet)
         .with_write_lcp(true);
     if let Some(mask) = mask {
-        builder = builder.with_seed_mask(SeedMask::new(mask)?);
+        builder = builder.with_seed_mask(mask.parse()?);
     }
     let outfile = NamedTempFile::new()?;
     builder.build_to_file(outfile.path())?;

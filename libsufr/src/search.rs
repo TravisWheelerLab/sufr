@@ -273,17 +273,17 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
                 }
             }
             Some(seed_mask) => {
-                if skip >= seed_mask.weight
+                if skip >= seed_mask.weight()
                     || (max_query_len > 0 && skip >= max_query_len)
                 {
                     skip
                 } else {
                     let end = if max_query_len > 0 {
-                        min(max_query_len, seed_mask.weight)
+                        min(max_query_len, seed_mask.weight())
                     } else {
-                        seed_mask.weight
+                        seed_mask.weight()
                     };
-                    let positions = &seed_mask.positions[skip..end];
+                    let positions = &seed_mask.positions()[skip..end];
                     let last = positions[positions.len() - 1];
                     let text_end = min(text_len, suffix_pos + last + 1);
                     let text = self.text_slice(suffix_pos..text_end)?;

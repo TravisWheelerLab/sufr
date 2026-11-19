@@ -117,8 +117,8 @@ fn check(case: &Case, force_64bit: bool) -> Result<()> {
     } else {
         format!("../data/inputs/{input}.fa")
     };
-    let mask = mask.map(SeedMask::new).transpose()?;
-    let positions = mask.as_ref().map(|m| m.positions.clone());
+    let mask = mask.map(str::parse::<SeedMask>).transpose()?;
+    let positions = mask.as_ref().map(|m| m.positions().to_vec());
 
     let ignore_softmask = dna == Some(true);
     let (text, starts, names) =
