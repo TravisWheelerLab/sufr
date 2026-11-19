@@ -1,6 +1,6 @@
 {
   "id": "sufr-74579c",
-  "title": "SeedMask does not uphold its own invariants",
+  "title": "`SeedMask` does not uphold its own invariants",
   "body": "`SeedMask` in `libsufr/src/format.rs` has five `pub` fields: `mask`, `bytes`, `positions`, `differences` and `weight`. The other four follow from `positions`, and a caller can change one without the rest. Nothing outside the unit tests reads `differences`.\n\n`SeedMask::new` checks its string against `^1+0[01]*1$`. `SeedMask::from_bytes`, which `Header::read` calls on the mask stored in a file, checks none of that: it drops any byte other than 0 or 1, and it accepts a mask with no 0 or one that starts or ends with 0.\n\n## Proposal\n\n- `SeedMask` holds only the care positions, in a private field.\n- `new` and `from_bytes` run one shared check.\n- Callers read `positions()` and `weight()`. `len()` and `from_bytes` are crate-private.\n- `differences` is removed.\n- libsufr drops `regex`, which only the mask check used.\n\n## Cost\n\nBreaking for library code that reads the fields or calls `from_bytes`. The `.sufr` format does not change.",
   "type": "bug",
   "status": "open",
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T16:58:49.17929838Z",
-  "updated_at": "2026-11-19T16:58:49.17929838Z",
+  "updated_at": "2026-11-19T16:58:51.88353672Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
