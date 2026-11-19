@@ -3,7 +3,7 @@
   "title": "The libsufr public API can gain a field, variant or error kind without breaking callers",
   "body": "libsufr 0.8.0 exports these items in a form that breaks callers when it changes. Each later field, variant or error kind then costs a major version.\n\n| item | where | what breaks a caller |\n|---|---|---|\n| `SeedMask` | `format.rs` | The fields `mask`, `bytes` and `positions` are `pub`. A caller can build a mask whose three fields disagree. |\n| `OpenOptions`, `Context`, `Location`, `Extraction` | `lib.rs`, `search.rs` | Every field is `pub` and none of them is `#[non_exhaustive]`. A new field breaks a struct literal or a pattern. |\n| `SourceKind`, `Alphabet` | `typed.rs`, `build.rs` | Exhaustive enums. A new variant breaks every `match`. `Alphabet::Dna { ignore_softmask }` is a struct variant. |\n| `OUTFILE_VERSION` | `format.rs` | Exported at the crate root, outside the `typed` feature. The `sufr` CLI does not use it. |\n| `TypedSuffixArray` | `typed.rs`, behind `typed` | Its one public method is `open`. Its search and read methods are `pub(crate)`, and nothing turns it into a `SuffixArray`. |\n| `anyhow::Result` | every fallible function | A caller cannot match on the kind of error. |\n\n## Proposal\n\n- Mark `OpenOptions`, `Context`, `Location`, `Extraction`, `SourceKind` and `Alphabet` `#[non_exhaustive]`.\n- Make the fields of `SeedMask` private. A caller builds one with `SeedMask::new` and reads it through methods.\n- Stop exporting `OUTFILE_VERSION` at the crate root, or move it behind `typed`.\n- Return a libsufr error enum in place of `anyhow::Result`.\n\n## Cost\n\nEach change in the proposal breaks callers on its own, so they belong in one release. `#[non_exhaustive]` stops another crate from writing a struct literal. A caller of `OpenOptions` would start from `OpenOptions::default()` and set fields on it, since `..Default::default()` is a struct literal too. `Context` has no `Default` and would need a constructor. `Location` and `Extraction` come out of `Hits`, and we have not checked whether any caller builds one.\n\n## Open\n\n- Does `TypedSuffixArray` get public search and read methods, or does the `typed` feature stop exporting it?\n\n## Out of scope\n\nsufr-ce174c listed these beside the items above. They concern cost or correctness rather than what breaks a caller.\n\n- `SuffixArray::text`, `suffixes` and `lcps` return new `Vec`s, and `Hits::locate` and `Hits::extract` collect. No issue covers this yet.\n- `SuffixArrayBuilder::from_data` checks nothing about its text. sufr-b96ee1 covers one result of that.\n- libsufr parses FASTA itself with `needletail`. sufr-409cc8 compares readers.\n- `SuffixArray::open_with` writes a cache to `~/.sufr`. That is sufr-22b9c3.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T21:50:25.157113818Z",
-  "updated_at": "2026-11-19T21:50:32.083014314Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-19T23:04:51.138310274Z",
+  "closed_at": "2026-11-19T23:04:51.138310274Z",
+  "close_reason": "Done in `57d1235` on dev. `SeedMask` and `OpenOptions` keep their fields private. `Location`, `Extraction` and `SourceKind` are `#[non_exhaustive]`. `Context`, `Alphabet` and `OUTFILE_VERSION` are no longer exported. `TypedSuffixArray` is behind the `unstable` feature. The public functions return `BuildError`, `OpenError`, `QueryError` or `InvalidSeedMask`.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "52144cf",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "52144cf",
+      "branch": "dev"
+    }
   }
 }
