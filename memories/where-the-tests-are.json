@@ -1,10 +1,10 @@
 {
   "slug": "where-the-tests-are",
-  "text": "Three test files pin construction and search results. libsufr/tests/oracle.rs builds every small input in table() under several flag sets and compares against a reference sort and LCP; an input starting with > is an inline FASTA. libsufr/tests/search.rs holds hand-derived search results on small inputs, opened in all eight storage and cap modes. sufr/tests/cli.rs pins the CLI; create_bytes_match_fixtures compares 12 fixtures byte for byte, each built with --write-lcp.",
+  "text": "Four test files pin construction and search results. `libsufr/tests/oracle.rs` builds every small input in `table()` under several flag sets against a reference sort and LCP; an input starting with `>` is inline FASTA. `libsufr/tests/search.rs` holds hand-derived search results, opened in all eight storage and cap modes. `libsufr/tests/header.rs` reads back the header of `1.fa` built with and without LCP. `sufr/tests/cli.rs` pins the CLI; `create_bytes_match_fixtures` compares 12 fixtures byte for byte.",
   "created_at": "2026-11-04T06:58:30.824476117Z",
-  "updated_at": "2026-11-13T20:32:33.816315579Z",
+  "updated_at": "2026-11-19T22:12:48.742856329Z",
   "stamp": {
-    "commit": "f085e43",
+    "commit": "52144cf",
     "branch": "dev"
   }
 }
