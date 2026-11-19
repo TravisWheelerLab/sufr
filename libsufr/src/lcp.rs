@@ -294,6 +294,76 @@ mod tests {
     }
 
     #[test]
+    fn lcp_matches_lcp_scalar_at_every_mismatch() {
+        // 37 bytes past a whole number of loop steps, so the
+        // 16- and 32-byte paths both end in the scalar tail
+        let len = 3 * LcpCache::PROBE_AT + 37;
+        let a = vec![b'A'; len];
+        for at in 0..len {
+            let mut b = a.clone();
+            b[at] = b'C';
+            // a later mismatch in the same vector, which a
+            // wrong lane index would report
+            if at + 3 < len {
+                b[at + 3] = b'G';
+            }
+            assert_eq!(lcp(&a, &b, None), lcp_scalar(&a, &b), "mismatch at {at}");
+        }
+        for n in 0..len {
+            assert_eq!(lcp(&a[..n], &a, None), n, "length {n}");
+        }
+    }
+
+    #[test]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    fn lcp_uses_a_cache_entry_at_each_probe() {
+        let len = 3 * LcpCache::PROBE_AT;
+        let a = vec![b'A'; len];
+
+        // the text positions the cache is given for a and b,
+        // so the probe at i looks up (start_a + i, start_b + i)
+        let (start_a, start_b) = (0, len);
+
+        for probe in [LcpCache::PROBE_AT, 2 * LcpCache::PROBE_AT] {
+            // the lookup at an earlier probe misses an entry
+            // starting here, and 5 is short of the true LCP, so
+            // lcp returns probe + 5 only from this probe's lookup
+            let mut cache = LcpCache::default();
+            cache.set(start_a + probe, start_b + probe, 5);
+            assert_eq!(
+                lcp(&a, &a, Some((&cache, start_a, start_b))),
+                probe + 5,
+                "probe {probe}"
+            );
+
+            for at in probe - 70..probe + 70 {
+                let mut b = a.clone();
+                b[at] = b'C';
+                let true_lcp = lcp_scalar(&a[probe..], &b[probe..]);
+                let mut cache = LcpCache::default();
+                cache.set(start_a + probe, start_b + probe, true_lcp);
+                assert_eq!(
+                    lcp(&a, &b, Some((&cache, start_a, start_b))),
+                    lcp_scalar(&a, &b),
+                    "probe {probe}, mismatch at {at}"
+                );
+            }
+
+            // suffix_lcp caps a comparison short of the text, so
+            // an entry can run past the end of the slices, and
+            // lcp must stop at their length
+            let n = probe + 10;
+            let mut cache = LcpCache::default();
+            cache.set(start_a + probe, start_b + probe, len - probe);
+            assert_eq!(
+                lcp(&a[..n], &a[..n], Some((&cache, start_a, start_b))),
+                n,
+                "probe {probe}"
+            );
+        }
+    }
+
+    #[test]
     fn test_suffix_lcp() {
         let text = b"ACGTNNACGT$";
         assert_eq!(suffix_lcp(text, 0, 6, 0, text.len(), None), 4);
