@@ -13,9 +13,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T16:58:49.17929838Z",
-  "updated_at": "2026-11-19T17:16:28.431279216Z",
+  "updated_at": "2026-11-19T17:43:53.585567408Z",
   "closed_at": "2026-11-19T17:02:02.34916965Z",
-  "close_reason": "Landed in 5b90b69 on dev. `SeedMask` keeps only its care positions, both constructors run one check, and the CHANGELOG records the API break and the `Header::read` fix.",
+  "close_reason": "Landed in 4595984 on branch `worktree-seed-mask-fromstr`, which replaces 5b90b69 on dev. `SeedMask` keeps only its care positions, both constructors run one check, and the CHANGELOG records the API break and the `Header::read` fix.",
   "resolution": "done",
   "notes": [],
   "stamps": {
