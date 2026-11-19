@@ -3,26 +3,29 @@
   "title": "`sufr create` parses `--seed-mask` after clap instead of through it",
   "body": "`CreateArgs::seed_mask` in `sufr/src/lib.rs` is an `Option<String>`, and `create` turns it into a `SeedMask` with `parse()` after clap has parsed the arguments. A bad mask is reported as an `anyhow` error from inside `create`.\n\n## Proposal\n\nSince ff48244, `SeedMask` implements `FromStr` with `anyhow::Error` as its error, so the field could be `Option<SeedMask>`. clap would then reject a bad mask during argument parsing, with its own usage message and exit code 2.\n\n## Open\n\n- Whether clap's `value_parser!` accepts `anyhow::Error` as the `FromStr` error has not been checked by building it.\n- No test in `sufr/tests/cli.rs` pins the current message for a bad mask, so nothing there would break, but the exit code and message change for users.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jeb Rosen/075643b3",
-  "lease_expires": "2026-11-19T17:44:51.362629555Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T17:19:52.576984899Z",
-  "updated_at": "2026-11-19T17:29:51.362629555Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-19T17:30:57.297102124Z",
+  "closed_at": "2026-11-19T17:30:57.297102124Z",
+  "close_reason": "Landed in 5223f77 on branch `worktree-seed-mask-fromstr`. clap accepts `anyhow::Error` as the `FromStr` error. A bad mask now fails during argument parsing, before the input is read, with \"invalid value '1021' for '--seed-mask <MASK>'\" and exit code 2; it was \"Invalid seed mask\" and exit 1 after reading the input. `create_rejects_a_bad_seed_mask_before_reading_input` in `sufr/tests/cli.rs` pins the new behaviour, and the CHANGELOG lists it under Changed.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "ff48244",
       "branch": "worktree-seed-mask-fromstr"
     },
-    "closed": null
+    "closed": {
+      "commit": "5223f77",
+      "branch": "worktree-seed-mask-fromstr"
+    }
   }
 }
