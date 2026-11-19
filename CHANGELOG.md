@@ -11,8 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Start `CHANGELOG.md` for changes made after `0.7.12`
 - Add `libsufr::SuffixArrayBuilder`, a builder-style API for creating a
-  suffix array from a sequence file (`from_sequence_file`) or from in-memory
-  text (`from_data`)
+  suffix array from a sequence file (`from_sequence_file`)
 - Add `libsufr::SoftMask` (`Fold`, `Preserve`, `Replace`) and
   `SuffixArrayBuilder::with_soft_mask`, which set how the build writes
   lowercase bytes into the text, and `SuffixArrayBuilder::with_starts`, which
@@ -27,16 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   need more is scanned once per budget.
 - Add `SuffixArray::open` and `SuffixArray::open_with`. `OpenOptions` and
   `SourceKind` choose whether the text and the suffix array are held in
-  memory or read from disk.
+  memory or read from disk. `OpenOptions` starts from `default()` and is
+  set with `with_text`, `with_suffixes` and `with_max_query_len`.
 - Add `SuffixArray::search`, `search_all` and `par_search_all`, which
   return `Hits` for each query. `Hits` gives the count, the ranks, the
-  suffixes, `locate` and `extract`.
+  suffixes, `locate` and `extract`. `Location` and `Extraction`, the
+  results of `locate` and `extract`, are `#[non_exhaustive]`: their
+  fields are public, and only libsufr builds one.
 - Add `Header` and `SuffixArray::header`, `suffixes`, `lcps` and `text`,
-  which read a file's header and its arrays by range. The byte positions
-  of the arrays in the header are not public.
+  which read a file's header and its arrays by range. `text` returns a
+  `Cow`, borrowed when the text is in memory. The byte positions of the
+  arrays in the header are not public.
 - Add the cargo feature `unstable` for low-level API, which may break in
   any release. It exports `Int`, `TypedSuffixArray`, the storage types
-  `Source`, `MemorySource` and `DiskSource`, and
+  `Source`, `MemorySource` and `DiskSource`,
+  `SuffixArrayBuilder::from_data`, which builds from text in memory and
+  checks neither the text nor the sequence starts, and
   `SuffixArrayBuilder::with_force_64bit`, which writes 64-bit integers
   for a text that fits 32-bit ones. `SuffixArray::open` reads either
   width. A `TypedSuffixArray` converts into a `SuffixArray` with `From`,

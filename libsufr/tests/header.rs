@@ -11,11 +11,7 @@ fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
         .build_to_file(&outpath)?;
     Ok(SuffixArray::open_with(
         &outpath,
-        &OpenOptions {
-            text: SourceKind::Memory,
-            suffixes: SourceKind::Disk,
-            max_query_len: None,
-        },
+        &OpenOptions::default().with_text(SourceKind::Memory),
     )?)
 }
 fn check_common(sufr: &SuffixArray) {
@@ -28,7 +24,7 @@ fn check_common(sufr: &SuffixArray) {
     assert_eq!(header.sequence_starts, [0]);
     assert_eq!(header.sequence_names, ["1"]);
     assert_eq!(header.seed_mask(), None);
-    assert_eq!(sufr.text(0..11).unwrap(), b"ACGTNNACGT$");
+    assert_eq!(&*sufr.text(0..11).unwrap(), b"ACGTNNACGT$");
 }
 
 #[test]

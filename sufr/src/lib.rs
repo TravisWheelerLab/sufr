@@ -3,8 +3,7 @@ use chrono::{DateTime, Local};
 use clap::{builder::PossibleValue, Parser, ValueEnum};
 use format_num::NumberFormat;
 use libsufr::{
-    Context, Hits, OpenOptions, SeedMask, SoftMask, SourceKind, SuffixArray,
-    SuffixArrayBuilder,
+    Hits, OpenOptions, SeedMask, SoftMask, SourceKind, SuffixArray, SuffixArrayBuilder,
 };
 use log::info;
 use rayon::prelude::*;
@@ -359,11 +358,10 @@ fn open_for_search(
     };
     Ok(SuffixArray::open_with(
         file,
-        &OpenOptions {
-            text,
-            suffixes,
-            max_query_len,
-        },
+        &OpenOptions::default()
+            .with_text(text)
+            .with_suffixes(suffixes)
+            .with_max_query_len(max_query_len),
     )?)
 }
 
@@ -460,11 +458,8 @@ pub fn extract(args: &ExtractArgs) -> Result<()> {
 
     let hits = suffix_array.par_search_all(&queries)?;
     for (query, hits) in queries.iter().zip(hits) {
-        let context = Context {
-            before: args.prefix_len.unwrap_or(0),
-            after: args.suffix_len,
-        };
-        let extractions = hits.extract(context)?;
+        let extractions =
+            hits.extract(args.prefix_len.unwrap_or(0), args.suffix_len)?;
         if extractions.is_empty() {
             eprintln!("{query} not found");
         }
@@ -494,13 +489,8 @@ pub fn list(args: &ListArgs) -> Result<()> {
     } else {
         SourceKind::Memory
     };
-    let suffix_array = SuffixArray::open_with(
-        &args.file,
-        &OpenOptions {
-            text,
-            ..OpenOptions::default()
-        },
-    )?;
+    let suffix_array =
+        SuffixArray::open_with(&args.file, &OpenOptions::default().with_text(text))?;
     let ranks = parse_ranks(&args.ranks)?;
 
     if args.show_lcp && !suffix_array.header().has_lcp() {
@@ -526,7 +516,7 @@ pub fn list(args: &ListArgs) -> Result<()> {
             row += &format!("{lcp:width$} ");
         }
         let end = args.len.map_or(text_len, |len| suffix + len);
-        row += &String::from_utf8(suffix_array.text(suffix..end)?)?;
+        row += str::from_utf8(&suffix_array.text(suffix..end)?)?;
         Ok(row)
     };
 

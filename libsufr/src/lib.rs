@@ -30,7 +30,7 @@ mod typed;
 pub use build::SuffixArrayBuilder;
 pub use error::{BuildError, InvalidSeedMask, OpenError, QueryError};
 pub use format::{Header, SeedMask, SoftMask};
-pub use search::{Context, Extraction, Hits, Location};
+pub use search::{Extraction, Hits, Location};
 pub use typed::SourceKind;
 
 #[cfg(feature = "unstable")]
@@ -48,16 +48,9 @@ pub use typed::TypedSuffixArray;
 /// the file was sorted with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpenOptions {
-    /// Where the text is read from.
-    pub text: SourceKind,
-
-    /// Where the suffix array is read from.
-    pub suffixes: SourceKind,
-
-    /// The number of leading query bytes a suffix must match to be a hit.
-    /// `None` uses the length the file was sorted to, and a longer value
-    /// is lowered to it.
-    pub max_query_len: Option<usize>,
+    text: SourceKind,
+    suffixes: SourceKind,
+    max_query_len: Option<usize>,
 }
 
 impl Default for OpenOptions {
@@ -70,8 +63,31 @@ impl Default for OpenOptions {
     }
 }
 
+impl OpenOptions {
+    /// Set where the text is read from (default: `SourceKind::Disk`).
+    pub fn with_text(mut self, text: SourceKind) -> Self {
+        self.text = text;
+        self
+    }
+
+    /// Set where the suffix array is read from (default: `SourceKind::Disk`).
+    pub fn with_suffixes(mut self, suffixes: SourceKind) -> Self {
+        self.suffixes = suffixes;
+        self
+    }
+
+    /// Set how much of a query a suffix must match to be a hit (default:
+    /// `None`): leading bytes, or care positions on a file sorted by a seed
+    /// mask. `None` or `Some(0)` uses the length the file was sorted to,
+    /// and a longer value is lowered to it.
+    pub fn with_max_query_len(mut self, max_query_len: Option<usize>) -> Self {
+        self.max_query_len = max_query_len;
+        self
+    }
+}
+
 use rayon::prelude::*;
-use std::{ops::Range, path::Path};
+use std::{borrow::Cow, ops::Range, path::Path};
 use typed::Queryable;
 
 /// A suffix array read from a _.sufr_ file.
@@ -150,8 +166,9 @@ impl SuffixArray {
         self.inner.lcps(ranks)
     }
 
-    /// The text in `range`, clipped to the end of the text.
-    pub fn text(&self, range: Range<usize>) -> Result<Vec<u8>, QueryError> {
+    /// The text in `range`, clipped to the end of the text. Borrowed when
+    /// the text is in memory.
+    pub fn text(&self, range: Range<usize>) -> Result<Cow<'_, [u8]>, QueryError> {
         let end = range.end.min(self.header().text_len);
         self.inner.text(range.start..end)
     }
@@ -164,14 +181,15 @@ impl SuffixArray {
         self.inner.locate(ranks)
     }
 
-    /// The suffixes at `ranks` with the window of their sequences that
-    /// `context` asks for.
+    /// The suffixes at `ranks` with a window of their sequences, as
+    /// [`Hits::extract`] takes it.
     pub(crate) fn extract(
         &self,
         ranks: Range<usize>,
-        context: Context,
+        before: usize,
+        after: Option<usize>,
     ) -> Result<Vec<Extraction<'_>>, QueryError> {
-        self.inner.extract(ranks, context)
+        self.inner.extract(ranks, before, after)
     }
 }
 
@@ -223,7 +241,7 @@ mod tests {
         assert_eq!(index.header.text_len, 18);
         assert_eq!(index.header.sequence_starts, [0, 9]);
         assert_eq!(index.header.sequence_names, ["ABC", "DEF"]);
-        assert_eq!(index.text(0..18)?, b"ACGTACGTNACGTACGT$");
+        assert_eq!(&*index.text(0..18)?, b"ACGTACGTNACGTACGT$");
 
         let file_sa = index.suffixes(0..index.header.num_suffixes)?;
         let sorted_sa = [17, 13, 9, 0, 4, 14, 10, 1, 5, 15, 11, 2, 6, 16, 12, 3, 7];
@@ -256,7 +274,7 @@ mod tests {
         assert_eq!(header.text_len, 11);
         assert_eq!(header.sequence_starts, [0]);
         assert_eq!(header.sequence_names, ["1"]);
-        assert_eq!(index.text(0..11)?, b"ACGTNNACGT$");
+        assert_eq!(&*index.text(0..11)?, b"ACGTNNACGT$");
         assert_eq!(header.num_suffixes, 11);
 
         let file_sa = index.suffixes(0..header.num_suffixes)?;
@@ -530,9 +548,9 @@ mod tests {
     #[test]
     fn test_suffix_array_text() -> Result<()> {
         let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
-        assert_eq!(suffix_array.text(0..11)?, b"ACGTNNACGT$");
-        assert_eq!(suffix_array.text(6..9)?, b"ACG");
-        assert_eq!(suffix_array.text(8..20)?, b"GT$");
+        assert_eq!(&*suffix_array.text(0..11)?, b"ACGTNNACGT$");
+        assert_eq!(&*suffix_array.text(6..9)?, b"ACG");
+        assert_eq!(&*suffix_array.text(8..20)?, b"GT$");
         assert!(suffix_array.text(12..13).is_err());
         Ok(())
     }

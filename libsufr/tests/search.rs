@@ -2,9 +2,7 @@
 //! worked out from the text by hand.
 
 use anyhow::Result;
-use libsufr::{
-    Context, Hits, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder,
-};
+use libsufr::{Hits, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder};
 use std::fs;
 use std::sync::OnceLock;
 use tempfile::{NamedTempFile, TempDir};
@@ -70,11 +68,10 @@ fn open(
     });
     Ok(SuffixArray::open_with(
         file.path(),
-        &OpenOptions {
-            text,
-            suffixes,
-            max_query_len,
-        },
+        &OpenOptions::default()
+            .with_text(text)
+            .with_suffixes(suffixes)
+            .with_max_query_len(max_query_len),
     )?)
 }
 
@@ -92,10 +89,11 @@ fn located(hits: &Hits) -> Result<Vec<(String, usize, usize)>> {
 /// since extract gives them in rank order.
 fn extracted(
     hits: &Hits,
-    context: Context,
+    before: usize,
+    after: Option<usize>,
 ) -> Result<Vec<(String, (usize, usize), usize)>> {
     let mut windows: Vec<_> = hits
-        .extract(context)?
+        .extract(before, after)?
         .iter()
         .map(|e| {
             (
@@ -129,12 +127,8 @@ fn every_mode_finds_the_same_hits() -> Result<()> {
             ],
             "{label}"
         );
-        let context = Context {
-            before: 1,
-            after: Some(2),
-        };
         assert_eq!(
-            extracted(&hits, context)?,
+            extracted(&hits, 1, Some(2))?,
             [
                 ("ABC".to_string(), (0, 2), 0),
                 ("ABC".to_string(), (3, 6), 1),
@@ -231,8 +225,8 @@ fn extract_windows_stop_at_the_sequence() -> Result<()> {
     let sa = open(&file, SourceKind::Memory, SourceKind::Memory, None)?;
     let hits = sa.search(b"ACGT")?;
     // the hit at DEF:4, where DEF is 8 bytes long
-    let on_def = |context| -> Result<_> {
-        Ok(extracted(&hits, context)?
+    let on_def = |before, after| -> Result<_> {
+        Ok(extracted(&hits, before, after)?
             .into_iter()
             .filter(|(name, _, _)| name == "DEF")
             .map(|(_, window, offset)| (window, offset))
@@ -246,8 +240,7 @@ fn extract_windows_stop_at_the_sequence() -> Result<()> {
         (1, Some(1), ((3, 5), 1)),
     ];
     for (before, after, expected) in cases {
-        let context = Context { before, after };
-        assert_eq!(on_def(context)?, Some(expected), "{context:?}");
+        assert_eq!(on_def(before, after)?, Some(expected), "{before} {after:?}");
     }
     Ok(())
 }

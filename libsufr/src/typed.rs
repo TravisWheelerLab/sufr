@@ -4,7 +4,7 @@ use crate::{
     error::{OpenError, QueryError},
     format::Header,
     io::{as_bytes, as_bytes_mut, Int},
-    search::{Context, Extraction, Location},
+    search::{Extraction, Location},
     source::{DiskSource, MemorySource, Source},
     OpenOptions,
 };
@@ -78,10 +78,10 @@ impl<W: Int> Subsample<W> {
 
 impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     /// Open a _.sufr_ file whose arrays hold `W` values, with its text in
-    /// `T` and its suffix array in `S`. `max_query_len` limits how many
-    /// characters of a query are compared. With `subsample`, the first
-    /// suffix of each group sharing that many characters is held in
-    /// memory and searched instead of the whole array.
+    /// `T` and its suffix array in `S`. `max_query_len` limits how much of a
+    /// query is compared, as [`crate::OpenOptions::with_max_query_len`]
+    /// counts it. With `subsample`, the first suffix of each group sharing
+    /// that much is held in memory and searched instead of the whole array.
     pub fn open(
         path: impl AsRef<Path>,
         max_query_len: Option<usize>,
@@ -196,11 +196,13 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         Ok(lcps.iter().map(|&v| v.to_usize()).collect())
     }
 
-    /// The text bytes in `range`.
-    pub(crate) fn text(&self, range: Range<usize>) -> Result<Vec<u8>, QueryError> {
+    /// The text bytes in `range`, borrowed when the text is in memory.
+    pub(crate) fn text(
+        &self,
+        range: Range<usize>,
+    ) -> Result<Cow<'_, [u8]>, QueryError> {
         check_range(&range, self.header.text_len)?;
-        let text = self.text.range(range).map_err(|e| self.query_error(e))?;
-        Ok(text.into_owned())
+        self.text.range(range).map_err(|e| self.query_error(e))
     }
 
     /// `source` as an error reading the file.
@@ -414,14 +416,15 @@ pub(crate) trait Queryable: Debug + Send + Sync {
 
     fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError>;
 
-    fn text(&self, range: Range<usize>) -> Result<Vec<u8>, QueryError>;
+    fn text(&self, range: Range<usize>) -> Result<Cow<'_, [u8]>, QueryError>;
 
     fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>, QueryError>;
 
     fn extract(
         &self,
         ranks: Range<usize>,
-        context: Context,
+        before: usize,
+        after: Option<usize>,
     ) -> Result<Vec<Extraction<'_>>, QueryError>;
 }
 
@@ -442,7 +445,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S
         TypedSuffixArray::lcps(self, ranks)
     }
 
-    fn text(&self, range: Range<usize>) -> Result<Vec<u8>, QueryError> {
+    fn text(&self, range: Range<usize>) -> Result<Cow<'_, [u8]>, QueryError> {
         TypedSuffixArray::text(self, range)
     }
 
@@ -453,9 +456,10 @@ impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S
     fn extract(
         &self,
         ranks: Range<usize>,
-        context: Context,
+        before: usize,
+        after: Option<usize>,
     ) -> Result<Vec<Extraction<'_>>, QueryError> {
-        TypedSuffixArray::extract(self, ranks, context)
+        TypedSuffixArray::extract(self, ranks, before, after)
     }
 }
 
@@ -607,8 +611,8 @@ mod tests {
             file, None, false,
         )?;
         let in_memory = Index::open(file, None, false)?;
-        assert_eq!(on_disk.text(0..5)?, b"ACGTN");
-        assert_eq!(in_memory.text(0..5)?, b"ACGTN");
+        assert_eq!(&*on_disk.text(0..5)?, b"ACGTN");
+        assert_eq!(&*in_memory.text(0..5)?, b"ACGTN");
         Ok(())
     }
 
@@ -686,7 +690,7 @@ mod tests {
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
         let mut builder =
-            SuffixArrayBuilder::from_data(text.to_vec(), vec![(0, "s".to_string())])
+            SuffixArrayBuilder::new(text.to_vec(), vec![(0, "s".to_string())])
                 .with_starts(b"ACGT")
                 .with_num_partitions(3)
                 .with_write_lcp(write_lcp);

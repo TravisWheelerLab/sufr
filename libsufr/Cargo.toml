@@ -14,7 +14,8 @@ authors = [
 
 [features]
 # Low-level API that may break in any release: the generic suffix array,
-# its storage types and SuffixArrayBuilder::with_force_64bit.
+# its storage types, SuffixArrayBuilder::from_data and
+# SuffixArrayBuilder::with_force_64bit.
 unstable = []
 
 [package.metadata.docs.rs]

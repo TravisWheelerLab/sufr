@@ -25,9 +25,8 @@ const SENTINEL_CHARACTER: u8 = b'$';
 
 /// Configuration and construction of a _.sufr_ file.
 ///
-/// Start from a sequence file with [`SuffixArrayBuilder::from_sequence_file`] or
-/// from text in memory with [`SuffixArrayBuilder::from_data`], set options, then
-/// write the file with [`SuffixArrayBuilder::build_to_file`].
+/// Start from a sequence file with [`SuffixArrayBuilder::from_sequence_file`],
+/// set options, then write the file with [`SuffixArrayBuilder::build_to_file`].
 pub struct SuffixArrayBuilder {
     text: Vec<u8>,
     sequences: Vec<(usize, String)>,
@@ -74,13 +73,23 @@ impl SuffixArrayBuilder {
             .into_iter()
             .zip(data.sequence_names)
             .collect();
-        Ok(Self::from_data(data.seq, sequences))
+        Ok(Self::new(data.seq, sequences))
     }
 
     /// A builder for `text`, whose `sequences` are given by start position
     /// and name, with a delimiter between each two that follows the rules
     /// of [`SuffixArrayBuilder::from_sequence_file`].
+    ///
+    /// `text` must end in the sentinel `$`, and `sequences` must be sorted
+    /// by start with the first at 0. Neither is checked, and a text that
+    /// breaks either can give a wrong file rather than an error.
+    #[cfg(feature = "unstable")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
     pub fn from_data(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
+        Self::new(text, sequences)
+    }
+
+    pub(crate) fn new(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
         // TODO: validate text and sequences?
         // - sequences should be sorted, first starting at 0, length < text.len(), no duplicates. If empty, default?
         Self {
@@ -1584,7 +1593,7 @@ mod test {
         let text = b"ACGTACGTAC$".to_vec();
         let outfile = NamedTempFile::new()?;
         let build = |mask: &str| {
-            SuffixArrayBuilder::from_data(text.clone(), vec![(0, "s".to_string())])
+            SuffixArrayBuilder::new(text.clone(), vec![(0, "s".to_string())])
                 .with_seed_mask(mask.parse().unwrap())
                 .build_to_file(outfile.path())
         };

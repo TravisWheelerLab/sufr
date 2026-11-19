@@ -1,5 +1,5 @@
 use anyhow::Result;
-use libsufr::{Context, SuffixArray};
+use libsufr::SuffixArray;
 
 fn main() -> Result<()> {
     // the text is ACGTNNACGT$
@@ -10,11 +10,7 @@ fn main() -> Result<()> {
     println!("count: {}", hits.count());
     println!("locate: {:?}", hits.locate()?);
 
-    let context = Context {
-        before: 1,
-        after: Some(3),
-    };
-    for extraction in hits.extract(context)? {
+    for extraction in hits.extract(1, Some(3))? {
         let start = extraction.location.sequence_start;
         let window = extraction.sequence_range;
         let text = suffix_array.text(start + window.start..start + window.end)?;

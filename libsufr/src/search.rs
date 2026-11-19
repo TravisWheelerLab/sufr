@@ -24,6 +24,7 @@ pub struct Hits<'a> {
 
 /// Where a hit falls in the sequences of the text.
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Location<'a> {
     /// The rank of the suffix in the suffix array.
     pub rank: usize,
@@ -41,19 +42,9 @@ pub struct Location<'a> {
     pub position: usize,
 }
 
-/// How much of a hit's sequence [`Hits::extract`] takes around it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Context {
-    /// Bytes before the hit, fewer at the start of the sequence.
-    pub before: usize,
-
-    /// Bytes from the start of the hit, or to the end of the sequence
-    /// when `None`; fewer at the end of the sequence.
-    pub after: Option<usize>,
-}
-
 /// A hit with the window of its sequence around it.
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Extraction<'a> {
     /// The hit.
     pub location: Location<'a>,
@@ -101,10 +92,15 @@ impl<'a> Hits<'a> {
         self.suffix_array.locate(self.ranks())
     }
 
-    /// The hits in rank order, each with the window of its sequence that
-    /// `context` asks for.
-    pub fn extract(&self, context: Context) -> Result<Vec<Extraction<'a>>, QueryError> {
-        self.suffix_array.extract(self.ranks(), context)
+    /// The hits in rank order, each with a window of its sequence: up to
+    /// `before` bytes before the hit and `after` bytes from its start, or
+    /// to the end of the sequence when `after` is `None`.
+    pub fn extract(
+        &self,
+        before: usize,
+        after: Option<usize>,
+    ) -> Result<Vec<Extraction<'a>>, QueryError> {
+        self.suffix_array.extract(self.ranks(), before, after)
     }
 }
 
@@ -330,12 +326,13 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     pub(crate) fn extract(
         &self,
         ranks: Range<usize>,
-        context: Context,
+        before: usize,
+        after: Option<usize>,
     ) -> Result<Vec<Extraction<'_>>, QueryError> {
         let suffixes = self.suffixes(ranks.clone())?;
         Ok(ranks
             .zip(suffixes)
-            .map(|(rank, suffix)| self.extraction(rank, suffix, context))
+            .map(|(rank, suffix)| self.extraction(rank, suffix, before, after))
             .collect())
     }
 
@@ -343,7 +340,8 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         &self,
         rank: usize,
         suffix: usize,
-        context: Context,
+        before: usize,
+        after: Option<usize>,
     ) -> Extraction<'_> {
         let seq_starts = &self.header.sequence_starts;
         let text_len = self.header.text_len;
@@ -359,11 +357,9 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
             seq_starts[i + 1] - 1
         } - sequence_start;
         let relative_suffix_start = suffix - sequence_start;
-        let context_start = relative_suffix_start.saturating_sub(context.before);
+        let context_start = relative_suffix_start.saturating_sub(before);
         let context_end = min(
-            context
-                .after
-                .map_or(sequence_len, |len| relative_suffix_start + len),
+            after.map_or(sequence_len, |len| relative_suffix_start + len),
             sequence_len,
         );
         Extraction {
@@ -382,7 +378,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Context, Extraction, Hits, Location};
+    use super::{Extraction, Hits, Location};
     use crate::{OpenOptions, SourceKind, SuffixArray};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
@@ -390,11 +386,9 @@ mod tests {
     fn open(file: &str, text: SourceKind, suffixes: SourceKind) -> Result<SuffixArray> {
         Ok(SuffixArray::open_with(
             file,
-            &OpenOptions {
-                text,
-                suffixes,
-                max_query_len: None,
-            },
+            &OpenOptions::default()
+                .with_text(text)
+                .with_suffixes(suffixes),
         )?)
     }
 
@@ -421,13 +415,10 @@ mod tests {
     /// The bytes of an extraction's window.
     fn window(sa: &SuffixArray, ex: &Extraction) -> Result<Vec<u8>> {
         let start = ex.location.sequence_start;
-        Ok(sa.text(start + ex.sequence_range.start..start + ex.sequence_range.end)?)
+        Ok(sa
+            .text(start + ex.sequence_range.start..start + ex.sequence_range.end)?
+            .into_owned())
     }
-
-    const ONE_THREE: Context = Context {
-        before: 1,
-        after: Some(3),
-    };
 
     #[test]
     fn test_count() -> Result<()> {
@@ -473,14 +464,14 @@ mod tests {
     #[test]
     fn test_extract_text_on_disk() -> Result<()> {
         let sa = open("../data/inputs/1.sufr", SourceKind::Disk, SourceKind::Disk)?;
-        let extractions = sa.search(b"ACG")?.extract(ONE_THREE)?;
+        let extractions = sa.search(b"ACG")?.extract(1, Some(3))?;
         assert_eq!(
             extractions,
             [extraction(6, 1, 5..9, 1), extraction(0, 2, 0..3, 0)]
         );
         assert_eq!(window(&sa, &extractions[0])?, b"NACG");
         assert_eq!(window(&sa, &extractions[1])?, b"ACG");
-        assert_eq!(sa.search(b"GTC")?.extract(ONE_THREE)?, []);
+        assert_eq!(sa.search(b"GTC")?.extract(1, Some(3))?, []);
         Ok(())
     }
 
@@ -494,7 +485,7 @@ mod tests {
         let extractions = sa
             .search_all(["AC", "GT", "XX"])?
             .iter()
-            .map(|hits| hits.extract(ONE_THREE))
+            .map(|hits| hits.extract(1, Some(3)))
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(
             extractions,
@@ -516,10 +507,7 @@ mod tests {
             SourceKind::Memory,
             SourceKind::Memory,
         )?;
-        let extractions = sa.search(b"CGT")?.extract(Context {
-            before: 1,
-            after: None,
-        })?;
+        let extractions = sa.search(b"CGT")?.extract(1, None)?;
         assert_eq!(
             extractions,
             [extraction(7, 3, 6..10, 1), extraction(1, 4, 0..10, 1)]
