@@ -3,7 +3,7 @@
   "title": "What becomes of with_force_64bit, the test-only u64 build?",
   "body": "`SuffixArrayBuilder::with_force_64bit` (`libsufr/src/build.rs:154`) is `pub(crate)` under `cfg(test)`. It makes a build of a small text write u64 integers, so the u64 construction path can be tested without a 4 GiB input. The one caller is the unit test at `lib.rs:270`, which reads the result through `TypedSuffixArray::<u64>::open` directly, because the public `open_with` picks the width from `text_len` and would read the file as u32. The format has no width field, which is sufr-fde85d.\n\nSo the hook writes files the format cannot describe, and the u64 path is tested only inside the crate: the integration oracle in `libsufr/tests/oracle.rs` runs at u32 only.\n\n## Options\n\n| option | what it gives | cost |\n|---|---|---|\n| keep it as it is | the one unit test | the oracle never sees u64 |\n| record the width in the header (sufr-fde85d), then make the hook public | the oracle runs every row at both widths through the public API, and a user can make u64 files on purpose | the format change |\n| delete it | one less test-only path in the builder | no u64 test at all short of a 4 GiB input |",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:48:42.629473275Z",
-  "updated_at": "2026-11-04T06:48:42.629473275Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-16T18:46:55.021702976Z",
+  "closed_at": "2026-11-13T21:27:35.406701138Z",
+  "close_reason": "Took the option to record the width and make the hook public, in bb556b8 on branch `worktree-release-0.8.0`. `SuffixArrayBuilder::with_force_64bit` is public, the u64 unit test in `lib.rs` opens its file through `SuffixArray::open`, and `libsufr/tests/oracle.rs` runs every case at both widths.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "73ac557",
       "branch": "refactor"
     },
-    "closed": null
+    "closed": {
+      "commit": "eb6d175",
+      "branch": "worktree-release-0.8.0"
+    }
   }
 }

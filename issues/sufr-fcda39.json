@@ -13,11 +13,21 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T06:52:52.515900909Z",
-  "updated_at": "2026-11-13T06:43:22.672609988Z",
+  "updated_at": "2026-11-16T19:53:12.940162638Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "0451d2da",
+      "at": "2026-11-16T19:28:19.62882087Z",
+      "author": "Jeb Rosen/8f73e884",
+      "text": "Commit 52144cf on dev removes `SuffixSortType` and `searched_len`. That takes two rows out of the table:\n\n- `Header::sort_type`'s `MaxQueryLen(0)` is now `Header::seed_mask()` returning `None`, so the header carries no 0 at all. The file still writes a zero-length mask.\n- `searched_len` is gone. With every unmasked file sorted on whole suffixes it always returned `max_query_len.unwrap_or(0)`, and `open` now computes that directly.\n\n`Header::sorted_len` returns `text_len` or the mask's weight with no 0 to translate. Still open: `TypedSuffixArray::max_query_len` stores 0 for \"compare the whole query\", and `OpenOptions::max_query_len` and `subsample_len` read `Some(0)` as `None`.",
+      "commit": "52144cf",
+      "branch": "worktree-drop-sort-type",
+      "edited_at": "2026-11-16T19:53:12.940162114Z"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "fa8eb70",

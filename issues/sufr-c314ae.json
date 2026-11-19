@@ -1,0 +1,31 @@
+{
+  "id": "sufr-c314ae",
+  "title": "libsufr depends on env_logger and num_cpus without using them",
+  "body": "At f085e43, `libsufr/Cargo.toml` lists `env_logger` and `num_cpus`, and nothing under `libsufr/src` uses either. The CLI declares both itself in `sufr/Cargo.toml` and uses them in `sufr/src/main.rs`.\n\n## Proposal\n\nRemove both from the dependencies of `libsufr`.",
+  "type": "feature",
+  "status": "closed",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": "Jeb Rosen/7a6b35e4",
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T20:31:56.855660858Z",
+  "updated_at": "2026-11-16T18:46:54.961313631Z",
+  "closed_at": "2026-11-13T21:14:10.503770944Z",
+  "close_reason": "Removed in bb556b8 on branch `worktree-release-0.8.0`, the squashed 0.8.0 commit. The workspace builds and its tests pass without them.",
+  "resolution": "done",
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f085e43",
+      "branch": "dev"
+    },
+    "closed": {
+      "commit": "22759b2",
+      "branch": "worktree-release-0.8.0"
+    }
+  }
+}

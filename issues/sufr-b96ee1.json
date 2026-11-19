@@ -1,0 +1,28 @@
+{
+  "id": "sufr-b96ee1",
+  "title": "Under a seed mask, --write-lcp stores some LCPs one too high when the text holds a byte below $",
+  "body": "`sort_partition` in `libsufr/src/build.rs` reads the LCP between two adjacent suffixes with unequal keys off the keys, with `Packing::shared_chars`. A suffix too short to fill its key is padded with rank 0, and `Packing::from_occupancy` gives rank 0 to the smallest byte in the text. That byte is the sentinel `$` unless the text holds a smaller one: a `-D '#'` delimiter, or a space, `!`, `\"` or `#` in non-DNA text. Then padding can equal a real character.\n\nUnder a seed mask, the shorter suffix's `$` can sit on a don't-care position, so its padding meets the other suffix's `#` at the next care position and counts as shared. With `-D '#' -s 11011 --write-lcp`, `GA$` against `GAG#A…` stores 3. The care positions 0, 1, 3 and 4 give 2, and dev at 657e16d stored 2.\n\nOn 2026-11-13, 200 random small FASTA inputs were built with `--write-lcp -n 4` by refactor 453e2d0 and dev 657e16d, and their `list -rsp` output compared:\n\n| flags | inputs that differ |\n|---|---|\n| `-D '#' -s 11011` | 32 |\n| `-D '#' -s 110111` | 32 |\n| `-D '#' -s 1011011` | 76 |\n| `-D '#'` unmasked, or with `-s 1101` or `-s 101` | 0 |\n| default delimiter with `-s 11011`, `-s 110111` or `-s 1011011`, or `-d -s 1011011` | 0 |\n\nOn the input checked by hand, `list -rs` matched dev, so the suffix order was right and only the LCPs differed.\n\n`TypedSuffixArray::subsample` in `libsufr/src/typed.rs` starts a group where the stored LCP falls below the cap, when the file has an LCP array. A value one too high could hide a group boundary, so `count` or `locate` under `-m` on such a file may miss hits. No input has shown that yet.\n\nA code reading says `SuffixArrayBuilder::from_data` on text that does not end in a unique `$` hits the same padding match without a mask. Nothing checks that text.\n\n## Proposal\n\nCap the value at what the shorter suffix holds, as `order_ties` already does for masked ties: masked, the count of care positions that fit before the text ends; unmasked, `n - max(a, b)`. Add a case to `table()` in `libsufr/tests/oracle.rs` with delimiter `#` and a mask of at least four care positions. No case there uses a delimiter below `$` today.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T20:31:27.553016114Z",
+  "updated_at": "2026-11-13T20:31:27.553016114Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "f085e43",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
