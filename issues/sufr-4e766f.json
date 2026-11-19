@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T21:49:55.872263082Z",
-  "updated_at": "2026-11-19T21:54:59.832096239Z",
+  "updated_at": "2026-11-19T22:15:03.830464473Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -22,9 +22,10 @@
       "id": "b25d4f4a",
       "at": "2026-11-19T21:54:59.800664764Z",
       "author": "Jeb Rosen/a9a34851",
-      "text": "All six changes are on branch `api-0.8-plan`, one commit each on top of `dev` at c97c6ae: 885e3cd (`#[non_exhaustive]`), ff19152 (`Context` removed), 4e49b5e (`OpenOptions` setters), 5d1d3d1 (`max_query_len` doc), a57e2ac (`text` returns a `Cow`) and ae8f7d1 (`from_data` under `unstable`). `CHANGELOG.md` follows each one. `cargo test --workspace --release` passes, and clippy shows only the two warnings `dev` already had. Not merged to `dev` yet.\n\nTwo details the plan left open:\n\n- `OpenOptions` starts from `Default` and has no `new()`.\n- Without `unstable`, the crate builds through `SuffixArrayBuilder::new`, which is `pub(crate)`, and `from_data` calls it.\n\nThe CLI's `--max-query-len` help still reads \"Maximum query length\", and says nothing about care positions or 0. `design/SOLUTIONS.md` on `design-goals` still lists these changes as not started.",
+      "text": "All six changes are in one commit, 57d1235 on branch `api-0.8-plan`, on top of `dev` at c97c6ae, with `CHANGELOG.md` updated to match. `cargo test --workspace --release` passes, and clippy shows only the two warnings `dev` already had. Not merged to `dev` yet.\n\nTwo details the plan left open:\n\n- `OpenOptions` starts from `Default` and has no `new()`.\n- Without `unstable`, the crate builds through `SuffixArrayBuilder::new`, which is `pub(crate)`, and `from_data` calls it.\n\nThe CLI's `--max-query-len` help still reads \"Maximum query length\", and says nothing about care positions or 0. `design/SOLUTIONS.md` on `design-goals` still lists these changes as not started.",
       "commit": "ae8f7d1",
-      "branch": "api-0.8-plan"
+      "branch": "api-0.8-plan",
+      "edited_at": "2026-11-19T22:15:03.830463968Z"
     }
   ],
   "stamps": {
