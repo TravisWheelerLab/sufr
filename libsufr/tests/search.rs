@@ -64,14 +64,14 @@ fn open(
         std::env::set_var("HOME", home.path());
         home
     });
-    SuffixArray::open_with(
+    Ok(SuffixArray::open_with(
         &file.path().to_string_lossy(),
         &OpenOptions {
             text,
             suffixes,
             max_query_len,
         },
-    )
+    )?)
 }
 
 /// Hits as (sequence name, position in it, position in the text), in

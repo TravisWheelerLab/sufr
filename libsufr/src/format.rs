@@ -1,12 +1,15 @@
 //! The _.sufr_ file layout
 
-use crate::io::write_all_at;
-use anyhow::{anyhow, bail, Result};
+use crate::{
+    error::{InvalidSeedMask, OpenError},
+    io::write_all_at,
+};
 use std::{
     fmt::{self, Display},
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
     mem,
+    path::Path,
     str::FromStr,
 };
 
@@ -90,30 +93,41 @@ pub struct Header {
 
 impl Header {
     /// Read the header of `filename`.
-    pub(crate) fn read(filename: &str) -> Result<Header> {
-        let mut file = File::open(filename).map_err(|e| anyhow!("{filename}: {e}"))?;
+    pub(crate) fn read(filename: &str) -> Result<Header, OpenError> {
+        let path = Path::new(filename);
+        let invalid = |reason: String| OpenError::Invalid {
+            path: path.to_path_buf(),
+            reason,
+        };
+        let read_error = |source| OpenError::io(path, source);
+        let mut file = File::open(path).map_err(read_error)?;
 
         let mut fixed = [0u8; SEQUENCE_STARTS];
-        file.read_exact(&mut fixed)?;
+        file.read_exact(&mut fixed).map_err(read_error)?;
         let version = fixed[VERSION];
         if version != OUTFILE_VERSION {
-            bail!("Unknown sufr version {version}");
+            return Err(OpenError::Version {
+                path: path.to_path_buf(),
+                found: version,
+            });
         }
         let int_size = fixed[INT_SIZE] as usize;
         if int_size != 4 && int_size != 8 {
-            bail!("{filename}: integer size {int_size} is not 4 or 8");
+            return Err(invalid(format!("integer size {int_size} is not 4 or 8")));
         }
         let u64_at =
             |pos: usize| u64::from_le_bytes(fixed[pos..pos + 8].try_into().unwrap());
 
         let text_len = u64_at(TEXT_LEN);
         if mem::size_of::<usize>() == 4 && text_len > usize::MAX as u64 {
-            bail!("text_len exceeds native usize");
+            return Err(invalid(format!(
+                "a text of {text_len} bytes is too long for this platform"
+            )));
         }
 
         let num_sequences = u64_at(NUM_SEQUENCES) as usize;
         let mut starts = vec![0u8; num_sequences * int_size];
-        file.read_exact(&mut starts)?;
+        file.read_exact(&mut starts).map_err(read_error)?;
         let sequence_starts = starts
             .chunks_exact(int_size)
             .map(|bytes| match int_size {
@@ -123,13 +137,16 @@ impl Header {
             .collect();
 
         let mut buffer = [0u8; 8];
-        file.read_exact(&mut buffer)?;
+        file.read_exact(&mut buffer).map_err(read_error)?;
         let mut seed_mask = vec![0u8; u64::from_le_bytes(buffer) as usize];
-        file.read_exact(&mut seed_mask)?;
+        file.read_exact(&mut seed_mask).map_err(read_error)?;
         let seed_mask = if seed_mask.is_empty() {
             None
         } else {
-            Some(SeedMask::from_bytes(&seed_mask)?)
+            let mask = SeedMask::from_bytes(&seed_mask);
+            Some(mask.ok_or_else(|| {
+                invalid(format!("invalid seed mask bytes {seed_mask:?}"))
+            })?)
         };
 
         let lcp_pos = u64_at(LCP_POS) as usize;
@@ -148,10 +165,12 @@ impl Header {
             lcp_pos: (lcp_pos > 0).then_some(lcp_pos),
         };
 
-        file.seek(SeekFrom::Start(header.names_pos() as u64))?;
+        file.seek(SeekFrom::Start(header.names_pos() as u64))
+            .map_err(read_error)?;
         let mut names = vec![];
-        file.read_to_end(&mut names)?;
-        header.sequence_names = bincode::deserialize(&names)?;
+        file.read_to_end(&mut names).map_err(read_error)?;
+        header.sequence_names = bincode::deserialize(&names)
+            .map_err(|e| invalid(format!("unreadable sequence names: {e}")))?;
 
         Ok(header)
     }
@@ -197,7 +216,7 @@ impl Header {
 
     /// Write the header and the sequence names into `file`, leaving
     /// the text and arrays to the caller. Returns the file's length.
-    pub(crate) fn write(&self, file: &File) -> Result<usize> {
+    pub(crate) fn write(&self, file: &File) -> io::Result<usize> {
         let seed_mask = self.seed_mask.as_ref().map_or(vec![], |m| m.to_bytes());
 
         let mut bytes = vec![
@@ -223,7 +242,8 @@ impl Header {
         debug_assert_eq!(bytes.len(), self.text_pos);
         write_all_at(file, &bytes, 0)?;
 
-        let names = bincode::serialize(&self.sequence_names)?;
+        let names =
+            bincode::serialize(&self.sequence_names).map_err(io::Error::other)?;
         write_all_at(file, &names, self.names_pos() as u64)?;
 
         Ok(self.names_pos() + names.len())
@@ -243,14 +263,13 @@ pub struct SeedMask {
 impl SeedMask {
     /// The mask stored in a _.sufr_ header as one 1 or 0 byte per
     /// position.
-    pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self> {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let cares = bytes.iter().map(|&b| match b {
             1 => Some(true),
             0 => Some(false),
             _ => None,
         });
         Self::from_cares(cares)
-            .ok_or_else(|| anyhow!("Invalid seed mask bytes {bytes:?}"))
     }
 
     fn from_cares(cares: impl Iterator<Item = Option<bool>>) -> Option<Self> {
@@ -289,15 +308,15 @@ impl SeedMask {
 }
 
 impl FromStr for SeedMask {
-    type Err = anyhow::Error;
+    type Err = InvalidSeedMask;
 
-    fn from_str(mask: &str) -> Result<Self> {
+    fn from_str(mask: &str) -> Result<Self, InvalidSeedMask> {
         let cares = mask.bytes().map(|b| match b {
             b'1' => Some(true),
             b'0' => Some(false),
             _ => None,
         });
-        Self::from_cares(cares).ok_or_else(|| anyhow!("Invalid seed mask '{mask}'"))
+        Self::from_cares(cares).ok_or(InvalidSeedMask)
     }
 }
 
@@ -313,6 +332,7 @@ impl Display for SeedMask {
 #[cfg(test)]
 mod tests {
     use super::{Header, SeedMask, OUTFILE_VERSION};
+    use crate::error::OpenError;
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use tempfile::NamedTempFile;
@@ -347,14 +367,28 @@ mod tests {
             // the same file with a width that is neither 4 nor 8
             crate::io::write_all_at(outfile.as_file(), &[2], 3)?;
             let err = Header::read(&path).unwrap_err();
-            assert!(err.to_string().ends_with("integer size 2 is not 4 or 8"));
+            assert!(
+                matches!(&err, OpenError::Invalid { reason, .. } if reason == "integer size 2 is not 4 or 8"),
+                "{err}"
+            );
 
             // the same file with the next version in its first byte
             crate::io::write_all_at(outfile.as_file(), &[OUTFILE_VERSION + 1], 0)?;
             let err = Header::read(&path).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                format!("Unknown sufr version {}", OUTFILE_VERSION + 1)
+            assert!(
+                matches!(err, OpenError::Version { found, .. } if found == OUTFILE_VERSION + 1),
+                "{err}"
+            );
+
+            // the original version and width, cut short inside the
+            // sequence starts at 52
+            crate::io::write_all_at(outfile.as_file(), &[OUTFILE_VERSION], 0)?;
+            crate::io::write_all_at(outfile.as_file(), &[int_size as u8], 3)?;
+            outfile.as_file().set_len(60)?;
+            let err = Header::read(&path).unwrap_err();
+            assert!(
+                matches!(&err, OpenError::Invalid { reason, .. } if reason == "the file ends early"),
+                "{err}"
             );
         }
         Ok(())
@@ -378,7 +412,7 @@ mod tests {
             let bytes = mask.to_bytes();
             let expected: Vec<u8> = text.bytes().map(|b| b - b'0').collect();
             assert_eq!(bytes, expected);
-            assert_eq!(SeedMask::from_bytes(&bytes)?, mask);
+            assert_eq!(SeedMask::from_bytes(&bytes), Some(mask));
         }
         Ok(())
     }
@@ -395,7 +429,7 @@ mod tests {
 
         let invalid: [&[u8]; 6] = [&[], &[1], &[1, 1], &[0, 1], &[1, 0], &[1, 2, 1]];
         for bytes in invalid {
-            assert!(SeedMask::from_bytes(bytes).is_err(), "{bytes:?}");
+            assert!(SeedMask::from_bytes(bytes).is_none(), "{bytes:?}");
         }
     }
 }

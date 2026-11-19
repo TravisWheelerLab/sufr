@@ -1,6 +1,5 @@
 //! Positioned file reads and writes, and the byte casts of the arrays
 
-use anyhow::{bail, Result};
 use rayon::prelude::*;
 use std::{
     fmt::Debug,
@@ -148,7 +147,7 @@ pub(crate) fn read_exact_at(
 }
 
 /// Write all of `buf` at `offset`, in parallel 64 MB chunks.
-pub(crate) fn write_all_at(file: &File, buf: &[u8], offset: u64) -> Result<()> {
+pub(crate) fn write_all_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
     const CHUNK_LEN: usize = 1 << 26;
     if buf.len() <= CHUNK_LEN {
         return write_whole_at(file, buf, offset);
@@ -160,11 +159,11 @@ pub(crate) fn write_all_at(file: &File, buf: &[u8], offset: u64) -> Result<()> {
         })
 }
 
-fn write_whole_at(file: &File, mut buf: &[u8], mut offset: u64) -> Result<()> {
+fn write_whole_at(file: &File, mut buf: &[u8], mut offset: u64) -> io::Result<()> {
     while !buf.is_empty() {
         let n = write_at(file, buf, offset)?;
         if n == 0 {
-            bail!("Failed to write to output file");
+            return Err(io::ErrorKind::WriteZero.into());
         }
         buf = &buf[n..];
         offset += n as u64;

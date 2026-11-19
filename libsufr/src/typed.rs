@@ -1,13 +1,13 @@
 //! A _.sufr_ file opened for queries
 
 use crate::{
+    error::{OpenError, QueryError},
     format::Header,
     io::{as_bytes, as_bytes_mut, Int},
     search::{Context, Extraction, Location},
     source::{DiskSource, MemorySource, Source},
     OpenOptions,
 };
-use anyhow::{anyhow, bail, Result};
 use home::home_dir;
 use log::info;
 use rayon::prelude::*;
@@ -16,7 +16,7 @@ use std::{
     cmp::min,
     fmt::Debug,
     fs::{self, File},
-    io::{Read, Write},
+    io::{self, Read, Write},
     mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -37,8 +37,8 @@ pub enum SourceKind {
 /// suffix array in `S`.
 #[derive(Debug)]
 pub struct TypedSuffixArray<W: Int, T: Source<u8>, S: Source<W>> {
-    /// The _.sufr_ filename.
-    pub(crate) filename: String,
+    /// The _.sufr_ file.
+    path: PathBuf,
 
     /// The file's header.
     pub(crate) header: Header,
@@ -85,28 +85,35 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         filename: &str,
         max_query_len: Option<usize>,
         subsample: bool,
-    ) -> Result<Self> {
+    ) -> Result<Self, OpenError> {
         let header = Header::read(filename)?;
-        if header.int_size != mem::size_of::<W>() {
-            bail!(
-                "{filename}: holds {}-byte integers, not {}",
-                header.int_size,
-                mem::size_of::<W>()
-            );
-        }
         let path = Path::new(filename);
-        let text = T::open(path, header.text_pos as u64, header.text_len)?;
+        if header.int_size != mem::size_of::<W>() {
+            return Err(OpenError::Invalid {
+                path: path.to_path_buf(),
+                reason: format!(
+                    "holds {}-byte integers, not {}",
+                    header.int_size,
+                    mem::size_of::<W>()
+                ),
+            });
+        }
+        let open_error = |e| OpenError::io(path, e);
+        let text = T::open(path, header.text_pos as u64, header.text_len)
+            .map_err(open_error)?;
         let suffixes =
-            S::open(path, header.suffix_array_pos as u64, header.num_suffixes)?;
+            S::open(path, header.suffix_array_pos as u64, header.num_suffixes)
+                .map_err(open_error)?;
         let lcps = match header.lcp_pos {
-            Some(lcp_pos) => {
-                Some(DiskSource::open(path, lcp_pos as u64, header.num_suffixes)?)
-            }
+            Some(lcp_pos) => Some(
+                DiskSource::open(path, lcp_pos as u64, header.num_suffixes)
+                    .map_err(open_error)?,
+            ),
             None => None,
         };
 
         let mut index = TypedSuffixArray {
-            filename: filename.to_string(),
+            path: path.to_path_buf(),
             header,
             text,
             suffixes,
@@ -123,12 +130,12 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     }
 
     /// The text byte at `pos`.
-    pub(crate) fn text_byte(&self, pos: usize) -> Result<Option<u8>> {
+    pub(crate) fn text_byte(&self, pos: usize) -> io::Result<Option<u8>> {
         self.text.get(pos)
     }
 
     /// The text bytes in `range`, borrowed when the text is in memory.
-    pub(crate) fn text_slice(&self, range: Range<usize>) -> Result<Cow<'_, [u8]>> {
+    pub(crate) fn text_slice(&self, range: Range<usize>) -> io::Result<Cow<'_, [u8]>> {
         self.text.range(range)
     }
 
@@ -141,7 +148,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     }
 
     /// The suffix at position `pos` of the suffixes a search runs over.
-    pub(crate) fn searched_suffix(&self, pos: usize) -> Result<Option<W>> {
+    pub(crate) fn searched_suffix(&self, pos: usize) -> io::Result<Option<W>> {
         match &self.subsample {
             Some(subsample) => Ok(subsample.suffixes.get(pos).copied()),
             None => self.suffixes.get(pos),
@@ -165,60 +172,81 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     }
 
     /// The positions in the text of the suffixes at `ranks`.
-    pub(crate) fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
-        Ok(self
+    pub(crate) fn suffixes(
+        &self,
+        ranks: Range<usize>,
+    ) -> Result<Vec<usize>, QueryError> {
+        check_range(&ranks, self.header.num_suffixes)?;
+        let suffixes = self
             .suffixes
-            .range(ranks)?
-            .iter()
-            .map(|&v| v.to_usize())
-            .collect())
+            .range(ranks)
+            .map_err(|e| self.query_error(e))?;
+        Ok(suffixes.iter().map(|&v| v.to_usize()).collect())
     }
 
     /// The LCP of each suffix at `ranks` with the suffix before it. An
     /// error when the file has no LCP array.
-    pub(crate) fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
-        match &self.lcps {
-            Some(lcps) => {
-                Ok(lcps.range(ranks)?.iter().map(|&v| v.to_usize()).collect())
-            }
-            None => bail!("{} has no LCP array", self.filename),
-        }
+    pub(crate) fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError> {
+        let Some(lcps) = &self.lcps else {
+            return Err(QueryError::NoLcp);
+        };
+        check_range(&ranks, self.header.num_suffixes)?;
+        let lcps = lcps.range(ranks).map_err(|e| self.query_error(e))?;
+        Ok(lcps.iter().map(|&v| v.to_usize()).collect())
     }
 
     /// The text bytes in `range`.
-    pub(crate) fn text(&self, range: Range<usize>) -> Result<Vec<u8>> {
-        Ok(self.text.range(range)?.into_owned())
+    pub(crate) fn text(&self, range: Range<usize>) -> Result<Vec<u8>, QueryError> {
+        check_range(&range, self.header.text_len)?;
+        let text = self.text.range(range).map_err(|e| self.query_error(e))?;
+        Ok(text.into_owned())
+    }
+
+    /// `source` as an error reading the file.
+    pub(crate) fn query_error(&self, source: io::Error) -> QueryError {
+        QueryError::Io {
+            path: self.path.clone(),
+            source,
+        }
     }
 
     /// Read the subsample for `max_query_len` from its cache file in
     /// `~/.sufr`, or compute it and write the cache file.
-    fn subsample_with_cache(&self, max_query_len: usize) -> Result<Subsample<W>> {
+    fn subsample_with_cache(
+        &self,
+        max_query_len: usize,
+    ) -> Result<Subsample<W>, OpenError> {
         let cache_dir = cache_dir()?;
-        let basename = Path::new(&self.filename)
+        let basename = self
+            .path
             .file_name()
             .unwrap()
             .to_string_lossy()
             .into_owned();
         let cache_path = cache_dir.join(format!("locate-{max_query_len}-{basename}"));
+        let cache_error = |e| OpenError::io(&cache_path, e);
 
         if let Ok(cache_meta) = fs::metadata(&cache_path) {
-            let source_meta = fs::metadata(&self.filename)?;
+            let source_meta =
+                fs::metadata(&self.path).map_err(|e| OpenError::io(&self.path, e))?;
             if let (Ok(source_modified), Ok(cache_modified)) =
                 (source_meta.modified(), cache_meta.modified())
             {
                 if source_modified > cache_modified {
                     info!("Removing stale cache {}", cache_path.display());
-                    fs::remove_file(&cache_path)?;
+                    fs::remove_file(&cache_path).map_err(cache_error)?;
                 }
             }
         }
 
         if cache_path.is_file() {
-            return self.read_cache(&cache_path);
+            return self.read_cache(&cache_path).map_err(cache_error);
         }
 
         let now = Instant::now();
-        let subsample = self.subsample(max_query_len)?;
+        let subsample = self
+            .subsample(max_query_len)
+            .map_err(|e| OpenError::io(&self.path, e))?;
         info!(
             "Loaded compressed SA ({}/{}) in {:?}",
             subsample.suffixes.len(),
@@ -226,15 +254,14 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
             now.elapsed()
         );
         if !subsample.suffixes.is_empty() {
-            write_cache(&cache_path, &subsample)?;
+            write_cache(&cache_path, &subsample).map_err(cache_error)?;
         }
         Ok(subsample)
     }
 
-    fn read_cache(&self, cache_path: &Path) -> Result<Subsample<W>> {
+    fn read_cache(&self, cache_path: &Path) -> io::Result<Subsample<W>> {
         let now = Instant::now();
-        let mut file = File::open(cache_path)
-            .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
+        let mut file = File::open(cache_path)?;
 
         // the cache file holds the subsample length (8
         // bytes, little-endian), the suffixes, then the ranks
@@ -260,7 +287,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     /// The first suffix of each group sharing a `max_query_len` prefix,
     /// with its rank, found from the LCP array when the file has one and
     /// otherwise from the text.
-    pub(crate) fn subsample(&self, max_query_len: usize) -> Result<Subsample<W>> {
+    pub(crate) fn subsample(&self, max_query_len: usize) -> io::Result<Subsample<W>> {
         let Some(lcps) = &self.lcps else {
             return self.subsample_by_text(max_query_len);
         };
@@ -289,7 +316,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     /// The subsample, keeping a suffix when the text of its first
     /// `max_query_len` bytes, or care positions under a seed mask,
     /// differs from its predecessor's.
-    fn subsample_by_text(&self, max_query_len: usize) -> Result<Subsample<W>> {
+    fn subsample_by_text(&self, max_query_len: usize) -> io::Result<Subsample<W>> {
         let now = Instant::now();
         let text_len = self.header.text_len;
         let text = self.text.range(0..text_len)?;
@@ -336,7 +363,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     fn keep_differing(
         &self,
         differs: impl Fn(usize, usize) -> bool + Sync,
-    ) -> Result<Subsample<W>> {
+    ) -> io::Result<Subsample<W>> {
         // compare within a block in parallel, carrying
         // the last suffix of the previous block across
         let num_suffixes = self.header.num_suffixes;
@@ -380,21 +407,21 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
 pub(crate) trait Queryable: Debug + Send + Sync {
     fn header(&self) -> &Header;
 
-    fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>>;
+    fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>, QueryError>;
 
-    fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>>;
+    fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError>;
 
-    fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>>;
+    fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError>;
 
-    fn text(&self, range: Range<usize>) -> Result<Vec<u8>>;
+    fn text(&self, range: Range<usize>) -> Result<Vec<u8>, QueryError>;
 
-    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>>;
+    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>, QueryError>;
 
     fn extract(
         &self,
         ranks: Range<usize>,
         context: Context,
-    ) -> Result<Vec<Extraction<'_>>>;
+    ) -> Result<Vec<Extraction<'_>>, QueryError>;
 }
 
 impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S> {
@@ -402,23 +429,23 @@ impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S
         &self.header
     }
 
-    fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>> {
+    fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>, QueryError> {
         TypedSuffixArray::matching_ranks(self, query)
     }
 
-    fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+    fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError> {
         TypedSuffixArray::suffixes(self, ranks)
     }
 
-    fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+    fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError> {
         TypedSuffixArray::lcps(self, ranks)
     }
 
-    fn text(&self, range: Range<usize>) -> Result<Vec<u8>> {
+    fn text(&self, range: Range<usize>) -> Result<Vec<u8>, QueryError> {
         TypedSuffixArray::text(self, range)
     }
 
-    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
+    fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>, QueryError> {
         TypedSuffixArray::locate(self, ranks)
     }
 
@@ -426,7 +453,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S
         &self,
         ranks: Range<usize>,
         context: Context,
-    ) -> Result<Vec<Extraction<'_>>> {
+    ) -> Result<Vec<Extraction<'_>>, QueryError> {
         TypedSuffixArray::extract(self, ranks, context)
     }
 }
@@ -436,7 +463,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S
 pub(crate) fn open(
     filename: &str,
     options: &OpenOptions,
-) -> Result<Box<dyn Queryable>> {
+) -> Result<Box<dyn Queryable>, OpenError> {
     use SourceKind::{Disk as D, Memory as M};
     let cap = options.max_query_len;
     let header = Header::read(filename)?;
@@ -494,19 +521,23 @@ pub(crate) fn open(
 }
 
 /// Find or create the `~/.sufr` directory.
-fn cache_dir() -> Result<PathBuf> {
-    let home = home_dir().expect("Failed to get home directory");
+fn cache_dir() -> Result<PathBuf, OpenError> {
+    let Some(home) = home_dir() else {
+        return Err(OpenError::io(
+            Path::new("~/.sufr"),
+            io::Error::new(io::ErrorKind::NotFound, "no home directory"),
+        ));
+    };
     let cache_dir = home.join(".sufr");
     // create_dir_all is Ok when the directory exists, so two
     // opens creating it at once do not race
-    fs::create_dir_all(&cache_dir)?;
+    fs::create_dir_all(&cache_dir).map_err(|e| OpenError::io(&cache_dir, e))?;
     Ok(cache_dir)
 }
 
-fn write_cache<W: Int>(cache_path: &Path, subsample: &Subsample<W>) -> Result<()> {
+fn write_cache<W: Int>(cache_path: &Path, subsample: &Subsample<W>) -> io::Result<()> {
     let now = Instant::now();
-    let mut file = File::create(cache_path)
-        .map_err(|e| anyhow!("{}: {e}", cache_path.display()))?;
+    let mut file = File::create(cache_path)?;
     file.write_all(&subsample.suffixes.len().to_le_bytes())?;
     file.write_all(as_bytes(&subsample.suffixes))?;
     file.write_all(as_bytes(&subsample.ranks))?;
@@ -515,6 +546,14 @@ fn write_cache<W: Int>(cache_path: &Path, subsample: &Subsample<W>) -> Result<()
         cache_path.display(),
         now.elapsed()
     );
+    Ok(())
+}
+
+/// An error unless `range` lies within `0..len`.
+fn check_range(range: &Range<usize>, len: usize) -> Result<(), QueryError> {
+    if range.start > range.end || range.end > len {
+        return Err(QueryError::OutOfRange { len });
+    }
     Ok(())
 }
 

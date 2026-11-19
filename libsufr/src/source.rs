@@ -7,29 +7,36 @@
 //! a caller picks the trade when it opens the file.
 
 use crate::io::{as_bytes_mut, read_exact_at, Int};
-use anyhow::{bail, Result};
 use std::{
-    borrow::Cow, fmt::Debug, fs::File, marker::PhantomData, mem::size_of, ops::Range,
-    path::Path, slice,
+    borrow::Cow, fmt::Debug, fs::File, io, marker::PhantomData, mem::size_of,
+    ops::Range, path::Path, slice,
 };
 
 /// Values addressable by index.
 pub trait Source<W: Int>: Debug + Send + Sync + Sized {
     /// The `len` values at byte `start` of the file at `path`.
-    fn open(path: &Path, start: u64, len: usize) -> Result<Self>;
+    fn open(path: &Path, start: u64, len: usize) -> io::Result<Self>;
 
     /// The number of values.
     fn len(&self) -> usize;
 
     /// The value at `i`, or `None` past the end.
-    fn get(&self, i: usize) -> Result<Option<W>>;
+    fn get(&self, i: usize) -> io::Result<Option<W>>;
 
     /// The values in `range`, borrowed when they are in memory.
     //
     // &self, not &mut self: a search shares one source across
     // the rayon pool, so a Read or Seek bound would put a Mutex
     // behind every on-disk read
-    fn range(&self, range: Range<usize>) -> Result<Cow<'_, [W]>>;
+    fn range(&self, range: Range<usize>) -> io::Result<Cow<'_, [W]>>;
+}
+
+/// The error for a `range` outside `0..len`.
+fn invalid_range(range: Range<usize>, len: usize) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("range {range:?} is outside 0..{len}"),
+    )
 }
 
 // ---
@@ -39,7 +46,7 @@ pub trait Source<W: Int>: Debug + Send + Sync + Sized {
 pub struct MemorySource<W>(pub Vec<W>);
 
 impl<W: Int> Source<W> for MemorySource<W> {
-    fn open(path: &Path, start: u64, len: usize) -> Result<Self> {
+    fn open(path: &Path, start: u64, len: usize) -> io::Result<Self> {
         let mut vals = vec![W::default(); len];
         read_exact_at(&File::open(path)?, as_bytes_mut(&mut vals), start)?;
         Ok(MemorySource(vals))
@@ -49,14 +56,14 @@ impl<W: Int> Source<W> for MemorySource<W> {
         self.0.len()
     }
 
-    fn get(&self, i: usize) -> Result<Option<W>> {
+    fn get(&self, i: usize) -> io::Result<Option<W>> {
         Ok(self.0.get(i).copied())
     }
 
-    fn range(&self, range: Range<usize>) -> Result<Cow<'_, [W]>> {
+    fn range(&self, range: Range<usize>) -> io::Result<Cow<'_, [W]>> {
         match self.0.get(range.clone()) {
             Some(vals) => Ok(Cow::Borrowed(vals)),
-            None => bail!("Invalid range: {range:?}"),
+            None => Err(invalid_range(range, self.0.len())),
         }
     }
 }
@@ -88,7 +95,7 @@ impl<W: Int> DiskSource<W> {
 }
 
 impl<W: Int> Source<W> for DiskSource<W> {
-    fn open(path: &Path, start: u64, len: usize) -> Result<Self> {
+    fn open(path: &Path, start: u64, len: usize) -> io::Result<Self> {
         Ok(DiskSource {
             file: File::open(path)?,
             start,
@@ -101,7 +108,7 @@ impl<W: Int> Source<W> for DiskSource<W> {
         self.len
     }
 
-    fn get(&self, i: usize) -> Result<Option<W>> {
+    fn get(&self, i: usize) -> io::Result<Option<W>> {
         if i >= self.len {
             return Ok(None);
         }
@@ -114,9 +121,9 @@ impl<W: Int> Source<W> for DiskSource<W> {
         Ok(Some(val))
     }
 
-    fn range(&self, range: Range<usize>) -> Result<Cow<'_, [W]>> {
+    fn range(&self, range: Range<usize>) -> io::Result<Cow<'_, [W]>> {
         if range.start > range.end || range.end > self.len {
-            bail!("Invalid range: {range:?}");
+            return Err(invalid_range(range, self.len));
         }
         let mut vals = vec![W::default(); range.len()];
         read_exact_at(&self.file, as_bytes_mut(&mut vals), self.byte(range.start))?;
@@ -175,9 +182,15 @@ mod tests {
         assert_eq!(in_memory.get(15)?, None);
 
         let res = suffixes.range(1..100);
-        assert_eq!(res.unwrap_err().to_string(), "Invalid range: 1..100");
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "range 1..100 is outside 0..15"
+        );
         let res = in_memory.range(1..100);
-        assert_eq!(res.unwrap_err().to_string(), "Invalid range: 1..100");
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "range 1..100 is outside 0..15"
+        );
 
         assert_eq!(&*suffixes.range(8..9)?, &[13]);
         assert_eq!(&*suffixes.range(8..13)?, &[13, 11, 9, 2, 4]);

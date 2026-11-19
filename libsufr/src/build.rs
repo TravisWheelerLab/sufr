@@ -1,9 +1,9 @@
 use crate::{
+    error::BuildError,
     format::{Header, SeedMask, OUTFILE_VERSION},
     io::{as_bytes, write_all_at, Int},
     lcp::{masked_lcp, suffix_lcp, LcpCache},
 };
-use anyhow::{anyhow, bail, Result};
 use log::info;
 use needletail::parse_fastx_file;
 use rayon::prelude::*;
@@ -11,10 +11,10 @@ use std::{
     cell::RefCell,
     cmp::{max, Ordering},
     fs::{self, File},
-    mem,
+    io, mem,
     ops::Range,
     path::Path,
-    sync::Mutex,
+    sync::{Mutex, PoisonError},
     time::Instant,
 };
 use thread_local::ThreadLocal;
@@ -69,7 +69,7 @@ impl SuffixArrayBuilder {
     pub fn from_sequence_file(
         path: impl AsRef<Path>,
         sequence_delimiter: u8,
-    ) -> Result<Self> {
+    ) -> Result<Self, BuildError> {
         // TODO: "must be" - should either be nonconfigurable or should support other values.
         let now = Instant::now();
         let data = read_sequence_file(path.as_ref(), sequence_delimiter)?;
@@ -145,7 +145,7 @@ impl SuffixArrayBuilder {
     }
 
     /// Build the suffix array and write it to `path`.
-    pub fn build_to_file(self, path: impl AsRef<Path>) -> Result<()> {
+    pub fn build_to_file(self, path: impl AsRef<Path>) -> Result<(), BuildError> {
         let path = path.as_ref();
         let fits_u32 = (self.text.len() as u64) < u32::MAX as u64 && !self.force_64bit;
         if fits_u32 {
@@ -157,7 +157,7 @@ impl SuffixArrayBuilder {
 
     /// Build the suffix array of the text with `W` per suffix and LCP and
     /// write it to `path`.
-    fn construct<W: Int>(mut self, path: &Path) -> Result<()> {
+    fn construct<W: Int>(mut self, path: &Path) -> Result<(), BuildError> {
         let mut text = mem::take(&mut self.text);
         let occupancy = normalize(&mut text, &self.alphabet);
         let text = text.as_slice();
@@ -180,8 +180,12 @@ impl SuffixArrayBuilder {
         keep: &[bool; 256],
         scheme: &S,
         path: &Path,
-    ) -> Result<()> {
+    ) -> Result<(), BuildError> {
         let packing = scheme.packing();
+        let output_error = |source| BuildError::Io {
+            path: path.to_path_buf(),
+            source,
+        };
         let bmi2 = has_bmi2();
 
         // ---
@@ -264,9 +268,8 @@ impl SuffixArrayBuilder {
         header.set_positions(self.write_lcp);
 
         let now = Instant::now();
-        let file =
-            File::create(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
-        write_all_at(&file, text, header.text_pos as u64)?;
+        let file = File::create(path).map_err(output_error)?;
+        write_all_at(&file, text, header.text_pos as u64).map_err(output_error)?;
 
         // ---
         // each turn scans the text for the suffixes of as many
@@ -299,9 +302,9 @@ impl SuffixArrayBuilder {
             // so the loop holds no call and keeps its state in registers
             (0..text.len().div_ceil(CHUNK_SIZE))
                 .into_par_iter()
-                .try_for_each_init(
+                .for_each_init(
                     || (vec![W::default(); CHUNK_SIZE], vec![0u64; CHUNK_SIZE]),
-                    |(suffixes, keys), chunk| -> Result<()> {
+                    |(suffixes, keys), chunk| {
                         let start = chunk * CHUNK_SIZE;
                         let end = (start + CHUNK_SIZE).min(text.len());
                         let range = start..end;
@@ -331,20 +334,22 @@ impl SuffixArrayBuilder {
                         for (p, run) in starts.windows(2).enumerate() {
                             let run = run[0]..run[1];
                             if !run.is_empty() {
-                                let mut g =
-                                    gathered[p].lock().map_err(|e| anyhow!("{e}"))?;
+                                // poisoned only when another chunk panicked,
+                                // and rayon resumes that panic
+                                let mut g = gathered[p]
+                                    .lock()
+                                    .unwrap_or_else(PoisonError::into_inner);
                                 g.0.extend_from_slice(&suffixes[run.clone()]);
                                 g.1.extend_from_slice(&keys[run]);
                             }
                         }
-                        Ok(())
                     },
-                )?;
+                );
 
-            let gathered = gathered
+            let gathered: Vec<_> = gathered
                 .into_iter()
-                .map(|g| g.into_inner().map_err(|e| anyhow!("{e}")))
-                .collect::<Result<Vec<_>>>()?;
+                .map(|g| g.into_inner().unwrap_or_else(PoisonError::into_inner))
+                .collect();
             info!(
                 "Gathered {} suffixes of partitions {first}..{} in {:?}",
                 gathered.iter().map(|g| g.0.len()).sum::<usize>(),
@@ -359,7 +364,7 @@ impl SuffixArrayBuilder {
             let sorted = gathered
                 .into_par_iter()
                 .enumerate()
-                .map(|(i, (suffixes, keys))| -> Result<(usize, usize)> {
+                .map(|(i, (suffixes, keys))| -> io::Result<(usize, usize)> {
                     let range = &ranges[first + i];
                     let len = suffixes.len();
                     let (sa, lcp) =
@@ -376,7 +381,8 @@ impl SuffixArrayBuilder {
                     }
                     Ok((sa[0].to_usize(), sa[len - 1].to_usize()))
                 })
-                .collect::<Result<Vec<_>>>()?;
+                .collect::<io::Result<Vec<_>>>()
+                .map_err(output_error)?;
 
             info!(
                 "Sorted partitions {first}..{} in {:?}",
@@ -404,11 +410,12 @@ impl SuffixArrayBuilder {
                 .collect();
             for (range, first_lcp) in ranges.iter().skip(1).zip(first_lcps) {
                 let at = lcp_pos + range.start * mem::size_of::<W>();
-                write_all_at(&file, as_bytes(&[first_lcp]), at as u64)?;
+                write_all_at(&file, as_bytes(&[first_lcp]), at as u64)
+                    .map_err(output_error)?;
             }
         }
 
-        header.write(&file)?;
+        header.write(&file).map_err(output_error)?;
         info!(
             "Wrote suffix array to '{}' in {:?}",
             path.display(),
@@ -491,15 +498,22 @@ struct SequenceFileData {
 
 /// Read the sequences in the FASTA/FASTQ file at `path`, joined by
 /// `sequence_delimiter`.
-fn read_sequence_file(path: &Path, sequence_delimiter: u8) -> Result<SequenceFileData> {
-    let mut reader = parse_fastx_file(path)?;
+fn read_sequence_file(
+    path: &Path,
+    sequence_delimiter: u8,
+) -> Result<SequenceFileData, BuildError> {
+    let input_error = |source: needletail::errors::ParseError| BuildError::Input {
+        path: path.to_path_buf(),
+        source: Box::new(source),
+    };
+    let mut reader = parse_fastx_file(path).map_err(input_error)?;
     let capacity = fs::metadata(path).map_or(0, |m| m.len() as usize);
     let mut seq: Vec<u8> = Vec::with_capacity(capacity);
     let mut sequence_names: Vec<String> = vec![];
     let mut start_positions: Vec<usize> = vec![];
     let mut i = 0;
     while let Some(rec) = reader.next() {
-        let rec = rec?;
+        let rec = rec.map_err(input_error)?;
         if i > 0 {
             seq.push(sequence_delimiter);
         }
@@ -509,7 +523,7 @@ fn read_sequence_file(path: &Path, sequence_delimiter: u8) -> Result<SequenceFil
         i += 1;
 
         // the name is the ID up to its first whitespace
-        let id = std::str::from_utf8(rec.id())?
+        let id = String::from_utf8_lossy(rec.id())
             .split_whitespace()
             .next()
             .map_or((i + 1).to_string(), |v| v.to_string());
@@ -773,25 +787,19 @@ pub(super) struct MaskedKeys {
 impl MaskedKeys {
     /// The keys for `mask`. The result is an error if a key cannot hold
     /// the mask.
-    pub(super) fn new(packing: Packing, mask: &SeedMask) -> Result<Self> {
+    pub(super) fn new(packing: Packing, mask: &SeedMask) -> Result<Self, BuildError> {
         let positions = mask.positions();
 
         // a key holds every care position of a mask, so the sort by key
         // is the whole sort under one; a longer mask is refused, as is
         // one spanning more windows than the scan rolls
-        if positions.len() > packing.chars_per_key {
-            bail!(
-                "the seed mask has {} care positions, and a key holds {} characters of this alphabet",
-                positions.len(),
-                packing.chars_per_key
-            );
-        }
-        if mask.len() > MAX_WINDOWS * packing.chars_per_key {
-            bail!(
-                "the seed mask spans {} characters, and the scan covers {} of this alphabet",
-                mask.len(),
-                MAX_WINDOWS * packing.chars_per_key
-            );
+        let max_weight = packing.chars_per_key;
+        let max_span = MAX_WINDOWS * packing.chars_per_key;
+        if positions.len() > max_weight || mask.len() > max_span {
+            return Err(BuildError::MaskLength {
+                max_weight,
+                max_span,
+            });
         }
 
         let windows = mask.len().div_ceil(packing.chars_per_key);
@@ -1325,7 +1333,7 @@ mod test {
         counting_sort, cut_partitions, find_lcp, keep_table, read_sequence_file, turns,
         Alphabet, KeyScheme, MaskedKeys, Packing, SuffixArrayBuilder,
     };
-    use crate::{format::SeedMask, SuffixArray};
+    use crate::{error::BuildError, format::SeedMask, SuffixArray};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::path::Path;
@@ -1569,11 +1577,21 @@ mod test {
         let outfile = NamedTempFile::new()?;
         let build = |mask: &str| {
             SuffixArrayBuilder::from_data(text.clone(), vec![(0, "s".to_string())])
-                .with_seed_mask(mask.parse()?)
+                .with_seed_mask(mask.parse().unwrap())
                 .build_to_file(outfile.path())
         };
         assert!(build(&format!("{}01", "1".repeat(20))).is_ok());
-        assert!(build(&format!("{}01", "1".repeat(21))).is_err());
+        let err = build(&format!("{}01", "1".repeat(21))).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                BuildError::MaskLength {
+                    max_weight: 21,
+                    max_span: 84
+                }
+            ),
+            "{err}"
+        );
         Ok(())
     }
 

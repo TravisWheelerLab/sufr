@@ -349,14 +349,14 @@ fn open_for_search(
     } else {
         SourceKind::Memory
     };
-    SuffixArray::open_with(
+    Ok(SuffixArray::open_with(
         file,
         &OpenOptions {
             text,
             suffixes,
             max_query_len,
         },
-    )
+    )?)
 }
 
 /// The named output file, or stdout.

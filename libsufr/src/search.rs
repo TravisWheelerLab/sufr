@@ -1,15 +1,16 @@
 //! Search a suffix array
 
 use crate::{
+    error::QueryError,
     io::Int,
     lcp::{lcp, mask_offset, masked_lcp},
     source::Source,
     typed::TypedSuffixArray,
     SuffixArray,
 };
-use anyhow::Result;
 use std::{
     cmp::{min, Ordering},
+    io,
     ops::Range,
 };
 
@@ -90,19 +91,19 @@ impl<'a> Hits<'a> {
     }
 
     /// The positions of the hits in the text, in rank order.
-    pub fn suffixes(&self) -> Result<Vec<usize>> {
+    pub fn suffixes(&self) -> Result<Vec<usize>, QueryError> {
         self.suffix_array.suffixes(self.ranks())
     }
 
     /// The hits within their sequences, sorted by sequence name and then
     /// by position.
-    pub fn locate(&self) -> Result<Vec<Location<'a>>> {
+    pub fn locate(&self) -> Result<Vec<Location<'a>>, QueryError> {
         self.suffix_array.locate(self.ranks())
     }
 
     /// The hits in rank order, each with the window of its sequence that
     /// `context` asks for.
-    pub fn extract(&self, context: Context) -> Result<Vec<Extraction<'a>>> {
+    pub fn extract(&self, context: Context) -> Result<Vec<Extraction<'a>>, QueryError> {
         self.suffix_array.extract(self.ranks(), context)
     }
 }
@@ -119,13 +120,18 @@ struct Comparison {
 
 impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     /// The ranks of the suffixes matching `query`, empty when none match.
-    pub(crate) fn matching_ranks(&self, query: &[u8]) -> Result<Range<usize>> {
+    pub(crate) fn matching_ranks(
+        &self,
+        query: &[u8],
+    ) -> Result<Range<usize>, QueryError> {
         let n = self.num_searched();
-        let Some(start) = self.first_match(query, 0, n - 1, 0, 0)? else {
+        let first = self.first_match(query, 0, n - 1, 0, 0);
+        let Some(start) = first.map_err(|e| self.query_error(e))? else {
             return Ok(0..0);
         };
         let end = self
-            .last_match(query, start, n - 1, n, 0, 0)?
+            .last_match(query, start, n - 1, n, 0, 0)
+            .map_err(|e| self.query_error(e))?
             .unwrap_or(start);
         Ok(self.searched_ranks(start, end))
     }
@@ -137,7 +143,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         high: usize,
         left_lcp: usize,
         right_lcp: usize,
-    ) -> Result<Option<usize>> {
+    ) -> io::Result<Option<usize>> {
         if high >= low {
             let mid = low + ((high - low) / 2);
             let Some(mid_val) = self.searched_suffix(mid)? else {
@@ -181,7 +187,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         n: usize,
         left_lcp: usize,
         right_lcp: usize,
-    ) -> Result<Option<usize>> {
+    ) -> io::Result<Option<usize>> {
         if high >= low {
             let mid = low + ((high - low) / 2);
             let Some(mid_val) = self.searched_suffix(mid)? else {
@@ -224,7 +230,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         query: &[u8],
         suffix_pos: usize,
         skip: usize,
-    ) -> Result<Comparison> {
+    ) -> io::Result<Comparison> {
         let max_query_len = self.max_query_len;
         let lcp = self.query_lcp(query, suffix_pos, skip)?;
         let cmp = if (max_query_len > 0) && (lcp >= max_query_len) {
@@ -254,7 +260,12 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
 
     /// The LCP of `query` and the suffix at `suffix_pos`, which share their
     /// first `skip` characters, counted in care positions under a seed mask.
-    fn query_lcp(&self, query: &[u8], suffix_pos: usize, skip: usize) -> Result<usize> {
+    fn query_lcp(
+        &self,
+        query: &[u8],
+        suffix_pos: usize,
+        skip: usize,
+    ) -> io::Result<usize> {
         let text_len = self.header.text_len;
         let max_query_len = self.max_query_len;
         Ok(match self.header.seed_mask() {
@@ -293,7 +304,10 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         })
     }
 
-    pub(crate) fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
+    pub(crate) fn locate(
+        &self,
+        ranks: Range<usize>,
+    ) -> Result<Vec<Location<'_>>, QueryError> {
         let seq_starts = &self.header.sequence_starts;
         let suffixes = self.suffixes(ranks.clone())?;
         let mut locations: Vec<Location> = ranks
@@ -317,7 +331,7 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
         &self,
         ranks: Range<usize>,
         context: Context,
-    ) -> Result<Vec<Extraction<'_>>> {
+    ) -> Result<Vec<Extraction<'_>>, QueryError> {
         let suffixes = self.suffixes(ranks.clone())?;
         Ok(ranks
             .zip(suffixes)
@@ -374,14 +388,14 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     fn open(file: &str, text: SourceKind, suffixes: SourceKind) -> Result<SuffixArray> {
-        SuffixArray::open_with(
+        Ok(SuffixArray::open_with(
             file,
             &OpenOptions {
                 text,
                 suffixes,
                 max_query_len: None,
             },
-        )
+        )?)
     }
 
     /// An extraction from a one-sequence file, whose sequence starts at 0.
@@ -407,7 +421,7 @@ mod tests {
     /// The bytes of an extraction's window.
     fn window(sa: &SuffixArray, ex: &Extraction) -> Result<Vec<u8>> {
         let start = ex.location.sequence_start;
-        sa.text(start + ex.sequence_range.start..start + ex.sequence_range.end)
+        Ok(sa.text(start + ex.sequence_range.start..start + ex.sequence_range.end)?)
     }
 
     const ONE_THREE: Context = Context {
@@ -481,7 +495,7 @@ mod tests {
             .search_all(["AC", "GT", "XX"])?
             .iter()
             .map(|hits| hits.extract(ONE_THREE))
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(
             extractions,
             [

@@ -19,6 +19,7 @@
 //! * Travis Wheeler <twheeler@arizona.edu>
 
 mod build;
+mod error;
 mod format;
 mod io;
 mod lcp;
@@ -27,6 +28,7 @@ mod source;
 mod typed;
 
 pub use build::{Alphabet, SuffixArrayBuilder};
+pub use error::{BuildError, InvalidSeedMask, OpenError, QueryError};
 pub use format::{Header, SeedMask, OUTFILE_VERSION};
 pub use search::{Context, Extraction, Hits, Location};
 pub use typed::SourceKind;
@@ -68,7 +70,6 @@ impl Default for OpenOptions {
     }
 }
 
-use anyhow::{bail, Result};
 use rayon::prelude::*;
 use std::ops::Range;
 use typed::Queryable;
@@ -82,12 +83,15 @@ pub struct SuffixArray {
 impl SuffixArray {
     /// Open a _.sufr_ file with the default [`OpenOptions`]: the text and
     /// the suffix array stay on disk.
-    pub fn open(filename: &str) -> Result<SuffixArray> {
+    pub fn open(filename: &str) -> Result<SuffixArray, OpenError> {
         SuffixArray::open_with(filename, &OpenOptions::default())
     }
 
     /// Open a _.sufr_ file.
-    pub fn open_with(filename: &str, options: &OpenOptions) -> Result<SuffixArray> {
+    pub fn open_with(
+        filename: &str,
+        options: &OpenOptions,
+    ) -> Result<SuffixArray, OpenError> {
         Ok(SuffixArray {
             inner: typed::open(filename, options)?,
         })
@@ -95,7 +99,7 @@ impl SuffixArray {
 
     /// Find the suffixes matching `query`. An error is a failed read of
     /// the file.
-    pub fn search(&self, query: &[u8]) -> Result<Hits<'_>> {
+    pub fn search(&self, query: &[u8]) -> Result<Hits<'_>, QueryError> {
         Ok(Hits::new(self, self.inner.matching_ranks(query)?))
     }
 
@@ -103,7 +107,7 @@ impl SuffixArray {
     pub fn search_all<Q>(
         &self,
         queries: impl IntoIterator<Item = Q>,
-    ) -> Result<Vec<Hits<'_>>>
+    ) -> Result<Vec<Hits<'_>>, QueryError>
     where
         Q: AsRef<[u8]>,
     {
@@ -117,7 +121,7 @@ impl SuffixArray {
     pub fn par_search_all<Q>(
         &self,
         queries: impl IntoIterator<Item = Q>,
-    ) -> Result<Vec<Hits<'_>>>
+    ) -> Result<Vec<Hits<'_>>, QueryError>
     where
         Q: AsRef<[u8]> + Sync,
     {
@@ -136,27 +140,27 @@ impl SuffixArray {
 
     /// The positions in the text of the suffixes at `ranks`, in rank
     /// order.
-    pub fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+    pub fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError> {
         self.inner.suffixes(ranks)
     }
 
     /// The LCP of each suffix at `ranks` with the suffix before it, in
     /// rank order. An error when the file has no LCP array.
-    pub fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>> {
+    pub fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError> {
         self.inner.lcps(ranks)
     }
 
     /// The text in `range`, clipped to the end of the text.
-    pub fn text(&self, range: Range<usize>) -> Result<Vec<u8>> {
+    pub fn text(&self, range: Range<usize>) -> Result<Vec<u8>, QueryError> {
         let end = range.end.min(self.header().text_len);
-        if range.start > end {
-            bail!("Invalid range: {range:?}");
-        }
         self.inner.text(range.start..end)
     }
 
     /// The suffixes at `ranks` within their sequences.
-    pub(crate) fn locate(&self, ranks: Range<usize>) -> Result<Vec<Location<'_>>> {
+    pub(crate) fn locate(
+        &self,
+        ranks: Range<usize>,
+    ) -> Result<Vec<Location<'_>>, QueryError> {
         self.inner.locate(ranks)
     }
 
@@ -166,7 +170,7 @@ impl SuffixArray {
         &self,
         ranks: Range<usize>,
         context: Context,
-    ) -> Result<Vec<Extraction<'_>>> {
+    ) -> Result<Vec<Extraction<'_>>, QueryError> {
         self.inner.extract(ranks, context)
     }
 }

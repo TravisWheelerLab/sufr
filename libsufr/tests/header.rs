@@ -11,14 +11,14 @@ fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
         })
         .with_write_lcp(write_lcp)
         .build_to_file(&outpath)?;
-    SuffixArray::open_with(
+    Ok(SuffixArray::open_with(
         &outpath,
         &OpenOptions {
             text: SourceKind::Memory,
             suffixes: SourceKind::Disk,
             max_query_len: None,
         },
-    )
+    )?)
 }
 fn check_common(sufr: &SuffixArray) {
     let header = sufr.header();

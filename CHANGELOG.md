@@ -108,6 +108,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An `extract` window holds only its sequence's own bytes. It no longer
   includes the sequence delimiter or the sentinel, and no longer runs into
   the next sequence.
+- (breaking) `libsufr` returns its own error types in place of
+  `anyhow::Error`: `BuildError` from `SuffixArrayBuilder::from_sequence_file`
+  and `build_to_file`, `OpenError` from `SuffixArray::open` and `open_with`,
+  `QueryError` from the searches, from `suffixes`, `lcps` and `text`, and
+  from the methods of `Hits`, and `InvalidSeedMask` from parsing a
+  `SeedMask`. An error about a file carries its path. The three enums are
+  `#[non_exhaustive]`, so a `match` on one needs a `_` arm. Under the
+  `typed` feature, the `Source` trait returns `std::io::Result`.
+- `SuffixArrayBuilder::from_sequence_file` replaces bytes in a record ID
+  that are not valid UTF-8 with U+FFFD. It used to fail the build.
 
 ### Removed
 
@@ -150,6 +160,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `SuffixArray::open_with` returns an error instead of panicking when it
+  needs the subsample cache and finds no home directory.
+- The error for a file of another format version names the file.
 - `Header::read` and `SuffixArray::open` refuse a file whose seed mask
   would not parse as a `SeedMask`. Previously these would drop bytes other than 0
   and 1, and accept a mask with no 0 or one that starts or ends with 0.
