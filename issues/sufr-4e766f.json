@@ -1,0 +1,28 @@
+{
+  "id": "sufr-4e766f",
+  "title": "The libsufr API changes planned for 0.8.0 land on dev",
+  "body": "`design/SOLUTIONS.md` on branch `design-goals` (2b3f8d9) lists planned changes to the libsufr public API, none of them started on `dev` at c97c6ae. Six of them break callers or change a public doc, so they land before 0.8.0:\n\n| change | where |\n|---|---|\n| `Location` and `Extraction` are `#[non_exhaustive]` and keep their public fields | `libsufr/src/search.rs` |\n| `Context` is removed, and `Hits::extract` takes `before: usize` and `after: Option<usize>` | `search.rs`, the CLI's `extract`, `libsufr/examples/search.rs`, the tests |\n| `OpenOptions` has private fields and `with_` setters | `libsufr/src/lib.rs`, the CLI's `open_for_search` and `list` |\n| `SuffixArray::text` returns `Cow<[u8]>`, borrowed when the text is in memory | `lib.rs`, `typed.rs` |\n| `SuffixArrayBuilder::from_data` is public only under `unstable` | `libsufr/src/build.rs` |\n| the doc of `max_query_len` says `Some(0)` means `None`, and that on a masked file it counts care positions | `lib.rs`, `TypedSuffixArray::open` |\n\n## Out of scope\n\n- The subsample cache, which waits on the decision in sufr-22b9c3.\n- Iterators beside `Hits::suffixes`, `locate`, `extract` and `search_all`, which `SOLUTIONS.md` leaves to a later release.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-19T21:49:55.872263082Z",
+  "updated_at": "2026-11-19T21:49:55.872263082Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "c97c6ae",
+      "branch": "api-0.8-plan"
+    },
+    "closed": null
+  }
+}
