@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:51:45.832196332Z",
-  "updated_at": "2026-11-19T23:30:13.277198756Z",
+  "updated_at": "2026-11-19T23:35:15.517049747Z",
   "closed_at": "2026-11-19T23:30:13.277198756Z",
   "close_reason": "Both checks are done. The hs1 comparison is in the note of 2026-11-13: f085e43 matched 657e16d byte for byte. Jack checked `lcp_neon` on Apple silicon before Jeb merged it in b5d5c29, and the note of 2026-11-19 records a second run at dev 57d1235 with the tests from branch `lcp-mismatch-test`.",
   "resolution": "done",
@@ -48,9 +48,10 @@
       "id": "01ae77d3",
       "at": "2026-11-19T23:29:32.962852335Z",
       "author": "Jack Roddy/88f99b87",
-      "text": "Checked again at `d2437d9` on branch `lcp-mismatch-test`, which is dev `57d1235` plus two tests in `libsufr/src/lcp.rs`. Jack ran the first check before Jeb merged `lcp_neon` in `b5d5c29`. This run records the results at current dev.\n\n- `cargo test --workspace --release` passes on an Apple M4, 111 tests.\n- `lcp_matches_lcp_scalar_at_every_mismatch` compares `lcp` with `lcp_scalar` at every first mismatch up to 3,072 bytes. `lcp_with_a_true_cache_entry_matches_lcp_scalar` does the same within 70 bytes of the cache probes at 1,024 and 2,048. Both pass with NEON on the M4 and with AVX2 on a Ryzen 7 9800X3D.\n- Seven builds of the suite's 10 MiB fixtures at 4 threads gave the same sha256 on both machines:\n\n| input | flags | sha256 |\n|---|---|---|\n| dna-10 | `-d --write-lcp` | 7470fb0ca9d90cd0 |\n| dna-10 | `-d -s 11011011011011011 --write-lcp` | 8effb1dab3bcb98a |\n| long-repeats-10 | `-d --write-lcp` | 16d8bae30365ef62 |\n| long-repeats-10 | `-d -s 1110111 --write-lcp` | 77648104ffd91cb1 |\n| long-n-10 | `--write-lcp` | 366b5c723ed0c32f |\n| protein-10 | `--write-lcp` | b772261d45c51926 |\n| protein-10 | `-s 11011 --write-lcp` | a2802b8670732a5f |\n\nlong-repeats-10 is ten copies of a 1 MiB unit, so its LCPs run to about a megabyte and pass through the cache probes in `lcp_neon`.",
+      "text": "Checked again at `410b9c7` on branch `lcp-mismatch-test`, which is dev `57d1235` plus two tests in `libsufr/src/lcp.rs`. Jack ran the first check before Jeb merged `lcp_neon` in `b5d5c29`. This run records the results at current dev.\n\n- `cargo test --workspace --release` passes on an Apple M4, 111 tests.\n- `lcp_matches_lcp_scalar_at_every_mismatch` compares `lcp` with `lcp_scalar` at every first mismatch in a 3,109-byte pair, which leaves a scalar tail on both vector widths. `lcp_uses_a_cache_entry_at_each_probe` puts a cache entry at the probe at 1,024 and then at 2,048, and checks that the probe is used, that a true entry gives the `lcp_scalar` result, and that an entry past the slice end is clamped. Both pass with NEON on the M4 and with AVX2 on a Ryzen 7 9800X3D. On both machines a test fails when the lane index is computed wrong, when the probe result is not clamped, or when only the first probe is looked up.\n- Seven builds of the suite's 10 MiB fixtures at 4 threads, made with `d2437d9`, which differs from `410b9c7` only in the tests, gave the same sha256 on both machines:\n\n| input | flags | sha256 |\n|---|---|---|\n| dna-10 | `-d --write-lcp` | 7470fb0ca9d90cd0 |\n| dna-10 | `-d -s 11011011011011011 --write-lcp` | 8effb1dab3bcb98a |\n| long-repeats-10 | `-d --write-lcp` | 16d8bae30365ef62 |\n| long-repeats-10 | `-d -s 1110111 --write-lcp` | 77648104ffd91cb1 |\n| long-n-10 | `--write-lcp` | 366b5c723ed0c32f |\n| protein-10 | `--write-lcp` | b772261d45c51926 |\n| protein-10 | `-s 11011 --write-lcp` | a2802b8670732a5f |\n\nlong-repeats-10 is ten copies of a 1 MiB unit, so its LCPs run to about a megabyte and pass through the cache probes in `lcp_neon`.",
       "commit": "57d1235",
-      "branch": "dev"
+      "branch": "dev",
+      "edited_at": "2026-11-19T23:35:15.517049437Z"
     }
   ],
   "stamps": {
