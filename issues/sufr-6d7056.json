@@ -3,7 +3,7 @@
   "title": "Should Alphabet split into soft-mask handling, indexed starts, key symbols and structural ranks?",
   "body": "`Alphabet` in `libsufr/src/build.rs` has three variants: `Dna { ignore_softmask }`, `Amino` and `Bytes`. The CLI picks `Dna` with `-d` and `Bytes` otherwise. No flag selects `Amino`, and the build treats it exactly like `Bytes`. The build reads the alphabet in two places, and two related settings never consult it:\n\n| Concern | Code | What sets it today |\n|---|---|---|\n| Rewriting the text | `normalize` | Every variant uppercases lowercase bytes. `Dna { ignore_softmask: true }` writes `N` over them instead. |\n| Which suffixes are indexed | `keep_table` | `Dna` keeps suffixes starting with `A`, `C`, `G`, `T` or `$`. The others keep all of them. |\n| Ranks in the key | `Packing::from_occupancy` | The distinct bytes the text holds. The alphabet plays no part. |\n| Sentinel and delimiter | `SENTINEL_CHARACTER`, `-D` | Byte values. They work only when they sort below every other byte in the text. |\n\nThe header stores `is_dna` and `ignore_softmask`. Only `summarize` reads them.\n\nMixing these concerns causes the following:\n\n- `-i` excludes soft-masked suffixes only because `normalize` writes `N` and `keep_table` then drops suffixes that start with `N`. The clap definition therefore has `requires = \"is_dna\"`, so the flag cannot apply to protein.\n- Under `-i` the file stores `N` in place of the soft-masked bases, and `extract` prints those `N`s.\n- `Bytes` still uppercases lowercase, so it does not keep the raw bytes.\n- Search never case-folds a query. A lowercase query matches nothing in any mode.\n- Key width depends on whichever stray bytes the text happens to hold (sufr-aa4802).\n- Rank 0 goes to whichever byte in the text is smallest, which is not always `$` (sufr-b96ee1).\n\n## Proposal\n\nReplace `Alphabet` with three independent settings, and give the structural bytes ranks of their own:\n\n1. Soft-mask handling: `Fold` uppercases lowercase bytes, as the build does today. `Preserve` keeps the bytes as they are. Under `Exclude`, no suffix starts at a soft-masked position and no match runs into one. `Exclude` works for any alphabet. If the build marks the positions in a mask kept beside the text rather than writing `N` over them, `extract` returns the input bases.\n2. Indexed starts: either every position, or only the positions whose byte is in a given set (`ACGT` for DNA).\n3. Key symbols: either the bytes the text holds, as today, or a declared set such as `ACGTN`. With a declared set, every other byte shares one \"other\" rank, which is the second option in sufr-aa4802.\n4. Structural ranks: the sentinel and the delimiter take the lowest fixed ranks, below every symbol, whatever their byte values. That settles sufr-b96ee1 by construction and lifts the \"must sort below\" condition on `-D` (`build.rs:67`).\n\n`-d` becomes a preset: `Fold`, starts in `ACGT`, symbols `ACGTN`. `-i` selects `Exclude` and no longer needs `-d`. The header records settings 1 to 3, so search can fold a query the same way the build folded the text.\n\n## Rejected\n\n- Keeping `Alphabet` and fixing sufr-aa4802 and sufr-b96ee1 inside it. Each fix would add one more special case keyed on `Dna`, and `-i` would stay tied to `-d`.\n\n## Cost\n\n- A new `.sufr` format version, 7 to 8, because the header gains fields.\n- The 12 fixtures compared by `create_bytes_match_fixtures` in `sufr/tests/cli.rs` need rebuilding.\n- `table()` in `libsufr/tests/oracle.rs` needs cases for each combination of settings.\n- `Alphabet::Amino` goes away.\n\n## Open\n\n- Settings 1, 2 and 4 look mechanical. Setting 3 under a seed mask needs a rule: bytes that share the \"other\" rank can tie in the key while differing in the text, and `MaskedKeys::order_ties` assumes that cannot happen. sufr-aa4802 spells this out.\n- What `Exclude` should store on disk: a byte reserved for masked positions, or a separate bit array. A query containing `N` matches today's `-i` regions, and nobody has checked whether any caller depends on that.\n- Whether `Preserve` or `Fold` should be the default when `-d` is absent.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-17T17:09:10.027766361Z",
-  "updated_at": "2026-11-19T21:22:48.274140376Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-19T21:25:03.109677466Z",
+  "closed_at": "2026-11-19T21:25:03.109677466Z",
+  "close_reason": "Soft-mask handling and indexed starts replace `Alphabet` in 9c89eae on `dev`; the note above has the details. Declared key symbols and fixed ranks for the sentinel and delimiter did not land and stay with sufr-aa4802 and sufr-b96ee1.",
+  "resolution": "done",
   "notes": [
     {
       "id": "8ab1a3ac",
@@ -33,6 +33,9 @@
       "commit": "52144cf",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "9c89eae",
+      "branch": "worktree-split-alphabet"
+    }
   }
 }
