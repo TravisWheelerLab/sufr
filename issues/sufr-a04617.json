@@ -3,7 +3,7 @@
   "title": "The merged build is checked on hs1 and on Apple silicon",
   "body": "Refactor reached dev as the squash commit f085e43, so the checks that waited on the merge now run against dev. The note below holds the benchmark and hash results of refactor 453e2d0 against dev 657e16d on catalyst. Jeb squash-merged, so the per-commit build check no longer applies.\n\nStill to run:\n\n- On catalyst, build hs1 with 657e16d and with f085e43, unmasked, with `-d`, and under a seed mask, and compare the `.sufr` hashes. A difference is either explained by a commit or is a bug.\n- On an Apple silicon machine, check `lcp_neon` in `libsufr/src/lcp.rs`: the suite, `lcp` against `lcp_scalar` over every mismatch position and the cache probe points, and byte-identical output against an x86 build of the same commit.",
   "type": "feature",
-  "status": "closed",
+  "status": "open",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:51:45.832196332Z",
-  "updated_at": "2026-11-19T23:16:00.81376186Z",
-  "closed_at": "2026-11-19T23:16:00.81376186Z",
-  "close_reason": "Both checks are done. The hs1 comparison is in the note of 2026-11-13: f085e43 matched 657e16d byte for byte. Jack checked `lcp_neon` on Apple silicon before it merged to dev in b5d5c29.",
-  "resolution": "done",
+  "updated_at": "2026-11-19T23:21:52.743880067Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
   "notes": [
     {
       "id": "d9c92162",
@@ -50,9 +50,6 @@
       "commit": "8f3d833",
       "branch": "refactor"
     },
-    "closed": {
-      "commit": "52144cf",
-      "branch": "dev"
-    }
+    "closed": null
   }
 }
