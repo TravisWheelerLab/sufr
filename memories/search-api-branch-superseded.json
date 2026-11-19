@@ -1,10 +1,10 @@
 {
   "slug": "search-api-branch-superseded",
-  "text": "Branch search-api (6 commits off e8655c9's parent) was the first draft of the query-only API and was never merged. dev carries its ideas since the refactor squash f085e43: Hits, Location, Extraction, search_all, OpenOptions, range reads, Context and the example libsufr/examples/search.rs. origin/search-api still exists and can be deleted.",
+  "text": "Branch `search-api` (6 commits off e8655c9's parent) was the first draft of the query-only API and was never merged. `dev` carries its ideas: `Hits`, `Location`, `Extraction`, `search_all`, `OpenOptions`, range reads and `libsufr/examples/search.rs`. Its `Context` struct is gone since 57d1235, which passes the extract window as two arguments. On 2026-11-19 the checkout on catalyst had no `origin/search-api` ref, and SSH to the remote was refused, so whether the branch still exists there is unchecked.",
   "created_at": "2026-11-03T07:53:00.490386229Z",
-  "updated_at": "2026-11-13T20:32:33.853650372Z",
+  "updated_at": "2026-11-19T22:17:11.762435302Z",
   "stamp": {
-    "commit": "f085e43",
+    "commit": "57d1235",
     "branch": "dev"
   }
 }
