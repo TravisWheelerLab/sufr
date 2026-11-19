@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T20:31:27.553016114Z",
-  "updated_at": "2026-11-17T17:09:15.372616205Z",
+  "updated_at": "2026-11-19T21:25:03.182946571Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -25,6 +25,14 @@
       "text": "Likely settled by sufr-6d7056, which gives the sentinel and delimiter fixed ranks below every symbol, so padding can no longer equal a real character. The cap proposed above remains the smaller fix if this needs one before sufr-6d7056 is decided. This is a soft dependency, so no `foam dep` was added.",
       "commit": "52144cf",
       "branch": "dev"
+    },
+    {
+      "id": "9395c465",
+      "at": "2026-11-19T21:25:03.18294554Z",
+      "author": "Jeb Rosen/4f1d36b6",
+      "text": "sufr-6d7056 closed with 9c89eae, which split `Alphabet` into `SoftMask` and `SuffixArrayBuilder::with_starts` but gave the sentinel and delimiter no fixed ranks. The cap proposed above is still the smaller fix, and this issue no longer waits on sufr-6d7056.",
+      "commit": "9c89eae",
+      "branch": "worktree-split-alphabet"
     }
   ],
   "stamps": {
