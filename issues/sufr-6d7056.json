@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-19T17:12:43.359637367Z",
   "defer_until": null,
   "created_at": "2026-11-17T17:09:10.027766361Z",
-  "updated_at": "2026-11-19T16:57:43.359637367Z",
+  "updated_at": "2026-11-19T17:04:15.387282936Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "8ab1a3ac",
+      "at": "2026-11-19T17:04:15.387281062Z",
+      "author": "Jeb Rosen/4f1d36b6",
+      "text": "Settings 1 and 2 of the proposal replace `Alphabet` in 284564d on branch `worktree-split-alphabet`, not yet on `dev`. Settings 3 and 4 are not in it.\n\n- `SoftMask` in `libsufr/src/format.rs`: `Fold` (default), `Preserve`, `Replace(u8)`, set with `SuffixArrayBuilder::with_soft_mask`.\n- `SuffixArrayBuilder::with_starts(&[u8])` indexes only suffixes starting with those bytes, plus the sentinel. The default is every suffix.\n- CLI: `--soft-mask fold|preserve|<char>` and `--starts <chars>`. `-d` is short for `--starts ACGT`, `-i` for `--soft-mask N`, and `-i` still requires `-d`.\n- Format 8: header bytes 1 and 2 hold the soft mask and its replacement byte, and a 32-byte bitmap of the starts follows the seed mask. `Header::soft_mask` and `Header::starts` expose them.\n\nWhere it departs from the proposal:\n\n- There is no `Exclude` mode. A DNA build with `Preserve` and `--starts ACGT` keeps the soft-masked bases in the text and indexes no suffix starting in one, so `extract` returns the input bases with no mask stored beside the text. A match runs into a lowercase region only for a lowercase query. Protein gets the same effect from `Preserve` and a `--starts` list of the uppercase residues.\n- `Fold` stays the default, so existing invocations build the same suffix array. The 12 fixtures match their format 7 copies byte for byte from the text onward.\n- Search still does not fold queries. The header now records the soft mask, so it could.\n\nSettings 3 and 4 stay open under sufr-aa4802 and sufr-b96ee1.",
+      "commit": "284564d",
+      "branch": "worktree-split-alphabet"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "52144cf",
