@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-04T05:50:39.895361974Z",
-  "updated_at": "2026-11-13T21:00:56.762944802Z",
+  "updated_at": "2026-11-19T19:46:49.524612447Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -34,6 +34,15 @@
       "commit": "2a1a3fb",
       "branch": "dev",
       "reply_to": "1a9f9007"
+    },
+    {
+      "id": "8d727d06",
+      "at": "2026-11-19T19:03:56.674248963Z",
+      "author": "Jeb Rosen/2a224fee",
+      "text": "Since a2ba67c on `dev`, `cache_dir` returns `OpenError::Io` with the path `~/.sufr` when there is no home directory, where it used to panic. Removing the cache, or putting it behind an option, also removes that case and the mention of the cache in the doc line of `OpenError::Io`.",
+      "commit": "0fb27f7",
+      "branch": "typed-errors",
+      "edited_at": "2026-11-19T19:46:49.52461195Z"
     }
   ],
   "stamps": {
