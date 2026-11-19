@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T20:31:40.974534978Z",
-  "updated_at": "2026-11-19T19:10:49.960111018Z",
+  "updated_at": "2026-11-19T19:36:44.767223625Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -31,9 +31,10 @@
       "id": "23f60263",
       "at": "2026-11-19T19:10:49.960109791Z",
       "author": "Jeb Rosen/2a224fee",
-      "text": "Branch `typed-errors` (0fb27f7, fc1abbb) resolves the Still open item about `anyhow::Result` once it merges. The Rule 2 line of `UNSOLVED.md` on `design-goals` then goes, and the paths the new error types carry bear on Rule 4: `QueryError::Io` and `QueryError::NoLcp` hold a `PathBuf`, which a suffix array that never touched a file would not have.",
+      "text": "Branch `typed-errors` resolves the Still open item about `anyhow::Result` once it merges, and the Rule 2 line of `UNSOLVED.md` on `design-goals` then goes. For Rule 4, 5dbb3f7 makes `QueryError::NoLcp` carry no path, so a suffix array with no file behind it can raise it. `QueryError::Io` keeps a `PathBuf`, since only reading a file produces it.",
       "commit": "fc1abbb",
-      "branch": "typed-errors"
+      "branch": "typed-errors",
+      "edited_at": "2026-11-19T19:36:44.767223106Z"
     }
   ],
   "stamps": {
