@@ -13,9 +13,9 @@ authors = [
 ]
 
 [features]
-# The generic suffix array and its storage types, for a caller that
-# names them to skip the box in SuffixArray.
-typed = []
+# Low-level API that may break in any release: the generic suffix array,
+# its storage types and SuffixArrayBuilder::with_force_64bit.
+unstable = []
 
 [package.metadata.docs.rs]
 all-features = true
@@ -31,6 +31,8 @@ rayon = "1.10.0"
 thread_local = "1.1.8"
 
 [dev-dependencies]
+# the tests build 64-bit files with with_force_64bit
+libsufr = { path = ".", features = ["unstable"] }
 assert_cmd = "2.0.16"
 pretty_assertions = "1.4.0"
 tempfile = "3.12.0"

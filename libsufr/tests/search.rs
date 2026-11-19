@@ -65,7 +65,7 @@ fn open(
         home
     });
     Ok(SuffixArray::open_with(
-        &file.path().to_string_lossy(),
+        file.path(),
         &OpenOptions {
             text,
             suffixes,

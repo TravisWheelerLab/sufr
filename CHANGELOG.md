@@ -28,11 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `Header` and `SuffixArray::header`, `suffixes`, `lcps` and `text`,
   which read a file's header and its arrays by range. The byte positions
   of the arrays in the header are not public.
-- Add `SuffixArrayBuilder::with_force_64bit`, which writes 64-bit
-  integers for a text that fits 32-bit ones. `SuffixArray::open` reads
-  either width.
-- Add the cargo feature `typed`, which exports `Int`, `TypedSuffixArray`
-  and the storage types `Source`, `MemorySource` and `DiskSource`
+- Add the cargo feature `unstable` for low-level API, which may break in
+  any release. It exports `Int`, `TypedSuffixArray`, the storage types
+  `Source`, `MemorySource` and `DiskSource`, and
+  `SuffixArrayBuilder::with_force_64bit`, which writes 64-bit integers
+  for a text that fits 32-bit ones. `SuffixArray::open` reads either
+  width. A `TypedSuffixArray` converts into a `SuffixArray` with `From`,
+  to be searched through `Hits`.
 - Add the example `libsufr/examples/search.rs`
 - Re-export `SuffixArray` at the crate root as `libsufr::SuffixArray`
 - Implement vectorized LCP calculation (AVX2 on x86-64, NEON on AArch64), significantly
@@ -65,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sufr summarize` no longer prints a "Max query len" row. A file built
   with a seed mask still shows its "Seed mask" row.
 - (breaking) Simplify the `Int` trait definition and bounds, subsuming
-  `FromUsize`. `Int` is exported only under the `typed` feature.
+  `FromUsize`. `Int` is exported only under the `unstable` feature.
 - (breaking) Make `Int` unable to implement from other crates, due to guarantees required by sufr's `unsafe` code
 - (breaking) Change the partitioning strategy to be based on a prefix of
   each suffix, instead of using random sampling. A first pass counts the
@@ -115,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the methods of `Hits`, and `InvalidSeedMask` from parsing a
   `SeedMask`. An error about a file carries its path. The three enums are
   `#[non_exhaustive]`, so a `match` on one needs a `_` arm. Under the
-  `typed` feature, the `Source` trait returns `std::io::Result`.
+  `unstable` feature, the `Source` trait returns `std::io::Result`.
 - `SuffixArrayBuilder::from_sequence_file` replaces bytes in a record ID
   that are not valid UTF-8 with U+FFFD. It used to fail the build.
 
@@ -131,9 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ListOptions`, `SearchOptions`, `SearchResult`,
   `SearchResultLocations`). Use `SuffixArray::search` and `Hits` instead.
 - (breaking) Remove `SufrFile`. Use `SuffixArray::open_with` instead.
-- (breaking) Remove the public modules. `SeedMask` and `OUTFILE_VERSION`
-  are at the crate root.
-  `SENTINEL_CHARACTER`, `Comparison`, `SequenceFileData`,
+- (breaking) Remove the public modules. `SeedMask` is at the crate root.
+  `OUTFILE_VERSION`, `SENTINEL_CHARACTER`, `Comparison`, `SequenceFileData`,
   `read_sequence_file`, `read_text_length` and `find_lcp_full_offset` are
   private or gone.
 - (breaking) Remove `SuffixSortType` and `Header::sort_type`. Use

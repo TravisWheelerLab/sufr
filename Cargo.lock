@@ -685,6 +685,7 @@ dependencies = [
  "assert_cmd",
  "bincode",
  "home",
+ "libsufr",
  "log",
  "needletail",
  "pretty_assertions",

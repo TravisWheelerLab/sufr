@@ -1,6 +1,5 @@
 use anyhow::Result;
 use assert_cmd::Command;
-use libsufr::OUTFILE_VERSION;
 use pretty_assertions::assert_eq;
 use regex::Regex;
 use std::fs;
@@ -876,7 +875,7 @@ fn summarize_sufr1() -> Result<()> {
         vec![
             ("Filename", SUFR1),
             ("File Size", "164 bytes"),
-            ("File Version", &OUTFILE_VERSION.to_string()),
+            ("File Version", "7"),
             ("DNA", "true"),
             ("Ignore Softmask", "false"),
             ("Text Length", "11"),

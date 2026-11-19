@@ -14,7 +14,7 @@ use std::{
 };
 
 /// The serialization version.
-pub const OUTFILE_VERSION: u8 = 7;
+pub(crate) const OUTFILE_VERSION: u8 = 7;
 
 // the file is laid out as below, where u64 fields are
 // little-endian, and the sequence starts, suffix array
@@ -92,9 +92,9 @@ pub struct Header {
 }
 
 impl Header {
-    /// Read the header of `filename`.
-    pub(crate) fn read(filename: &str) -> Result<Header, OpenError> {
-        let path = Path::new(filename);
+    /// Read the header of `path`.
+    pub(crate) fn read(path: impl AsRef<Path>) -> Result<Header, OpenError> {
+        let path = path.as_ref();
         let invalid = |reason: String| OpenError::Invalid {
             path: path.to_path_buf(),
             reason,

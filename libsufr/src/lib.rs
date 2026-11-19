@@ -29,18 +29,18 @@ mod typed;
 
 pub use build::{Alphabet, SuffixArrayBuilder};
 pub use error::{BuildError, InvalidSeedMask, OpenError, QueryError};
-pub use format::{Header, SeedMask, OUTFILE_VERSION};
+pub use format::{Header, SeedMask};
 pub use search::{Context, Extraction, Hits, Location};
 pub use typed::SourceKind;
 
-#[cfg(feature = "typed")]
-#[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
+#[cfg(feature = "unstable")]
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
 pub use io::Int;
-#[cfg(feature = "typed")]
-#[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
+#[cfg(feature = "unstable")]
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
 pub use source::{DiskSource, MemorySource, Source};
-#[cfg(feature = "typed")]
-#[cfg_attr(docsrs, doc(cfg(feature = "typed")))]
+#[cfg(feature = "unstable")]
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
 pub use typed::TypedSuffixArray;
 
 /// How [`SuffixArray::open_with`] opens a file. The default reads the text
@@ -71,7 +71,7 @@ impl Default for OpenOptions {
 }
 
 use rayon::prelude::*;
-use std::ops::Range;
+use std::{ops::Range, path::Path};
 use typed::Queryable;
 
 /// A suffix array read from a _.sufr_ file.
@@ -83,17 +83,17 @@ pub struct SuffixArray {
 impl SuffixArray {
     /// Open a _.sufr_ file with the default [`OpenOptions`]: the text and
     /// the suffix array stay on disk.
-    pub fn open(filename: &str) -> Result<SuffixArray, OpenError> {
-        SuffixArray::open_with(filename, &OpenOptions::default())
+    pub fn open(path: impl AsRef<Path>) -> Result<SuffixArray, OpenError> {
+        SuffixArray::open_with(path, &OpenOptions::default())
     }
 
     /// Open a _.sufr_ file.
     pub fn open_with(
-        filename: &str,
+        path: impl AsRef<Path>,
         options: &OpenOptions,
     ) -> Result<SuffixArray, OpenError> {
         Ok(SuffixArray {
-            inner: typed::open(filename, options)?,
+            inner: typed::open(path.as_ref(), options)?,
         })
     }
 
@@ -175,12 +175,28 @@ impl SuffixArray {
     }
 }
 
+#[cfg(feature = "unstable")]
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
+impl<W, T, S> From<TypedSuffixArray<W, T, S>> for SuffixArray
+where
+    W: Int,
+    T: Source<u8> + 'static,
+    S: Source<W> + 'static,
+{
+    fn from(typed: TypedSuffixArray<W, T, S>) -> Self {
+        SuffixArray {
+            inner: Box::new(typed),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
+        format::OUTFILE_VERSION,
         source::{DiskSource, MemorySource},
         typed::TypedSuffixArray,
-        Alphabet, Hits, SuffixArray, SuffixArrayBuilder, OUTFILE_VERSION,
+        Alphabet, Hits, SuffixArray, SuffixArrayBuilder,
     };
     use anyhow::Result;
     use std::path::Path;
@@ -461,6 +477,18 @@ mod tests {
             .map(Hits::count)
             .collect();
         assert_eq!(counts, [2, 0, 2]);
+        assert_eq!(suffix_array.search(b"CG")?.ranks(), 3..5);
+        Ok(())
+    }
+
+    #[test]
+    fn test_search_typed_suffix_array() -> Result<()> {
+        let typed = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            "../data/inputs/1.sufr",
+            None,
+            false,
+        )?;
+        let suffix_array = SuffixArray::from(typed);
         assert_eq!(suffix_array.search(b"CG")?.ranks(), 3..5);
         Ok(())
     }

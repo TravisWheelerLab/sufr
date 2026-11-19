@@ -25,6 +25,7 @@ use std::{
 
 /// Where [`crate::SuffixArray::open_with`] puts the text or the suffix array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SourceKind {
     /// Read into memory when the file is opened.
     Memory,
@@ -82,12 +83,12 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
     /// suffix of each group sharing that many characters is held in
     /// memory and searched instead of the whole array.
     pub fn open(
-        filename: &str,
+        path: impl AsRef<Path>,
         max_query_len: Option<usize>,
         subsample: bool,
     ) -> Result<Self, OpenError> {
-        let header = Header::read(filename)?;
-        let path = Path::new(filename);
+        let path = path.as_ref();
+        let header = Header::read(path)?;
         if header.int_size != mem::size_of::<W>() {
             return Err(OpenError::Invalid {
                 path: path.to_path_buf(),
@@ -458,15 +459,15 @@ impl<W: Int, T: Source<u8>, S: Source<W>> Queryable for TypedSuffixArray<W, T, S
     }
 }
 
-/// Open `filename` as [`crate::SuffixArray::open_with`] asks, at the int
+/// Open `path` as [`crate::SuffixArray::open_with`] asks, at the int
 /// width its header records.
 pub(crate) fn open(
-    filename: &str,
+    path: &Path,
     options: &OpenOptions,
 ) -> Result<Box<dyn Queryable>, OpenError> {
     use SourceKind::{Disk as D, Memory as M};
     let cap = options.max_query_len;
-    let header = Header::read(filename)?;
+    let header = Header::read(path)?;
     let wide = header.int_size == 8;
 
     // suffixes in memory under a cap shorter than the sort means
@@ -480,42 +481,42 @@ pub(crate) fn open(
             u32,
             DiskSource<u8>,
             DiskSource<u32>,
-        >::open(filename, cap, subsample)?),
+        >::open(path, cap, subsample)?),
         (false, M, D) => Box::new(TypedSuffixArray::<
             u32,
             MemorySource<u8>,
             DiskSource<u32>,
-        >::open(filename, cap, subsample)?),
+        >::open(path, cap, subsample)?),
         (false, D, M) => Box::new(TypedSuffixArray::<
             u32,
             DiskSource<u8>,
             MemorySource<u32>,
-        >::open(filename, cap, subsample)?),
+        >::open(path, cap, subsample)?),
         (false, M, M) => Box::new(TypedSuffixArray::<
             u32,
             MemorySource<u8>,
             MemorySource<u32>,
-        >::open(filename, cap, subsample)?),
+        >::open(path, cap, subsample)?),
         (true, D, D) => Box::new(TypedSuffixArray::<
             u64,
             DiskSource<u8>,
             DiskSource<u64>,
-        >::open(filename, cap, subsample)?),
+        >::open(path, cap, subsample)?),
         (true, M, D) => Box::new(TypedSuffixArray::<
             u64,
             MemorySource<u8>,
             DiskSource<u64>,
-        >::open(filename, cap, subsample)?),
+        >::open(path, cap, subsample)?),
         (true, D, M) => Box::new(TypedSuffixArray::<
             u64,
             DiskSource<u8>,
             MemorySource<u64>,
-        >::open(filename, cap, subsample)?),
+        >::open(path, cap, subsample)?),
         (true, M, M) => Box::new(TypedSuffixArray::<
             u64,
             MemorySource<u8>,
             MemorySource<u64>,
-        >::open(filename, cap, subsample)?),
+        >::open(path, cap, subsample)?),
     };
     Ok(inner)
 }

@@ -108,7 +108,7 @@ pub struct CreateArgs {
     #[arg(short, long, requires = "is_dna")]
     pub ignore_softmask: bool,
 
-    /// Character to separate sequences
+    /// Character to separate sequences, not in any sequence and not below $
     #[arg(short('D'), long, default_value = "%", value_name = "DELIM")]
     pub sequence_delimiter: char,
 

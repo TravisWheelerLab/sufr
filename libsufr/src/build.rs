@@ -24,6 +24,7 @@ use thread_local::ThreadLocal;
 const SENTINEL_CHARACTER: u8 = b'$';
 
 /// The kind of text a suffix array is built over.
+#[non_exhaustive]
 pub enum Alphabet {
     /// Nucleotides, of which only suffixes starting with `A`, `C`, `G`
     /// or `T` are indexed.
@@ -64,13 +65,17 @@ pub struct SuffixArrayBuilder {
 
 impl SuffixArrayBuilder {
     /// A builder for the sequences in a FASTA or FASTQ file, joined by
-    /// `sequence_delimiter`, which must be in the alphabet or sort below
-    /// all of it: `%` suits biological sequence.
+    /// `sequence_delimiter`: `%` suits biological sequence.
+    ///
+    /// The delimiter must not occur in any sequence or sort below the
+    /// sentinel `$`. It counts as one more distinct byte, which can
+    /// shorten the sort key. Under [`Alphabet::Dna`], no suffix starting
+    /// with it is indexed.
     pub fn from_sequence_file(
         path: impl AsRef<Path>,
         sequence_delimiter: u8,
     ) -> Result<Self, BuildError> {
-        // TODO: "must be" - should either be nonconfigurable or should support other values.
+        // TODO: must the delimiter also sort below every sequence byte?
         let now = Instant::now();
         let data = read_sequence_file(path.as_ref(), sequence_delimiter)?;
         info!(
@@ -87,7 +92,8 @@ impl SuffixArrayBuilder {
     }
 
     /// A builder for `text`, whose `sequences` are given by start position
-    /// and name, with a `%` between each two.
+    /// and name, with a delimiter between each two that follows the rules
+    /// of [`SuffixArrayBuilder::from_sequence_file`].
     pub fn from_data(text: Vec<u8>, sequences: Vec<(usize, String)>) -> Self {
         // TODO: validate text and sequences?
         // - sequences should be sorted, first starting at 0, length < text.len(), no duplicates. If empty, default?
@@ -125,6 +131,8 @@ impl SuffixArrayBuilder {
 
     /// Set whether to write 64-bit integers for a text that fits 32-bit
     /// ones (default: `false`).
+    #[cfg(feature = "unstable")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
     pub fn with_force_64bit(mut self, force_64bit: bool) -> Self {
         self.force_64bit = force_64bit;
         self
@@ -1377,7 +1385,7 @@ mod test {
                 ignore_softmask: true,
             })
             .build_to_file(outfile.path())?;
-        let suffix_array = SuffixArray::open(&outfile.path().to_string_lossy())?;
+        let suffix_array = SuffixArray::open(outfile.path())?;
         let header = suffix_array.header();
         assert_eq!(header.text_len, 113);
         assert_eq!(header.num_suffixes, 101);
