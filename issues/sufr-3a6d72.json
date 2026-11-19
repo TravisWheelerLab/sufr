@@ -3,26 +3,29 @@
   "title": "libsufr returns a typed error for each of build, open and query",
   "body": "`libsufr` returns `anyhow::Result` from every public function, and every failure is a `bail!` string or a `?` on an outside error. A caller cannot tell a missing file from a corrupt one without matching on message text. Some messages lose the path: the version check in `Header::read`, a truncated header, bincode failures, `DiskSource::open` and FASTA parse errors.\n\n## Proposal\n\nOne error type per stage, in a new `libsufr/src/error.rs`, each `#[non_exhaustive]`, with `Display` and `std::error::Error` written by hand.\n\n```rust\npub enum BuildError {\n    Input { path: PathBuf, source: needletail::errors::ParseError },\n    Io { path: PathBuf, source: io::Error },\n    MaskLength { max_weight: usize, max_span: usize },\n}\n\npub enum OpenError {\n    Io { path: PathBuf, source: io::Error },\n    Version { path: PathBuf, found: u8 },\n    Invalid { path: PathBuf, reason: String },\n}\n\npub enum QueryError {\n    Io { path: PathBuf, source: io::Error },\n    OutOfRange { len: usize },\n    NoLcp { path: PathBuf },\n}\n\npub struct InvalidSeedMask;\n```\n\n- `SuffixArrayBuilder::from_sequence_file` and `build_to_file` return `BuildError`; `SuffixArray::open`, `open_with` and `TypedSuffixArray::open` return `OpenError`; `search`, `suffixes`, `lcps`, `text` and the `Hits` methods return `QueryError`; `SeedMask::from_str` returns `InvalidSeedMask`.\n- `OpenError::Invalid` covers a truncated file, an integer size other than 4 or 8, a text too long for a 32-bit `usize`, corrupt sequence names or seed-mask bytes, and an integer size that does not match `W` under the `typed` feature.\n- `OpenError::Io` covers the subsample cache under `~/.sufr` as well, and a missing home directory becomes an `Io` error there instead of a panic in `cache_dir`.\n- The `Source` trait returns `io::Result`. `TypedSuffixArray` checks ranges against `len()` and adds the path.\n- `MaskLength` carries both limits, which follow from the characters per key: 21 care positions and a span of 84 for DNA, 12 and 48 for protein.\n- A record ID that is not UTF-8 is converted with `from_utf8_lossy` instead of failing the build.\n- The CLI stays on `anyhow`. Each error keeps its `io::Error` as `source()`, so the BrokenPipe check in `sufr/src/main.rs` still finds it.\n\n## Rejected\n\n- One `libsufr::Error` for every stage: a caller of `search` could then receive `MaskLength`.\n- Separate open variants for each kind of corrupt file: a caller handles them all the same way. `Version` stays apart because rebuilding fixes it.\n- `thiserror`: about 60 hand-written lines avoid a proc-macro dependency.\n\n## Cost\n\nA breaking change to every public `libsufr` signature, recorded in `CHANGELOG.md` under Unreleased.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jeb Rosen/2a224fee",
-  "lease_expires": "2026-11-19T19:11:41.574357816Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T18:56:38.368830377Z",
-  "updated_at": "2026-11-19T18:56:41.574357816Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-19T19:03:56.638303962Z",
+  "closed_at": "2026-11-19T19:03:56.638303962Z",
+  "close_reason": "Landed as 0fb27f7 on branch typed-errors, not yet merged to dev. Error types are in libsufr/src/error.rs. OpenError::io maps UnexpectedEof to Invalid, both for the header and when MemorySource reads past the end of a truncated file.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "b4a924a",
       "branch": "worktree-typed-errors"
     },
-    "closed": null
+    "closed": {
+      "commit": "0fb27f7",
+      "branch": "typed-errors"
+    }
   }
 }
