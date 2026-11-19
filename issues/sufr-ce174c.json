@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T20:31:40.974534978Z",
-  "updated_at": "2026-11-19T17:16:28.399090482Z",
+  "updated_at": "2026-11-19T17:43:53.87297904Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -22,10 +22,10 @@
       "id": "2ac7170b",
       "at": "2026-11-19T17:12:19.087162964Z",
       "author": "Jeb Rosen/075643b3",
-      "text": "Two items under Still open are resolved on dev. 5b90b69 keeps the care positions of `SeedMask` in a private field, and both `SeedMask::new` and `from_bytes` reject an invalid mask (sufr-74579c). 52144cf removes `SuffixSortType`, so the item about it being an exhaustive enum no longer applies.",
+      "text": "Two items under Still open are resolved. 4595984 keeps the care positions of `SeedMask` in a private field, and both its `FromStr` impl and `from_bytes` reject an invalid mask (sufr-74579c). 52144cf removes `SuffixSortType`, so the item about it being an exhaustive enum no longer applies.",
       "commit": "03c0880",
       "branch": "worktree-seed-mask-invariants",
-      "edited_at": "2026-11-19T17:16:28.399089972Z"
+      "edited_at": "2026-11-19T17:43:53.872978436Z"
     }
   ],
   "stamps": {
