@@ -13,9 +13,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T18:56:38.368830377Z",
-  "updated_at": "2026-11-19T19:44:02.928424896Z",
+  "updated_at": "2026-11-19T19:45:02.062363671Z",
   "closed_at": "2026-11-19T19:03:56.638303962Z",
-  "close_reason": "Landed as 231a315 on branch `typed-errors`, not yet merged to `dev`. The types are in `libsufr/src/error.rs`. `OpenError::io` turns `UnexpectedEof` into `Invalid`, both in `Header::read` and when a `MemorySource` reads past the end of a truncated file.",
+  "close_reason": "Landed as a2ba67c on branch `typed-errors`, not yet merged to `dev`. The types are in `libsufr/src/error.rs`. `OpenError::io` turns `UnexpectedEof` into `Invalid`, both in `Header::read` and when a `MemorySource` reads past the end of a truncated file.",
   "resolution": "done",
   "notes": [],
   "stamps": {
