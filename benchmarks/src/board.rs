@@ -1,9 +1,9 @@
 //! The comparison, drawn as it fills.
 //!
 //! Every row a run will produce is printed once, empty, and each is rewritten
-//! in place as its measurements land. Falls back to one line per finished row
-//! where stdout is not a terminal, so piping the run to a file still leaves
-//! something to read.
+//! in place as its measurements land. Falls back to printing each group once
+//! all its rows are finished where stdout is not a terminal, so piping the
+//! run to a file still leaves something to read.
 
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -71,7 +71,7 @@ struct Stats {
     min_s: f64,
     max_rss_kb: i64,
 
-    /// The median run's, so the two numbers describe one run.
+    /// The cpu of the run or runs `median_s` is taken from.
     cpu: f64,
 }
 
@@ -83,13 +83,16 @@ impl Row {
 
         let mut by_wall: Vec<&Timing> = self.runs.iter().collect();
         by_wall.sort_by(|a, b| a.wall_s.total_cmp(&b.wall_s));
-        let median = by_wall[by_wall.len() / 2];
+        // an even count has two middle runs, and the median
+        // is their mean; an odd count has one, taken twice
+        let n = by_wall.len();
+        let (lower, upper) = (by_wall[(n - 1) / 2], by_wall[n / 2]);
 
         Some(Stats {
-            median_s: median.wall_s,
+            median_s: (lower.wall_s + upper.wall_s) / 2.0,
             min_s: by_wall[0].wall_s,
             max_rss_kb: self.runs.iter().map(|t| t.max_rss_kb).max().unwrap_or(0),
-            cpu: median.cpu(),
+            cpu: (lower.cpu() + upper.cpu()) / 2.0,
         })
     }
 }
@@ -247,13 +250,22 @@ impl Board {
         };
 
         row.runs.push(timing);
-        let full = row.runs.len() == repeat;
-        let (op, label) = (row.op, row.label.clone());
+        let op = row.op;
 
         if state.tty {
             paint(&mut state);
-        } else if full {
-            println!("{}", plain(&line_for(&state, op, &label)));
+            return;
+        }
+
+        // the whole group at once, in board order: the order
+        // reverses on even repeats, so the first row is not
+        // always the first to fill, and every ratio in the
+        // group is against it
+        let group: Vec<&Row> = state.rows.iter().filter(|r| r.op == op).collect();
+        if group.iter().all(|r| r.runs.len() == repeat) {
+            for r in group {
+                println!("{}", plain(&line_for(&state, op, &r.label)));
+            }
         }
     }
 

@@ -91,16 +91,15 @@ pub(crate) fn evict(paths: &[impl AsRef<Path>]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One fingerprint over the bytes of every file in `paths` that exists.
+/// One fingerprint over the bytes of every file in `paths`.
 pub(crate) fn fingerprint(paths: &[impl AsRef<Path>]) -> anyhow::Result<u64> {
     let mut hasher = DefaultHasher::new();
     let mut buffer = vec![0u8; 1 << 20];
 
     for path in paths {
         let path = path.as_ref();
-        let Ok(mut file) = File::open(path) else {
-            continue;
-        };
+        let mut file =
+            File::open(path).with_context(|| format!("opening {}", path.display()))?;
 
         loop {
             let n = file

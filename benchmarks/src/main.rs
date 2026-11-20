@@ -11,7 +11,8 @@
 //! Every measurement is a whole process, because `wait4` is the one call
 //! that reports wall, user and system time and peak memory together. So
 //! process startup lands inside every row, which is why the fixtures are
-//! 100 MiB rather than the test files under `data/`.
+//! generated, 10 MiB unless `--size` says otherwise, rather than the test
+//! files under `data/`.
 //!
 //! The fixtures are generated once into `runs/` and kept; `--fresh` makes
 //! them again. A measured run sends its stdout to `/dev/null` and its stderr
@@ -264,6 +265,7 @@ impl Run<'_> {
 
             cmd.stdout(File::create(&dry_out)?);
             process::measure(&mut cmd)?;
+            wrote(bench, bin, &scratch)?;
             let print = process::fingerprint(&[&dry_out, &scratch])?;
 
             match seen {
@@ -303,6 +305,7 @@ impl Run<'_> {
 
                 cmd.stdout(Stdio::null());
                 let timing = process::measure(&mut cmd)?;
+                wrote(bench, bin, &scratch)?;
 
                 board.record(bench.name, &bin.label, timing);
                 results.record(
@@ -344,6 +347,19 @@ fn line(cmd: &Command) -> String {
         .map(|a| a.to_string_lossy())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// An error unless `bin` left an index at `scratch`.
+fn wrote(bench: &Bench, bin: &Bin, scratch: &Path) -> anyhow::Result<()> {
+    if !scratch.is_file() {
+        bail!(
+            "{}: {} exited 0 but wrote no index at {}",
+            bench.name,
+            bin.label,
+            scratch.display()
+        );
+    }
+    Ok(())
 }
 
 fn remove(path: &Path) -> anyhow::Result<()> {
