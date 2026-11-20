@@ -1,10 +1,10 @@
 {
   "slug": "merge-sort-layout-sensitivity",
-  "text": "Timing of create moves 1-3% between builds whose merge_sort machine code is byte-identical (seen at dc7dd45 and 4fbfbad on the 50 MB synthetic input). Building with -C llvm-args=-align-all-functions=12 brings the builds within ±0.4%, so the swing is code placement. Treat a create delta under ~3% as noise unless instruction counts move too. Details on sufr-8073a8.",
+  "text": "Timing of create moved 1-3% between builds whose `merge_sort` machine code was byte-identical, at `dc7dd45` and `4fbfbad` on the 50 MB synthetic input. Building with `-C llvm-args=-align-all-functions=12` brought the builds within ±0.4%, so code placement caused the swing. A create delta under 3% with unchanged instruction counts is within that swing. Details on sufr-8073a8.",
   "created_at": "2026-11-03T07:53:00.474186917Z",
-  "updated_at": "2026-11-03T07:53:00.474186917Z",
+  "updated_at": "2026-11-19T22:45:37.481323273Z",
   "stamp": {
-    "commit": "6df218d",
-    "branch": "refactor"
+    "commit": "52144cf",
+    "branch": "dev"
   }
 }
