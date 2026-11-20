@@ -1,10 +1,10 @@
 {
   "slug": "list-output-is-quadratic",
-  "text": "sufr list prints every suffix in full on every row, so its output grows with the square of the text: 1.9 GB for the 98 KB uniprot fixture, and a 10 MiB build does not finish in minutes. To compare two builds of a large input, cmp -l the .sufr files and map the differing offsets onto the regions in the layout comment in libsufr/src/format.rs; summarize gives num_suffixes. Seen 2026-11-03.",
+  "text": "`sufr list` prints each suffix from its start to the end of the text on every row, so without `--len` its output grows with the square of the text: at fc5db36, 1.9 GB for the 98 KB uniprot fixture, and a 10 MiB build did not finish in minutes. `--len N` caps each row at N bytes. To compare two builds of a large input, `cmp -l` the .sufr files and map the differing offsets onto the layout comment in `libsufr/src/format.rs`; `summarize` gives the suffix count as Len Suffixes.",
   "created_at": "2026-11-04T06:58:30.832516652Z",
-  "updated_at": "2026-11-04T06:58:30.832516652Z",
+  "updated_at": "2026-11-19T22:22:45.518979412Z",
   "stamp": {
-    "commit": "fc5db36",
-    "branch": "refactor"
+    "commit": "adb8a60",
+    "branch": "design-goals"
   }
 }
