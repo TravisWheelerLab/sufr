@@ -1,0 +1,30 @@
+{
+  "id": "sufr-1266f6",
+  "title": "sufr reads its input through libsail's Reader and copies the residues itself",
+  "body": "`read_sequence_file` in `libsufr/src/build.rs` reads the input with needletail's `parse_fastx_file`. For each record it pushes the delimiter, records where the record starts, and copies `rec.seq()` into the text. It takes the record's name as the id up to its first whitespace. `normalize` then makes one more pass over the whole text. It maps every byte through a table for soft masking and records which bytes occur.\n\nsufr-409cc8 asks whether `libsail` reads the input faster than needletail. This issue says how sufr would read through `libsail` if the answer is yes.\n\n## Proposal\n\nUse `libsail` the way nail uses it. `libsail` frames the records and names them. sufr turns each record's bytes into text itself.\n\n- `libsail::index::Reader::new(file, Format::Fasta)` frames one record at a time out of a stream. `advance()` moves to the next record. `record()` returns that record's bytes, header line included. The reader keeps nothing per record.\n- `libsail::seq::fasta::name_of(record)` returns the name. That is the header after `>` and any leading whitespace, up to the next whitespace. It returns `None` when the bytes do not open with `>`.\n- sufr copies the residues itself. A residue is every byte after the first line that is not ASCII whitespace.\n\n```rust\nlet mut reader = Reader::new(File::open(path)?, Format::Fasta);\nwhile reader.advance()? {\n    let record = reader.record();\n    let name = name_of(record);\n    let body = record\n        .iter()\n        .position(|&b| b == b'\\n')\n        .map_or(record.len(), |i| i + 1);\n    text.extend(\n        record[body..]\n            .iter()\n            .copied()\n            .filter(|b| !b.is_ascii_whitespace()),\n    );\n}\n```\n\nnail reads its inputs this way. It never calls `libsail`'s `FastaParser::parse`. It parses a record's bytes with its own `Sequence::from_fasta`. The test `index_and_output_agree_on_record_names` in nail's `io/fasta.rs` checks nail's names against `name_of` on a set of awkward headers.\n\nsufr keeps its fallback name for a record whose header has no name.\n\n## Rejected\n\n- `FastaParser::parse`. It returns a `FastaRecord` whose `seq` is a new `Vec` of the residues. sufr would copy every residue twice and allocate once per record.\n- A `libsail` function that appends a record's residues to a buffer the caller owns. sail-56ab6e proposed it as `fasta::append_seq` and was dropped. sufr was its only caller. It could not apply sufr's byte table without a parameter that only sufr would use.\n\n## Cost\n\n- `libsail` reads neither FASTQ nor gzip, and needletail reads both today. `Reader::new` takes any `Read`, so sufr could hand it a gzip decoder. `libsail` has no FASTQ reader.\n- sufr's copy and `FastaParser::parse` each decide which bytes are residues. Both drop ASCII whitespace today. A test in sufr that compares its text with the `seq` that `parse` returns on a few records would catch the two drifting apart.\n- `Reader` holds the current record whole in its buffer. Peak memory grows by the largest record, which in hg38 is a chromosome.\n\n## Open\n\n- Whether the copy should apply the `normalize` table as it goes. That saves a pass over the text. `normalize` runs over the text in parallel chunks, though, and the copy runs on one thread. A timing on hg38noN would show which is faster.\n- Whether sufr can drop FASTQ input, or keeps needletail for it.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [
+    "sufr-409cc8"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-20T00:16:32.519223683Z",
+  "updated_at": "2026-11-20T00:16:32.519223683Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "57d1235",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
