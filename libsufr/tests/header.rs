@@ -1,6 +1,7 @@
-use anyhow::Result;
 use libsufr::{OpenOptions, SoftMask, SourceKind, SuffixArray, SuffixArrayBuilder};
 use tempfile::NamedTempFile;
+
+type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
 fn build_and_read(write_lcp: bool) -> Result<SuffixArray> {
     let outfile = NamedTempFile::new()?;

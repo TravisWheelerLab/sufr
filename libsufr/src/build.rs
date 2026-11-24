@@ -1342,10 +1342,11 @@ mod test {
         format::{SeedMask, SoftMask},
         SuffixArray,
     };
-    use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::path::Path;
     use tempfile::NamedTempFile;
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     #[test]
     fn test_read_sequence_file() -> Result<()> {

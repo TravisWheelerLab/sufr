@@ -262,7 +262,8 @@ pub fn lcp_scalar(a: &[u8], b: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     #[test]
     fn test_lcp_cache() {

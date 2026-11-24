@@ -1,11 +1,12 @@
 //! Search results on inputs small enough to read, every expectation
 //! worked out from the text by hand.
 
-use anyhow::Result;
 use libsufr::{Hits, OpenOptions, SourceKind, SuffixArray, SuffixArrayBuilder};
 use std::fs;
 use std::sync::OnceLock;
 use tempfile::{NamedTempFile, TempDir};
+
+type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
 /// The first bytes of the suffixes a DNA build indexes.
 const DNA: Option<&[u8]> = Some(b"ACGT");

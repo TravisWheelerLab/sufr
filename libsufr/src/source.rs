@@ -135,9 +135,10 @@ impl<W: Int> Source<W> for DiskSource<W> {
 mod tests {
     use super::{DiskSource, MemorySource, Source};
     use crate::format::Header;
-    use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::path::Path;
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     #[test]
     fn test_open_region() -> Result<()> {

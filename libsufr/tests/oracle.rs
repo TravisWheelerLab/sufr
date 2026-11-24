@@ -2,11 +2,12 @@
 //! reference that applies the rules to the FASTA bytes and never calls
 //! the build.
 
-use anyhow::Result;
 use libsufr::{SeedMask, SoftMask, SuffixArray, SuffixArrayBuilder};
 use std::borrow::Cow;
 use std::fs;
 use tempfile::NamedTempFile;
+
+type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
 const SENTINEL: u8 = b'$';
 

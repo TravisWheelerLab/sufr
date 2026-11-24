@@ -389,9 +389,10 @@ impl Display for SeedMask {
 mod tests {
     use super::{Header, SeedMask, SoftMask, OUTFILE_VERSION};
     use crate::error::OpenError;
-    use anyhow::Result;
     use pretty_assertions::assert_eq;
     use tempfile::NamedTempFile;
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     #[test]
     fn test_header_round_trip() -> Result<()> {

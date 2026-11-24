@@ -174,8 +174,9 @@ fn write_whole_at(file: &File, mut buf: &[u8], mut offset: u64) -> io::Result<()
 #[cfg(test)]
 mod tests {
     use super::{as_bytes, as_bytes_mut};
-    use anyhow::Result;
     use pretty_assertions::assert_eq;
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     #[test]
     fn test_as_bytes_mut() -> Result<()> {

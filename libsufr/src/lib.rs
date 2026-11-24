@@ -46,7 +46,7 @@ pub use typed::TypedSuffixArray;
 /// How [`SuffixArray::open_with`] opens a file. The default reads the text
 /// and the suffix array from disk as needed and searches to the length
 /// the file was sorted with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenOptions {
     text: SourceKind,
     suffixes: SourceKind,
@@ -216,9 +216,10 @@ mod tests {
         typed::TypedSuffixArray,
         Hits, SoftMask, SuffixArray, SuffixArrayBuilder,
     };
-    use anyhow::Result;
     use std::path::Path;
     use tempfile::NamedTempFile;
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     #[test]
     fn test_write_read_suffix_file_32() -> Result<()> {

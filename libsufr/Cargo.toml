@@ -23,7 +23,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-anyhow = "1.0.86"
 bincode = "1.3.3"
 home = "0.5.9"
 log = "0.4.22"

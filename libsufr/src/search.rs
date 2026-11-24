@@ -86,8 +86,8 @@ impl<'a> Hits<'a> {
         self.suffix_array.suffixes(self.ranks())
     }
 
-    /// The hits within their sequences, sorted by sequence name and then
-    /// by position.
+    /// The hits within their sequences, in the order of the sequences in
+    /// the input and then by position.
     pub fn locate(&self) -> Result<Vec<Location<'a>>, QueryError> {
         self.suffix_array.locate(self.ranks())
     }
@@ -380,8 +380,9 @@ impl<W: Int, T: Source<u8>, S: Source<W>> TypedSuffixArray<W, T, S> {
 mod tests {
     use super::{Extraction, Hits, Location};
     use crate::{OpenOptions, SourceKind, SuffixArray};
-    use anyhow::Result;
     use pretty_assertions::assert_eq;
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     fn open(file: &str, text: SourceKind, suffixes: SourceKind) -> Result<SuffixArray> {
         Ok(SuffixArray::open_with(

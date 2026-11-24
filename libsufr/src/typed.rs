@@ -582,10 +582,11 @@ mod tests {
         source::{DiskSource, MemorySource, Source},
         SuffixArrayBuilder,
     };
-    use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::sync::OnceLock;
     use tempfile::{NamedTempFile, TempDir};
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     type Index = TypedSuffixArray<u32, MemorySource<u8>, DiskSource<u32>>;
 
