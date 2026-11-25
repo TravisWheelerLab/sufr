@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-05T21:15:15.302768346Z",
-  "updated_at": "2026-11-19T22:14:07.985021159Z",
+  "updated_at": "2026-11-20T03:55:28.558640793Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/88f99b87",
       "text": "At `276640b`, `create` on hg38noN with 32 threads and `--memory-budget 6400` took 35.7 s. In its `--log info` output the read took 4.5 s on one thread, 13% of the build. `normalize` ran after it for about 5.3 s, also on one thread. The log has no line for `normalize`, so that figure is the gap between the lines around it. The `f085e43` squash changed the build since then, so a run on dev should confirm the split before a reader comparison relies on it.",
       "commit": "52144cf",
+      "branch": "dev"
+    },
+    {
+      "id": "03cf8eba",
+      "at": "2026-11-20T03:55:28.558639883Z",
+      "author": "Jack Roddy/88f99b87",
+      "text": "released at session end",
+      "commit": "57d1235",
       "branch": "dev"
     }
   ],

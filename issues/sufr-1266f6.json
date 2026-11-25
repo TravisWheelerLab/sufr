@@ -1,0 +1,30 @@
+{
+  "id": "sufr-1266f6",
+  "title": "sufr reads its input through libsail's Reader and FastaParser",
+  "body": "`read_sequence_file` in `libsufr/src/build.rs` reads the input with needletail's `parse_fastx_file`. For each record it pushes the delimiter, records where the record starts, and copies `rec.seq()` into the text. It takes the record's name as the id up to its first whitespace. `normalize` then makes one more pass over the whole text. It maps every byte through a table for soft masking and records which bytes occur.\n\nsufr-409cc8 asks whether `libsail` reads the input faster than needletail. This issue says how sufr would read through `libsail` if the answer is yes.\n\n## Proposal\n\nFrame each record with `libsail::index::Reader` and parse it with `libsail::seq::fasta::FastaParser::parse`, then copy the record's `seq` into the text.\n\n- `Reader::new(file, Format::Fasta)` frames one record at a time out of a stream. `advance()` moves to the next record. `record()` returns that record's bytes, header line included.\n- `FastaParser::parse(record)` returns a `FastaRecord`. Its `name` is the header up to the first whitespace, and its `seq` holds the residues with all ASCII whitespace dropped.\n\n```rust\nlet mut reader = Reader::new(File::open(path)?, Format::Fasta);\nwhile reader.advance()? {\n    let record = FastaParser::parse(reader.record())?;\n    text.extend_from_slice(&record.seq);\n}\n```\n\nsufr keeps its fallback name for a record whose header has no name.\n\n## Measurements\n\nsail-ce02ff timed this loop against needletail on 1 GiB inputs. With the changes noted there, on an AMD Ryzen 7 9800X3D:\n\n| input | needletail | `Reader` and `parse` |\n|---|---|---|\n| DNA, wrapped at 60 | 0.373 s | 0.367 s |\n| DNA, one line per record | 0.137 s | 0.261 s |\n| protein | 0.492 s | 0.433 s |\n\nneedletail is ahead on one-line records because it borrows such a record's sequence from its buffer and never copies it. sail-ce02ff is still working on that row.\n\n## Rejected\n\n- Copying the residues in sufr with a per-byte filter on `is_ascii_whitespace`. sail-ce02ff measured that loop at the speed of the old `parse`, two to four times slower than needletail.\n- A `libsail` function that appends a record's residues to a buffer the caller owns. sail-56ab6e proposed it and was dropped. sufr was its only caller.\n\n## Cost\n\n- `libsail` reads neither FASTQ nor gzip, and needletail reads both today. `Reader::new` takes any `Read`, so sufr could hand it a gzip decoder. `libsail` has no FASTQ reader.\n- `Reader` holds the current record whole in its buffer. Peak memory grows by the largest record, which in hg38 is a chromosome.\n\n## Open\n\n- Whether sufr can drop FASTQ input, or keeps needletail for it.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [
+    "sufr-409cc8"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-20T00:16:32.519223683Z",
+  "updated_at": "2026-11-20T02:44:14.819790403Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "57d1235",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
