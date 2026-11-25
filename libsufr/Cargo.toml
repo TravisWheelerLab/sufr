@@ -9,7 +9,8 @@ repository = "https://github.com/TravisWheelerLab/sufr"
 authors = [
     "Ken Youens-Clark <kyclark@arizona.edu>",
     "Jack Roddy <jroddy@pharmacy.arizona.edu>",
-    "Travis Wheeler <twheeler@arizona.edu>"
+    "Travis Wheeler <twheeler@arizona.edu>",
+    "Jeb Rosen <jebrosen@arizona.edu>"
 ]
 
 [features]

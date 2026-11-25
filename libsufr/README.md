@@ -7,11 +7,11 @@ This is a Rust library crate for creating suffix arrays.
 The basic ideas are as follow:
 
 * Read the input file as `u8` (unsigned 8-bit integer values). 
-* Select the suffixes, which are normally 0 to the length of the text but there is the option to skip suffixes that don't start with A/C/G/T if the input is DNA. Note: Following the C++ implementation, we use 32-bit integers if the input text length is less than 2^32 and 64-bit integers, otherwise.
+* Select the suffixes to index: every suffix by default, or only those starting with given bytes (`with_starts`), such as A, C, G and T for DNA. Note: Following the C++ implementation, we use 32-bit integers if the input text length is less than 2^32 and 64-bit integers, otherwise.
 * Create partitions by placing suffixes into bins based on a few prefix characters (optimized for nucleotide or amino acid alphabet), then aggregated into roughly equally sized partitions.
-* Sort the partitions in parallel.
+* Sort the partitions in parallel. Within a partition, sort the suffixes by a 64-bit key holding their first characters, and merge sort only the suffixes whose keys are equal.
 * Merge the partitions. Because the values fall into nonoverlapping ranges, these subarrays can be appended in order to produce the final SA.
-* Produce a binary-encoded output file with the suffix/LCP arrays and other metadata.
+* Produce a binary-encoded output file with the text, the suffix array, the LCP array when asked for (`with_write_lcp`), and other metadata.
 
 Some advantages to this algorithm:
 

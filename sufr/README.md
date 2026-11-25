@@ -163,7 +163,7 @@ $ sufr su 1.sufr
 +-----------------+------------------+
 | Filename        | 1.sufr           |
 +-----------------+------------------+
-| Modified        | 2025-01-29 11:56 |
+| Modified        | 2026-11-13 12:57 |
 +-----------------+------------------+
 | File Size       | 196 bytes        |
 +-----------------+------------------+
@@ -421,3 +421,4 @@ Run **`cargo test`**.
 * Ken Youens-Clark <kyclark@arizona.edu>
 * Jack Roddy <jroddy@arizona.edu>
 * Travis Wheeler <twheeler@arizona.edu>
+* Jeb Rosen <jebrosen@arizona.edu>
