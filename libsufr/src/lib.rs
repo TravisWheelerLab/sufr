@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! # Parallel Construction of Suffix Arrays in Rust
 //!
@@ -8,84 +9,246 @@
 //!
 //! [^patro]: <https://doi.org/10.4230/LIPIcs.WABI.2023.16>
 //!
-//! * Most people should use [suffix_array] to create and interact with suffix arrays
-//!
-//! If you want lower-level access to Sufr's internals:
-//!
-//! * Use [sufr_builder] to create a new suffix array/_.sufr_ file
-//! * Use [sufr_file] to interact and query an existing suffix array/_.sufr_ file
-//!
+//! Use [SuffixArrayBuilder] to create a suffix array and [SuffixArray] to
+//! read one. A file holds 32-bit or 64-bit values depending on the length
+//! of its text, and [SuffixArray] reads either.
 //!
 //! ## Authors
 //! * Ken Youens-Clark <kyclark@gmail.com>
 //! * Jack Roddy <jroddy@arizona.edu>
 //! * Travis Wheeler <twheeler@arizona.edu>
 
-mod file_access;
-pub mod suffix_array;
-pub mod sufr_builder;
-pub mod sufr_file;
-mod sufr_search;
-pub mod types;
-pub mod util;
+mod build;
+mod error;
+mod format;
+mod io;
+mod lcp;
+mod search;
+mod source;
+mod typed;
 
-// --------------------------------------------------
+pub use build::SuffixArrayBuilder;
+pub use error::{BuildError, InvalidSeedMask, OpenError, QueryError};
+pub use format::{Header, SeedMask, SoftMask};
+pub use search::{Extraction, Hits, Location};
+pub use typed::SourceKind;
+
+#[cfg(feature = "unstable")]
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
+pub use io::Int;
+#[cfg(feature = "unstable")]
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
+pub use source::{DiskSource, MemorySource, Source};
+#[cfg(feature = "unstable")]
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
+pub use typed::TypedSuffixArray;
+
+/// How [`SuffixArray::open_with`] opens a file. The default reads the text
+/// and the suffix array from disk as needed and searches to the length
+/// the file was sorted with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenOptions {
+    text: SourceKind,
+    suffixes: SourceKind,
+    max_query_len: Option<usize>,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        OpenOptions {
+            text: SourceKind::Disk,
+            suffixes: SourceKind::Disk,
+            max_query_len: None,
+        }
+    }
+}
+
+impl OpenOptions {
+    /// Set where the text is read from (default: `SourceKind::Disk`).
+    pub fn with_text(mut self, text: SourceKind) -> Self {
+        self.text = text;
+        self
+    }
+
+    /// Set where the suffix array is read from (default: `SourceKind::Disk`).
+    pub fn with_suffixes(mut self, suffixes: SourceKind) -> Self {
+        self.suffixes = suffixes;
+        self
+    }
+
+    /// Set how much of a query a suffix must match to be a hit (default:
+    /// `None`): leading bytes, or care positions on a file sorted by a seed
+    /// mask. `None` or `Some(0)` uses the length the file was sorted to,
+    /// and a longer value is lowered to it.
+    pub fn with_max_query_len(mut self, max_query_len: Option<usize>) -> Self {
+        self.max_query_len = max_query_len;
+        self
+    }
+}
+
+use rayon::prelude::*;
+use std::{borrow::Cow, ops::Range, path::Path};
+use typed::Queryable;
+
+/// A suffix array read from a _.sufr_ file.
+#[derive(Debug)]
+pub struct SuffixArray {
+    inner: Box<dyn Queryable>,
+}
+
+impl SuffixArray {
+    /// Open a _.sufr_ file with the default [`OpenOptions`]: the text and
+    /// the suffix array stay on disk.
+    pub fn open(path: impl AsRef<Path>) -> Result<SuffixArray, OpenError> {
+        SuffixArray::open_with(path, &OpenOptions::default())
+    }
+
+    /// Open a _.sufr_ file.
+    pub fn open_with(
+        path: impl AsRef<Path>,
+        options: &OpenOptions,
+    ) -> Result<SuffixArray, OpenError> {
+        Ok(SuffixArray {
+            inner: typed::open(path.as_ref(), options)?,
+        })
+    }
+
+    /// Find the suffixes matching `query`. An error is a failed read of
+    /// the file.
+    pub fn search(&self, query: &[u8]) -> Result<Hits<'_>, QueryError> {
+        Ok(Hits::new(self, self.inner.matching_ranks(query)?))
+    }
+
+    /// Search each query in turn, stopping at the first failed read.
+    pub fn search_all<Q>(
+        &self,
+        queries: impl IntoIterator<Item = Q>,
+    ) -> Result<Vec<Hits<'_>>, QueryError>
+    where
+        Q: AsRef<[u8]>,
+    {
+        queries
+            .into_iter()
+            .map(|q| self.search(q.as_ref()))
+            .collect()
+    }
+
+    /// Search the queries on the current rayon pool, in the same order.
+    pub fn par_search_all<Q>(
+        &self,
+        queries: impl IntoIterator<Item = Q>,
+    ) -> Result<Vec<Hits<'_>>, QueryError>
+    where
+        Q: AsRef<[u8]> + Sync,
+    {
+        // rayon parallelises slices, not arbitrary iterators
+        let queries: Vec<Q> = queries.into_iter().collect();
+        queries
+            .par_iter()
+            .map(|q| self.search(q.as_ref()))
+            .collect()
+    }
+
+    /// The file's header.
+    pub fn header(&self) -> &Header {
+        self.inner.header()
+    }
+
+    /// The positions in the text of the suffixes at `ranks`, in rank
+    /// order.
+    pub fn suffixes(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError> {
+        self.inner.suffixes(ranks)
+    }
+
+    /// The LCP of each suffix at `ranks` with the suffix before it, in
+    /// rank order. An error when the file has no LCP array.
+    pub fn lcps(&self, ranks: Range<usize>) -> Result<Vec<usize>, QueryError> {
+        self.inner.lcps(ranks)
+    }
+
+    /// The text in `range`, clipped to the end of the text. Borrowed when
+    /// the text is in memory.
+    pub fn text(&self, range: Range<usize>) -> Result<Cow<'_, [u8]>, QueryError> {
+        let end = range.end.min(self.header().text_len);
+        self.inner.text(range.start..end)
+    }
+
+    /// The suffixes at `ranks` within their sequences.
+    pub(crate) fn locate(
+        &self,
+        ranks: Range<usize>,
+    ) -> Result<Vec<Location<'_>>, QueryError> {
+        self.inner.locate(ranks)
+    }
+
+    /// The suffixes at `ranks` with a window of their sequences, as
+    /// [`Hits::extract`] takes it.
+    pub(crate) fn extract(
+        &self,
+        ranks: Range<usize>,
+        before: usize,
+        after: Option<usize>,
+    ) -> Result<Vec<Extraction<'_>>, QueryError> {
+        self.inner.extract(ranks, before, after)
+    }
+}
+
+#[cfg(feature = "unstable")]
+#[cfg_attr(docsrs, doc(cfg(feature = "unstable")))]
+impl<W, T, S> From<TypedSuffixArray<W, T, S>> for SuffixArray
+where
+    W: Int,
+    T: Source<u8> + 'static,
+    S: Source<W> + 'static,
+{
+    fn from(typed: TypedSuffixArray<W, T, S>) -> Self {
+        SuffixArray {
+            inner: Box::new(typed),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        sufr_builder::SufrBuilder,
-        sufr_file::SufrFile,
-        types::{SufrBuilderArgs, OUTFILE_VERSION},
-        util::read_sequence_file,
+        format::OUTFILE_VERSION,
+        source::{DiskSource, MemorySource},
+        typed::TypedSuffixArray,
+        Hits, SoftMask, SuffixArray, SuffixArrayBuilder,
     };
-    use anyhow::Result;
     use std::path::Path;
     use tempfile::NamedTempFile;
+
+    type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
     #[test]
     fn test_write_read_suffix_file_32() -> Result<()> {
         let seq_file = Path::new("../data/inputs/2.fa");
-        let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let args = SufrBuilderArgs {
-            text: seq_data.seq,
-            low_memory: true,
-            path: Some(outpath.clone()),
-            max_query_len: None,
-            is_dna: true,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: seq_data.start_positions.into_iter().collect(),
-            sequence_names: seq_data.sequence_names,
-            num_partitions: 2,
-            seed_mask: None,
-            random_seed: 0,
-        };
-        let res = SufrBuilder::<u32>::new(args);
-        assert!(res.is_ok());
 
-        let builder = res.unwrap();
-        assert!(Path::new(&builder.path).exists());
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_starts(b"ACGT")
+            .with_num_partitions(2)
+            .with_write_lcp(true)
+            .build_to_file(&outpath)?;
+        assert!(outfile.path().exists());
 
-        let res: Result<SufrFile<u32>> = SufrFile::read(&outpath, false);
-        assert!(res.is_ok());
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            &outpath, None, false,
+        )?;
+        assert_eq!(index.header.version, OUTFILE_VERSION);
+        assert_eq!(index.header.starts.as_deref(), Some(b"ACGT".as_slice()));
+        assert_eq!(index.header.text_len, 18);
+        assert_eq!(index.header.sequence_starts, [0, 9]);
+        assert_eq!(index.header.sequence_names, ["ABC", "DEF"]);
+        assert_eq!(&*index.text(0..18)?, b"ACGTACGTNACGTACGT$");
 
-        let mut sufr_file = res.unwrap();
-        assert_eq!(sufr_file.version, OUTFILE_VERSION);
-        assert!(sufr_file.is_dna);
-        assert_eq!(sufr_file.text_len, 18);
-        assert_eq!(sufr_file.num_sequences, 2);
-        assert_eq!(sufr_file.sequence_starts, [0, 9]);
-        assert_eq!(sufr_file.sequence_names, ["ABC", "DEF"]);
-        assert_eq!(sufr_file.text, b"ACGTACGTNACGTACGT$");
-
-        let file_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        let file_sa = index.suffixes(0..index.header.num_suffixes)?;
         let sorted_sa = [17, 13, 9, 0, 4, 14, 10, 1, 5, 15, 11, 2, 6, 16, 12, 3, 7];
         assert_eq!(file_sa, sorted_sa);
 
-        let file_lcp: Vec<_> = sufr_file.lcp_file.iter().collect();
+        let file_lcp = index.lcps(0..index.header.num_suffixes)?;
         let lcp = [0, 0, 4, 8, 4, 0, 3, 7, 3, 0, 2, 6, 2, 0, 1, 5, 1];
         assert_eq!(file_lcp, lcp);
         Ok(())
@@ -94,86 +257,64 @@ mod tests {
     #[test]
     fn test_write_read_suffix_file_64() -> Result<()> {
         let seq_file = Path::new("../data/inputs/1.fa");
-        let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let args = SufrBuilderArgs {
-            text: seq_data.seq,
-            low_memory: true,
-            path: Some(outpath.clone()),
-            max_query_len: None,
-            is_dna: true,
-            allow_ambiguity: true,
-            ignore_softmask: false,
-            sequence_starts: seq_data.start_positions.into_iter().collect(),
-            sequence_names: seq_data.sequence_names,
-            num_partitions: 2,
-            seed_mask: None,
-            random_seed: 0,
-        };
 
-        let res = SufrBuilder::<u64>::new(args);
-        assert!(res.is_ok());
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_num_partitions(2)
+            .with_force_64bit(true)
+            .with_write_lcp(true)
+            .build_to_file(&outpath)?;
+        assert!(outfile.path().exists());
 
-        let builder = res.unwrap();
-        assert!(Path::new(&builder.path).exists());
+        let index = SuffixArray::open(&outpath)?;
+        let header = index.header();
+        assert_eq!(header.version, OUTFILE_VERSION);
+        assert_eq!(header.int_size, 8);
+        assert_eq!(header.starts, None);
+        assert_eq!(header.text_len, 11);
+        assert_eq!(header.sequence_starts, [0]);
+        assert_eq!(header.sequence_names, ["1"]);
+        assert_eq!(&*index.text(0..11)?, b"ACGTNNACGT$");
+        assert_eq!(header.num_suffixes, 11);
 
-        let res: Result<SufrFile<u64>> = SufrFile::read(&outpath, false);
-        assert!(res.is_ok());
+        let file_sa = index.suffixes(0..header.num_suffixes)?;
+        assert_eq!(file_sa, [10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3]);
+        let file_lcp = index.lcps(0..header.num_suffixes)?;
+        assert_eq!(file_lcp, [0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1]);
 
-        let mut sufr_file = res.unwrap();
-        assert_eq!(sufr_file.version, OUTFILE_VERSION);
-        assert!(sufr_file.is_dna);
-        assert_eq!(sufr_file.text_len, 11);
-        assert_eq!(sufr_file.num_sequences, 1);
-        assert_eq!(sufr_file.sequence_starts, [0]);
-        assert_eq!(sufr_file.sequence_names, ["1"]);
-        assert_eq!(sufr_file.text, b"ACGTNNACGT$");
-        assert_eq!(sufr_file.len_suffixes, 11);
-
-        let file_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
-        assert_eq!(file_sa, &[10, 6, 0, 7, 1, 8, 2, 5, 4, 9, 3]);
-        let file_lcp: Vec<_> = sufr_file.lcp_file.iter().collect();
-        assert_eq!(file_lcp, &[0, 0, 4, 0, 3, 0, 2, 0, 1, 0, 1]);
+        // a u32 reader refuses the file rather than misreading it
+        let narrow = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            &outpath, None, false,
+        );
+        assert!(narrow.is_err());
         Ok(())
     }
 
     #[test]
     fn test_subsample_suffix_array() -> Result<()> {
         let seq_file = Path::new("../data/inputs/smol.fa");
-        let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let builder_args = SufrBuilderArgs {
-            text: seq_data.seq,
-            low_memory: true,
-            path: Some(outpath.clone()),
-            max_query_len: None,
-            is_dna: true,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: seq_data.start_positions,
-            sequence_names: seq_data.sequence_names,
-            num_partitions: 2,
-            seed_mask: None,
-            random_seed: 0,
-        };
-        let res = SufrBuilder::<u32>::new(builder_args);
-        assert!(res.is_ok());
 
-        let builder = res.unwrap();
-        assert_eq!(builder.num_suffixes, 364);
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_starts(b"ACGT")
+            .with_num_partitions(2)
+            .with_write_lcp(true)
+            .build_to_file(&outpath)?;
+        assert!(outfile.path().exists());
 
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
-        let full_sa: Vec<_> = sufr_file.suffix_array_file.iter().collect();
-        let full_lcp: Vec<_> = sufr_file.lcp_file.iter().collect();
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            &outpath, None, false,
+        )?;
+        assert_eq!(index.header.num_suffixes, 364);
+        let full_sa = index.suffixes(0..index.header.num_suffixes)?;
+        let full_lcp = index.lcps(0..index.header.num_suffixes)?;
         assert_eq!(full_sa.len(), 364);
         assert_eq!(full_lcp.len(), 364);
 
         let max_query_len = 1;
-        let (sub_sa, sub_rank) = sufr_file.subsample_suffix_array(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 5);
         assert_eq!(sub_rank.len(), 5);
         // $, A, C, G, T
@@ -181,7 +322,7 @@ mod tests {
         assert_eq!(sub_rank, vec![0, 1, 94, 191, 284]);
 
         let max_query_len = 2;
-        let (sub_sa, sub_rank) = sufr_file.subsample_suffix_array(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 20);
         assert_eq!(sub_rank.len(), 20);
         // $, A$, AA, AC, AG, AN, AT, CA, CC, CG, CT, GA, GC, GG, GN, GT, TA, TC, TG, TT
@@ -201,17 +342,17 @@ mod tests {
         );
 
         let max_query_len = 3;
-        let (sub_sa, sub_rank) = sufr_file.subsample_suffix_array(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 71);
         assert_eq!(sub_rank.len(), 71);
 
         let max_query_len = 5;
-        let (sub_sa, sub_rank) = sufr_file.subsample_suffix_array(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 293);
         assert_eq!(sub_rank.len(), 293);
 
         let max_query_len = 3;
-        let (sub_sa, sub_rank) = sufr_file.subsample_suffix_array(max_query_len);
+        let (sub_sa, sub_rank) = index.subsample(max_query_len)?.pair();
         assert_eq!(sub_sa.len(), 71);
         assert_eq!(sub_rank.len(), 71);
 
@@ -221,24 +362,8 @@ mod tests {
     #[test]
     fn test_spaced_seeds_1() -> Result<()> {
         let seq_file = Path::new("../data/inputs/mostlya1.fa");
-        let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let builder_args = SufrBuilderArgs {
-            text: seq_data.seq,
-            low_memory: true,
-            path: Some(outpath.clone()),
-            max_query_len: None,
-            is_dna: true,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: seq_data.start_positions,
-            sequence_names: seq_data.sequence_names,
-            num_partitions: 1,
-            seed_mask: Some("101".to_string()),
-            random_seed: 0,
-        };
 
         // 7 $
         // 6 A$
@@ -249,14 +374,19 @@ mod tests {
         // 1 AACAAA$
         // 3 CAAA$
 
-        let res = SufrBuilder::<u32>::new(builder_args);
-        assert!(res.is_ok());
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_starts(b"ACGT")
+            .with_num_partitions(1)
+            .with_seed_mask("101".parse().unwrap())
+            .with_write_lcp(true)
+            .build_to_file(&outpath)?;
+        assert!(outfile.path().exists());
 
-        let builder = res.unwrap();
-        assert_eq!(builder.num_suffixes, 8);
-
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
-        let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            &outpath, None, false,
+        )?;
+        assert_eq!(index.header.num_suffixes, 8);
+        let suffix_array = index.suffixes(0..index.header.num_suffixes)?;
         assert_eq!(suffix_array.len(), 8);
         assert_eq!(suffix_array, vec![7, 6, 5, 4, 2, 0, 1, 3]);
 
@@ -266,24 +396,8 @@ mod tests {
     #[test]
     fn test_spaced_seeds_2() -> Result<()> {
         let seq_file = Path::new("../data/inputs/mostlya2.fa");
-        let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let builder_args = SufrBuilderArgs {
-            text: seq_data.seq,
-            low_memory: true,
-            path: Some(outpath.clone()),
-            max_query_len: None,
-            is_dna: true,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: seq_data.start_positions,
-            sequence_names: seq_data.sequence_names,
-            num_partitions: 1,
-            seed_mask: Some("11011".to_string()),
-            random_seed: 0,
-        };
 
         //  0 16 $
         //  1 13 AAC$
@@ -303,14 +417,19 @@ mod tests {
         // 15  7 CAAACAAAC$
         // 16  3 CAAACAAACAAAC$
 
-        let res = SufrBuilder::<u32>::new(builder_args);
-        assert!(res.is_ok());
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_starts(b"ACGT")
+            .with_num_partitions(1)
+            .with_seed_mask("11011".parse().unwrap())
+            .with_write_lcp(true)
+            .build_to_file(&outpath)?;
+        assert!(outfile.path().exists());
 
-        let builder = res.unwrap();
-        assert_eq!(builder.num_suffixes, 17);
-
-        let mut sufr_file = SufrFile::<u32>::read(&outpath, false)?;
-        let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            &outpath, None, false,
+        )?;
+        assert_eq!(index.header.num_suffixes, 17);
+        let suffix_array = index.suffixes(0..17)?;
         assert_eq!(suffix_array.len(), 17);
         assert_eq!(
             suffix_array,
@@ -320,37 +439,25 @@ mod tests {
         Ok(())
     }
 
-    // --------------------------------------------------
     #[test]
     fn test_spaced_seeds_3() -> Result<()> {
         let seq_file = Path::new("../data/inputs/spaced_input.fa");
-        let sequence_delimiter = b'N';
-        let seq_data = read_sequence_file(seq_file, sequence_delimiter)?;
         let outfile = NamedTempFile::new()?;
         let outpath = outfile.path().to_string_lossy().to_string();
-        let builder_args = SufrBuilderArgs {
-            text: seq_data.seq,
-            low_memory: false,
-            path: Some(outpath.clone()),
-            max_query_len: None,
-            is_dna: true,
-            allow_ambiguity: false,
-            ignore_softmask: false,
-            sequence_starts: seq_data.start_positions,
-            sequence_names: seq_data.sequence_names,
-            num_partitions: 1,
-            seed_mask: Some("11000111".to_string()),
-            random_seed: 0,
-        };
 
-        let res = SufrBuilder::<u32>::new(builder_args);
-        assert!(res.is_ok());
+        SuffixArrayBuilder::from_sequence_file(seq_file, b'N')?
+            .with_starts(b"ACGT")
+            .with_num_partitions(1)
+            .with_seed_mask("11000111".parse().unwrap())
+            .with_write_lcp(true)
+            .build_to_file(&outpath)?;
+        assert!(outfile.path().exists());
 
-        let builder = res.unwrap();
-        assert_eq!(builder.num_suffixes, 43);
-
-        let mut sufr_file: SufrFile<u32> = SufrFile::read(&outpath, false)?;
-        let suffix_array: Vec<_> = sufr_file.suffix_array_file.iter().collect();
+        let index = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            &outpath, None, false,
+        )?;
+        assert_eq!(index.header.num_suffixes, 43);
+        let suffix_array = index.suffixes(0..index.header.num_suffixes)?;
         assert_eq!(suffix_array.len(), 43);
         assert_eq!(
             suffix_array,
@@ -361,6 +468,91 @@ mod tests {
             ],
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_suffix_array_search() -> Result<()> {
+        let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
+        let counts: Vec<_> = suffix_array
+            .search_all(["AC", "GG", "CG"])?
+            .iter()
+            .map(Hits::count)
+            .collect();
+        assert_eq!(counts, [2, 0, 2]);
+        let counts: Vec<_> = suffix_array
+            .par_search_all(["AC", "GG", "CG"])?
+            .iter()
+            .map(Hits::count)
+            .collect();
+        assert_eq!(counts, [2, 0, 2]);
+        assert_eq!(suffix_array.search(b"CG")?.ranks(), 3..5);
+        Ok(())
+    }
+
+    #[test]
+    fn test_search_typed_suffix_array() -> Result<()> {
+        let typed = TypedSuffixArray::<u32, MemorySource<u8>, DiskSource<u32>>::open(
+            "../data/inputs/1.sufr",
+            None,
+            false,
+        )?;
+        let suffix_array = SuffixArray::from(typed);
+        assert_eq!(suffix_array.search(b"CG")?.ranks(), 3..5);
+        Ok(())
+    }
+
+    // what: a compile-time check that SuffixArray is Send + Sync
+    // why: Queryable declares both, and every TypedSuffixArray
+    //      must satisfy them for the box. par_search_all shares &self
+    //      across the rayon pool, and a caller with their own
+    //      threads is promised thread::scope with search or
+    //      thread::spawn with the array moved in. A new field
+    //      holding a Cell, RefCell or Rc would silently remove
+    //      the trait, and the first error would come out of
+    //      rayon's bounds on par_iter, or out of a downstream
+    //      crate's build. This line fails instead, naming the
+    //      field that lost it
+    #[test]
+    fn suffix_array_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SuffixArray>();
+    }
+
+    #[test]
+    fn test_suffix_array_list() -> Result<()> {
+        let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
+        assert_eq!(suffix_array.suffixes(0..9)?, [10, 6, 0, 7, 1, 8, 2, 9, 3]);
+        assert_eq!(suffix_array.lcps(0..9)?, [0, 0, 4, 0, 3, 0, 2, 0, 1]);
+        assert_eq!(suffix_array.suffixes(4..5)?, [1]);
+        assert!(suffix_array.suffixes(9..10).is_err());
+        assert!(suffix_array.lcps(9..10).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_suffix_array_header() -> Result<()> {
+        let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
+        let header = suffix_array.header();
+        assert_eq!(header.version, OUTFILE_VERSION);
+        assert_eq!(header.starts.as_deref(), Some(b"ACGT".as_slice()));
+        assert_eq!(header.soft_mask, SoftMask::Fold);
+        assert_eq!(header.text_len, 11);
+        assert_eq!(header.num_suffixes, 9);
+        assert_eq!(header.sequence_starts, vec![0]);
+        assert_eq!(header.sequence_names, vec!["1".to_string()]);
+        assert_eq!(header.seed_mask(), None);
+        assert!(header.has_lcp());
+        Ok(())
+    }
+
+    #[test]
+    fn test_suffix_array_text() -> Result<()> {
+        let suffix_array = SuffixArray::open("../data/inputs/1.sufr")?;
+        assert_eq!(&*suffix_array.text(0..11)?, b"ACGTNNACGT$");
+        assert_eq!(&*suffix_array.text(6..9)?, b"ACG");
+        assert_eq!(&*suffix_array.text(8..20)?, b"GT$");
+        assert!(suffix_array.text(12..13).is_err());
         Ok(())
     }
 }

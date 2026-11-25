@@ -1,0 +1,6 @@
+# build output
+target/
+
+# the generated fixtures, the index built from them, the results and the
+# captured stderr
+runs/
