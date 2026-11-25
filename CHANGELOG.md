@@ -5,7 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.8.0 - 2026-11-25
+
+sufr `0.8.0` includes a comprehensive overhaul of both the construction
+algorithm and the public API. The full changes are listed below,
+including these major highlights:
+
+- Faster construction algorithm, using counting and bucket sorts before
+  proceeding with a merge sort. **Note that several flags for `sufr create`
+  are renamed or removed.**
+- Safer, smaller APIs designed with future backward-compatibilty in
+  mind, with more APIs accepting shared references and iterators
+  rather than owned or cloned data or mutable references.
+- Numerous bug fixes, especially in I/O handling and in querying.
+
+With the large number of changes, some upgrade friction or missing
+API functionality is to be anticipated. If you encounter any trouble
+while porting code from previous versions, please do send us an issue
+report or email so that we can address it!
 
 ### Added
 
