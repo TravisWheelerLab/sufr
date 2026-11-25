@@ -9,135 +9,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Start `CHANGELOG.md` for changes made after `0.7.12`
+- Start `CHANGELOG.md` for changes made after `0.7.12`.
 - Add `libsufr::SuffixArrayBuilder`, a builder-style API for creating a
-  suffix array from a sequence file (`from_sequence_file`)
-- Add `libsufr::SoftMask` (`Fold`, `Preserve`, `Replace`) and
-  `SuffixArrayBuilder::with_soft_mask`, which set how the build writes
-  lowercase bytes into the text, and `SuffixArrayBuilder::with_starts`, which
-  indexes only the suffixes starting with the given bytes and the
-  sentinel. `Header::soft_mask` and `Header::starts` record both.
-  `SoftMask` is `#[non_exhaustive]`.
+  suffix array from a sequence file (`from_sequence_file`).
+- Add `SoftMask` and `SuffixArrayBuilder::with_soft_mask`, which set how
+  the build writes lowercase bytes into the text. `Header::soft_mask`
+  records the setting, and `SoftMask` is `#[non_exhaustive]`.
+- Add `SuffixArrayBuilder::with_starts`, which indexes only the suffix
+  at the sentinel and those starting with the given bytes.
+  `Header::starts` records the bytes.
 - Add `sufr create --soft-mask` and `--starts`. `--dna` is short for
   `--starts ACGT`, and `-i` for `--soft-mask N`.
-- Add `SuffixArrayBuilder::with_memory_budget` and `sufr create
-  --memory-budget`, the most bytes of suffixes held in memory while
-  sorting. The default is the length of the text. A text whose suffixes
-  need more is scanned once per budget.
-- Add `SuffixArray::open` and `SuffixArray::open_with`. `OpenOptions` and
-  `SourceKind` choose whether the text and the suffix array are held in
-  memory or read from disk. `OpenOptions` starts from `default()` and is
-  set with `with_text`, `with_suffixes` and `with_max_query_len`.
+- Add `SuffixArrayBuilder::with_memory_budget` and
+  `sufr create --memory-budget` (in MiB), which cap the memory for
+  suffixes while sorting. The default is the length of the text; with a
+  smaller budget, the build takes more passes over the text.
+- Add `SuffixArray::open` and `SuffixArray::open_with`. `OpenOptions`
+  sets whether the text and the suffix array are held in memory or read
+  from disk (`SourceKind`), and the max query length.
 - Add `SuffixArray::search`, `search_all` and `par_search_all`, which
   return `Hits` for each query. `Hits` gives the count, the ranks, the
-  suffixes, `locate` and `extract`. `Location` and `Extraction`, the
-  results of `locate` and `extract`, are `#[non_exhaustive]`: their
-  fields are public, and only libsufr builds one.
+  suffixes, `locate` and `extract`. `Location` and `Extraction` are
+  `#[non_exhaustive]`.
 - Add `Header` and `SuffixArray::header`, `suffixes`, `lcps` and `text`,
-  which read a file's header and its arrays by range. `text` returns a
-  `Cow`, borrowed when the text is in memory. The byte positions of the
-  arrays in the header are not public.
-- Add the cargo feature `unstable` for low-level API, which may break in
-  any release. It exports `Int`, `TypedSuffixArray`, the storage types
-  `Source`, `MemorySource` and `DiskSource`,
-  `SuffixArrayBuilder::from_data`, which builds from text in memory and
-  checks neither the text nor the sequence starts, and
-  `SuffixArrayBuilder::with_force_64bit`, which writes 64-bit integers
-  for a text that fits 32-bit ones. `SuffixArray::open` reads either
-  width. A `TypedSuffixArray` converts into a `SuffixArray` with `From`,
-  to be searched through `Hits`.
-- Add the example `libsufr/examples/search.rs`
-- Re-export `SuffixArray` at the crate root as `libsufr::SuffixArray`
-- Implement vectorized LCP calculation (AVX2 on x86-64, NEON on AArch64), significantly
-  improving build time on some inputs
-- Implement an LCP cache, significantly improving build time on some inputs with very long
-  duplications or tandem repeats
-- Add `SuffixArrayBuilder::with_write_lcp` and `sufr create --write-lcp`.
-  The LCP array is now optional and off by default. `list --show-lcp`
-  fails on a file without one. The header's LCP offset is 0 when there is
-  no LCP array, and `Header::has_lcp` and `summarize` report whether one
-  is present. A search with a query-time max query
-  length reads the LCP array, when the file has one, to subsample the
-  suffix array.
-- Subsample the suffix array for a query-time max query length without an
-  LCP array by streaming the suffix array in blocks of four million
-  elements and comparing each suffix with its predecessor in the text
+  which return a file's header, and its suffixes, LCPs and text by
+  range.
+- Add the cargo feature `unstable` for low-level API that may break in
+  any release: `Int`, `TypedSuffixArray` and its storage types,
+  `SuffixArrayBuilder::from_data` and `with_force_64bit`, and
+  `From<TypedSuffixArray>` for `SuffixArray`.
+- Add the example `libsufr/examples/search.rs`.
+- Add `SuffixArrayBuilder::with_write_lcp` and
+  `sufr create --write-lcp`, which write the LCP array.
+  `Header::has_lcp` and `summarize` report whether a file has one.
 
 ### Changed
 
-- (breaking) Remove `SufrMetadata`. `SuffixArray::header` gives the facts
-  about the file that it held. `sufr summarize` reads the file's size and
-  time itself.
 - (breaking) `count`, `extract` and `locate` read queries from a file
   only with `-q,--query-file <FILE>`, and `-q -` reads them from stdin.
   A positional argument is always a query, even when a file by that name
   exists. A missing query file, or no queries at all, is an error.
 - (breaking) `-t,--threads`, `--log` and `--log-file` follow the
-  subcommand, as in `sufr create -t 16`, and every subcommand takes them.
-  `--log` no longer has the short form `-l`.
-- `sufr summarize` no longer prints a "Max query len" row. A file built
-  with a seed mask still shows its "Seed mask" row.
-- (breaking) Simplify the `Int` trait definition and bounds, subsuming
-  `FromUsize`. `Int` is exported only under the `unstable` feature.
-- (breaking) Make `Int` unable to implement from other crates, due to guarantees required by sufr's `unsafe` code
-- (breaking) Change the partitioning strategy to be based on a prefix of
-  each suffix, instead of using random sampling. A first pass counts the
-  suffixes of each prefix, so the size of every partition and its place
-  in the output are known before sorting.
-- Sort each partition by a 64-bit key holding the first characters of
-  each suffix, and merge sort only the suffixes whose keys are equal.
-  Under a seed mask the key holds the care positions.
+  subcommand, as in `sufr create -t 16`, and every subcommand takes
+  them. `--log` no longer has the short form `-l`.
+- (breaking) `sufr create` and `SuffixArrayBuilder` write the LCP array
+  only when asked with `--write-lcp` or `with_write_lcp`.
+  `list --show-lcp` fails on a file without one; searches with a max
+  query length still work.
+- (breaking) `Int` now includes `FromUsize`, is sealed, and is exported
+  only under `unstable`.
+- Partition suffixes by their leading characters instead of random
+  sampling, sort them by a 64-bit key of those characters, and merge
+  sort only ties.
 - Change the default for `sufr create --num-partitions` from 16 to 1024.
-  It caps the number of sort tasks. `--memory-budget` sets the memory a
-  build uses.
-- Construction writes no temporary files. It holds the text and up to the
-  memory budget of suffixes in memory. Peak memory is higher: on 1 GiB
-  of DNA at 8 threads it went from 1.4 GiB to 2.4 GiB, measured when the
-  change was made.
-- Construction is faster. In our measurements on 1 GiB of DNA at 8
-  threads, a build went from 57.7 s to 8.8 s, and inputs with long
-  repeats went from minutes to seconds.
-- Reduce some unnecessary internal allocations
-- During build, the merge sort makes better use of the available threads
-  with work-stealing via `rayon::join`
-- Write the output file with positioned writes (`pwrite` on Unix,
-  `seek_write` on Windows) in parallel 64 MiB chunks. The header and text
-  are written first, and each sorted partition is written, with its LCPs
-  if any, straight to its place in the file.
-- `sufr create` refuses a seed mask with more care positions than one
-  64-bit key holds, or one spanning more than four keys of characters.
-  A key typically holds 21 characters of DNA.
-- (breaking) `sufr create -i` requires `--dna`. It no longer converts
-  lowercase protein to `X`.
-- (breaking) Raise the minimum supported Rust version from 1.80 to 1.88
-- (breaking) `sufr summarize` prints the rows `Soft Mask` and `Starts` in
-  place of `DNA` and `Ignore Softmask`
+  It caps the number of sort tasks.
+- Construction is several times faster on DNA in our tests, and can be
+  orders of magnitude faster on inputs with long repeats, helped by an
+  LCP cache and vectorized LCP calculation on x86-64 and AArch64. It
+  writes the output in parallel, writes no temporary files, and uses
+  significantly less peak memory on DNA in our tests.
+- (breaking) `sufr create` and `SuffixArrayBuilder::build_to_file`
+  refuse a seed mask too long for the 64-bit sort key: for typical DNA,
+  more than 21 care positions or a span over 84 characters. We expect
+  few masks to reach the limit.
+- (breaking) `sufr create -i` requires `--dna`. In 0.7.12, `-i` also
+  wrote N over lowercase protein.
+- (breaking) Raise the minimum supported Rust version from 1.80 to 1.88.
+- (breaking) `sufr summarize` prints the rows `Soft Mask` and `Starts`
+  in place of `DNA` and `Ignore Softmask`, and no longer prints
+  `Max query len`.
 - (breaking) Raise the _.sufr_ format version from 6 to 7. The header
-  drops the build-time max query length, which this release writes as 0
-  in every file. Bytes 1 and 2 record the soft mask in place of the DNA
-  and soft-mask flags, and a 32-byte bitmap of the indexed starts
-  follows the seed mask. Byte 3 now records the integer width of the
-  arrays, 4 or 8 bytes, which a reader used to infer from the text
-  length. This release does not open a file
-  written by 0.7.12 or earlier; rebuild it with `sufr create`.
-- `sufr locate` orders the hits by the order of the sequences in the
-  input, not by their names
-- An `extract` window holds only its sequence's own bytes. It no longer
-  includes the sequence delimiter or the sentinel, and no longer runs into
-  the next sequence.
-- (breaking) `libsufr` returns its own error types in place of
-  `anyhow::Error`: `BuildError` from `SuffixArrayBuilder::from_sequence_file`
-  and `build_to_file`, `OpenError` from `SuffixArray::open` and `open_with`,
-  `QueryError` from the searches, from `suffixes`, `lcps` and `text`, and
-  from the methods of `Hits`, and `InvalidSeedMask` from parsing a
-  `SeedMask`. An error about a file carries its path. The three enums are
-  `#[non_exhaustive]`, so a `match` on one needs a `_` arm. Under the
-  `unstable` feature, the `Source` trait returns `std::io::Result`.
+  records the soft mask, the indexed starts and the integer width, and
+  no longer holds the build-time max query length. This release does not
+  open a file written by 0.7.12 or earlier; rebuild it with
+  `sufr create`.
+- `sufr locate` lists hits in the order of the input sequences rather
+  than by name.
+- An `extract` window no longer runs past its sequence into the
+  delimiter, the sentinel or the next sequence.
+- (breaking) libsufr returns its own error types, `BuildError`,
+  `OpenError`, `QueryError` and `InvalidSeedMask`, in place of
+  `anyhow::Error`. An error about a file carries its path, and the enums
+  are `#[non_exhaustive]`.
 - `SuffixArrayBuilder::from_sequence_file` replaces bytes in a record ID
   that are not valid UTF-8 with U+FFFD. It used to fail the build.
 
 ### Removed
 
+- (breaking) Remove `SufrMetadata` and `SuffixArray::metadata`.
+  `SuffixArray::header` replaces it, and `sufr summarize` reads the
+  file's size and modification time itself.
 - (breaking) Remove the `sufr_builder` module, `SufrBuilder`,
   `SufrBuilderArgs`, `SuffixArray::new`, and `SuffixArray::write`. Use
   `libsufr::SuffixArrayBuilder` instead.
@@ -146,57 +107,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`CountOptions`, `CountResult`, `ExtractOptions`, `ExtractResult`,
   `ExtractSequence`, `LocateOptions`, `LocateResult`, `LocatePosition`,
   `ListOptions`, `SearchOptions`, `SearchResult`,
-  `SearchResultLocations`). Use `SuffixArray::search` and `Hits` instead.
+  `SearchResultLocations`). Use `SuffixArray::search` and `Hits`
+  instead.
 - (breaking) Remove `SufrFile`. Use `SuffixArray::open_with` instead.
-- (breaking) Remove the public modules. `SeedMask` is at the crate root.
-  `OUTFILE_VERSION`, `SENTINEL_CHARACTER`, `Comparison`, `SequenceFileData`,
-  `read_sequence_file`, `read_text_length` and `find_lcp_full_offset` are
-  private or gone.
-- (breaking) Remove `SuffixSortType` and `Header::sort_type`. Use
-  `Header::seed_mask`, which is `None` for a file sorted on whole
-  suffixes. With the build-time max query length gone,
-  `MaxQueryLen(0)` was the only other value a file could hold.
+- (breaking) Remove the public modules. `SuffixArray` and `SeedMask` are
+  at the crate root. `OUTFILE_VERSION`, `SENTINEL_CHARACTER`,
+  `Comparison`, `SequenceFileData`, `read_sequence_file`,
+  `read_text_length` and `find_lcp_full_offset` are private or gone.
+- (breaking) Remove `SuffixSortType`. `Header::seed_mask` returns the
+  seed mask a file was sorted by, or `None` for a file sorted on whole
+  suffixes.
 - (breaking) Remove the build-time max query length, `sufr create -m`.
-  The query-time `-m` of
-  `count`, `locate` and `extract` stays.
-- Remove `sufr create -r,--random-seed`,
-  which is not used for the prefix-based partitioning
+  The query-time `-m` of `count`, `locate` and `extract` stays.
+- (breaking) Remove `sufr create -r,--random-seed`, which the new
+  partitioning does not use.
 - (breaking) Remove `sufr create -a,--allow-ambiguity` and the "Allow
-  Ambiguity" row of `sufr summarize`. The LCP cache made
-  them unnecessary. A DNA build indexes only suffixes starting with A,
-  C, G or T.
-- Remove and make private the `unsafe` byte-reading utilities
-  `slice_u8_to_vec`, `usize_to_bytes`, `vec_to_slice_u8`.
+  Ambiguity" row of `sufr summarize`. A DNA build indexes only suffixes
+  starting with A, C, G or T. With `-a`, 0.7.12 could misorder suffixes
+  in runs of 1000 or more N and store LCPs there that were too short.
+- (breaking) Remove the byte-conversion utilities `slice_u8_to_vec`,
+  `usize_to_bytes` and `vec_to_slice_u8`.
 - (breaking) Make the fields of `SeedMask` private, and remove
   `differences` and `SeedMask::from_bytes`. `SeedMask::positions` and
-  `SeedMask::weight` return the care positions and their number, and
-  `Display` writes the mask as 1s and 0s.
+  `SeedMask::weight` return the care positions and their number.
 - (breaking) Replace `SeedMask::new` with `impl FromStr for SeedMask`.
   Parse a mask with `"101".parse::<SeedMask>()`.
 
 ### Fixed
 
-- `SuffixArray::open_with` returns an error instead of panicking when it
-  needs the subsample cache and finds no home directory.
+- `count`, `locate` and `extract` exit with an error instead of
+  panicking when they need the subsample cache for `-m` and there is no
+  home directory.
 - The error for a file of another format version names the file.
-- `Header::read` and `SuffixArray::open` refuse a file whose seed mask
-  would not parse as a `SeedMask`. Previously these would drop bytes other than 0
-  and 1, and accept a mask with no 0 or one that starts or ends with 0.
+- `sufr` and `SuffixArray::open` refuse a file whose seed mask would not
+  parse as a `SeedMask`. 0.7.12 accepted malformed masks.
 - `sufr` exits 0 with nothing on stderr when the reader of its output
-  stops early, as `head` does. `summarize` panicked there, and `list`,
-  `locate` and `extract` reported "Broken pipe" and exited 1.
-- Disk I/O is updated to reduce intermediate allocations and remove unaligned memory reads/writes
-- Searches (count, extract, or locate) with a `max_query_len`/`--max-query-len` could create cache
-  files containing extraneous garbage memory; they no longer do so. The extra data was never read,
-  so existing cache files should still be readable/writable across versions.
-- A query that sorts before every suffix no longer subtracts below rank
-  0. Debug builds panicked. Release builds found no hits by chance.
-- A query that matches a whole suffix, sentinel included, and has bytes
-  left no longer panics. It finds nothing.
-- Under a query-time max query length, a hit over several groups of the
-  subsampled suffix array no longer loses most of its last group. A hit
-  on the last group alone no longer panics. On `smol.fa`, `count A` gave
-  93 without a cap and 71 with `-m 2`.
-- `sufr list -o` writes to the named file
+  stops early, as `head` does.
+- Reading the suffix and LCP arrays no longer risks unaligned integer
+  reads, which are undefined behaviour in Rust.
+- Search cache files for `-m` no longer contain stray bytes after the
+  data. The extra bytes were never read.
+- A query that sorts before every suffix no longer panics in debug
+  builds.
+- A query with more bytes after a `$` no longer panics; it finds
+  nothing.
+- Searches with a max query length no longer miss some hits, and no
+  longer panic on some queries.
+- `sufr list -o` writes to the named file.
 - `count`, `locate` and `extract` stop with an error when a read fails,
-  instead of skipping the query
+  instead of skipping the query.
